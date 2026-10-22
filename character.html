@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shadow Cell">
+<meta name="theme-color" content="#16191a">
+<title>Shadow Cell Operative</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&display=swap">
+<link rel="stylesheet" href="css/character.css">
+</head>
+<body>
+<!-- BODY:START -->
+<div id="stage" aria-label="3D operative viewer"></div>
+
+<header class="cv-head">
+  <div class="cv-title">SHADOW CELL</div>
+  <div class="cv-sub">OPERATIVE REVIEW · PHASE 1A</div>
+  <div class="cv-note" id="model-note" hidden></div>
+</header>
+
+<button type="button" class="cv-chip cv-stats-toggle" id="stats-toggle" aria-pressed="false">STATS</button>
+<div class="cv-stats" id="stats" hidden>
+  <div><span>FPS</span><b id="st-fps">–</b></div>
+  <div><span>QUALITY</span><b id="st-quality">–</b></div>
+  <div><span>RENDER SCALE</span><b id="st-dpr">–</b></div>
+  <div><span>DRAW CALLS</span><b id="st-calls">–</b></div>
+  <div><span>TRIANGLES</span><b id="st-tris">–</b></div>
+  <div><span>LOAD TIME</span><b id="st-load">–</b></div>
+  <div><span>GPU</span><b id="st-gpu">–</b></div>
+  <button type="button" class="cv-chip" id="copy-report">COPY TEST REPORT</button>
+</div>
+
+<div class="cv-hint" id="hint">Drag to orbit · Pinch to zoom · Double-tap to reset</div>
+
+<nav class="cv-bar" aria-label="View controls">
+  <div class="cv-group" role="group" aria-label="Camera angle">
+    <button type="button" class="cv-chip" data-view="front" aria-pressed="true">FRONT</button>
+    <button type="button" class="cv-chip" data-view="left" aria-pressed="false">LEFT</button>
+    <button type="button" class="cv-chip" data-view="back" aria-pressed="false">BACK</button>
+    <button type="button" class="cv-chip" data-view="right" aria-pressed="false">RIGHT</button>
+    <button type="button" class="cv-chip" data-view="face" aria-pressed="false">FACE</button>
+  </div>
+  <div class="cv-group" role="group" aria-label="Pose">
+    <button type="button" class="cv-chip" data-pose="idle" aria-pressed="true">IDLE</button>
+    <button type="button" class="cv-chip" data-pose="bindpose" aria-pressed="false">T-POSE</button>
+    <button type="button" class="cv-chip" id="skeleton-toggle" aria-pressed="false">RIG</button>
+  </div>
+</nav>
+
+<div class="cv-overlay" id="loader" role="status" aria-live="polite">
+  <div class="cv-panel">
+    <div class="cv-title">SHADOW CELL</div>
+    <div class="cv-load-label" id="load-label">PREPARING RENDERER…</div>
+    <div class="cv-progress"><i id="load-bar"></i></div>
+    <div class="cv-load-detail" id="load-detail">&nbsp;</div>
+  </div>
+</div>
+
+<div class="cv-overlay" id="error" hidden role="alert">
+  <div class="cv-panel">
+    <div class="cv-err-title" id="error-title">Couldn't load the operative</div>
+    <p id="error-text"></p>
+    <button type="button" class="cv-chip cv-primary" id="retry">RETRY</button>
+  </div>
+</div>
+<!-- BODY:END -->
+
+<script src="lib/three.min.js"></script>
+<script src="lib/GLTFLoader.js"></script>
+<!-- SCRIPTS:START -->
+<script src="js/character-viewer.js"></script>
+<!-- SCRIPTS:END -->
+</body>
+</html>

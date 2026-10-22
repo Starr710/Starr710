@@ -1,0 +1,13 @@
+{
+  "name": "shadow-cell-tools",
+  "private": true,
+  "type": "module",
+  "description": "Asset pipeline for SHADOW CELL (not needed to play the game)",
+  "scripts": {
+    "character": "node optimize-character.mjs ../assets/source/Soldier.glb ../assets/models/operative.glb"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.0.0",
+    "@gltf-transform/functions": "^4.0.0"
+  }
+}

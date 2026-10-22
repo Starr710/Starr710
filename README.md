@@ -6,7 +6,8 @@ A third-person tactical stealth game for the browser, built with Three.js and tu
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Jungle map, controllable operative, follow camera, touch controls | **Playable** |
+| 1 | Jungle map, controllable operative, follow camera, touch controls | Playable (blocky placeholder operative) |
+| 1A | Rigged human operative, character review stage, iPhone optimization | **In progress**: viewer done, final model pending |
 | 2 | Four selectable operatives, guard patrol AI, stealth detection | Next |
 | 3 | Objectives, extraction, per-operative ranks and team grade | Planned |
 | 4 | Squad AI orders (Follow / Hold / Hide / Regroup), full solo mode | Planned |
@@ -22,6 +23,12 @@ A third-person tactical stealth game for the browser, built with Three.js and tu
 - **Controls:** touch controls as listed below, plus keyboard and mouse for desktop testing.
 - **Sound:** synthesized jungle ambience and footsteps (no audio files).
 - **Performance:** quality scaling that drops resolution and shadows automatically on slow devices. Static props are merged into about 80 draw calls.
+
+## Phase 1A: operative review (`character.html`)
+
+Open `character.html` to inspect the operative. Drag to orbit, pinch to zoom, and double-tap to reset. Use FRONT / LEFT / BACK / RIGHT / FACE for preset angles, T-POSE + RIG to check the skeleton, and STATS for FPS, render scale, draw calls, GPU and a copyable test report. The renderer caps the pixel ratio at 2× and steps quality down automatically if FPS stays under 50. It stops rendering while the tab is hidden and shows a loading bar, plus clear errors with a retry button.
+
+See `assets/models/ASSET_NOTES.md` for the current model's source and license.
 
 ## Controls
 
