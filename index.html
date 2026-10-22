@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shadow Cell">
+<meta name="theme-color" content="#0b0f0a">
+<title>Shadow Cell</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<!-- BODY:START -->
+<div id="game"></div>
+
+<div id="hud" class="hidden">
+  <div class="hud-tl">
+    <div class="op-name" id="op-name">GHOST</div>
+    <div class="op-role" id="op-role">INFILTRATOR</div>
+    <div class="bar" id="hp-bar"><i></i></div>
+    <div class="bar stam" id="stam-bar"><i></i></div>
+    <div class="readout"><span>STANCE <b id="stance-label">STAND</b></span><span id="cover-label"></span></div>
+  </div>
+  <div class="hud-tc">
+    <div id="alert-state">NORMAL</div>
+    <div id="objective">Recon the outpost. Find the radio station inside the compound.</div>
+  </div>
+  <div class="hud-tr">
+    <div class="vis-box">
+      <span class="vis-label">VISIBILITY</span>
+      <span id="vis-value">0</span>
+      <div class="meter" id="vis-meter"><i></i></div>
+      <span class="vis-label">NOISE</span>
+      <div class="meter" id="noise-meter"><i></i></div>
+    </div>
+    <canvas id="minimap" width="208" height="208"></canvas>
+  </div>
+  <div id="prompt"></div>
+  <div id="toast"></div>
+  <div id="equip">ITEM: STONES ×∞ · WPN: TRANQ PISTOL</div>
+  <div id="fps"></div>
+</div>
+
+<div id="controls" class="hidden">
+  <div id="joy-hint">MOVE</div>
+  <div id="joy-base"></div>
+  <div id="joy-knob"></div>
+  <div class="btn big" id="btn-action" data-btn="action">ACTION</div>
+  <div class="btn" id="btn-takedown" data-btn="takedown">TAKE<br>DOWN</div>
+  <div class="btn" id="btn-stance" data-btn="stance">STANCE</div>
+  <div class="btn" id="btn-attack" data-btn="attack">FIRE</div>
+  <div class="btn" id="btn-aim" data-btn="aim">AIM</div>
+  <div class="btn" id="btn-sprint" data-btn="sprint">RUN</div>
+  <div class="btn small" id="btn-squad" data-btn="squad">SQUAD</div>
+  <div class="btn small" id="btn-pause" data-btn="pause">II</div>
+  <div id="squad-menu">
+    <button type="button" data-cmd="follow">FOLLOW</button>
+    <button type="button" data-cmd="hold">HOLD</button>
+    <button type="button" data-cmd="hide">HIDE</button>
+    <button type="button" data-cmd="regroup">REGROUP</button>
+    <div class="note">Squad AI arrives in Phase 4.</div>
+  </div>
+</div>
+
+<div class="screen" id="start-screen">
+  <div class="title-wrap">
+    <div>
+      <div class="title">SHADOW<br>CELL<small>OPERATION GREEN VEIL · PHASE 1</small></div>
+      <button type="button" class="deploy" id="deploy-btn">DEPLOY</button>
+    </div>
+    <div class="brief">
+      <h3>FIELD BRIEF</h3>
+      <ul>
+        <li>Left thumb: drag anywhere on the left to move. Push further to run.</li>
+        <li>Right thumb: drag to look around.</li>
+        <li>STANCE: tap to crouch / stand, hold to go prone.</li>
+        <li>ACTION: hug walls and cover. Bushes and tall grass hide you.</li>
+        <li>AIM: over-the-shoulder view. FIRE: throw a stone.</li>
+        <li>Keyboard: WASD, mouse drag, Shift run, C crouch, Z prone, E action, RMB aim.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="screen hidden" id="pause-menu">
+  <div class="panel">
+    <h2>PAUSED</h2>
+    <button type="button" id="resume-btn">RESUME</button>
+    <button type="button" id="quality-btn">QUALITY: HIGH</button>
+    <button type="button" id="audio-btn">AUDIO: ON</button>
+    <button type="button" id="restart-btn">RESTART AT INSERTION</button>
+  </div>
+</div>
+
+<div class="screen" id="rotate-overlay">
+  <div><div class="phone"></div>ROTATE TO LANDSCAPE</div>
+</div>
+<!-- BODY:END -->
+
+<script src="lib/three.min.js"></script>
+<!-- SCRIPTS:START -->
+<script src="js/util.js"></script>
+<script src="js/world.js"></script>
+<script src="js/operative.js"></script>
+<script src="js/player.js"></script>
+<script src="js/input.js"></script>
+<script src="js/camera.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/main.js"></script>
+<!-- SCRIPTS:END -->
+</body>
+</html>
