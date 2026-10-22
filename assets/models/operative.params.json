@@ -1,0 +1,23 @@
+{
+  "gender": 0,
+  "age": 0.53,
+  "muscle": 0.68,
+  "weight": 0.48,
+  "height": 0.52,
+  "proportions": 0.8,
+  "african": 0.05, "asian": 0.05, "caucasian": 0.9,
+  "hair": "short04",
+  "hairTint": "#c9b07a",
+  "eyes": "lightblue",
+  "eyebrows": "eyebrow010",
+  "eyelashes": "eyelashes02",
+  "outfit": "none",
+  "top": "fatigue_shirt",
+  "bottom": "fatigue_pants",
+  "shoes": "combat_boots",
+  "accessories": ["tactical_vest", "belt"],
+  "garmentStyles": {
+    "fatigue_shirt": { "pattern": "solid", "color": "#4b5132" },
+    "fatigue_pants": { "pattern": "solid", "color": "#4b5132" }
+  }
+}
