@@ -336,7 +336,7 @@
     }, LOAD_TIMEOUT_MS);
 
     const loader = new THREE.GLTFLoader();
-    loader.load(MODEL_URL, gltf => {
+    const onLoad = gltf => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
@@ -344,10 +344,12 @@
       setProgress(1);
       // let the label paint before the GPU upload stalls the main thread
       requestAnimationFrame(() => setupModel(gltf));
-    }, ev => {
+    };
+    const onProgress = ev => {
       if (ev.lengthComputable && ev.total) setProgress(ev.loaded / ev.total, `${(ev.loaded / 1048576).toFixed(2)} / ${(ev.total / 1048576).toFixed(2)} MB`);
       else setProgress(0.5, `${(ev.loaded / 1048576).toFixed(2)} MB`);
-    }, err => {
+    };
+    const onError = err => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
@@ -355,7 +357,20 @@
       showError('Couldn\'t load the operative', offline
         ? 'You appear to be offline. Reconnect and tap Retry.'
         : 'The model file could not be read (' + ((err && err.message) || 'network error') + '). Tap Retry; if it keeps failing, reload the page.', true);
-    });
+    };
+    if (/\.b64\.txt$/.test(MODEL_URL)) {
+      // hosts that only serve text get the GLB as base64; decode and parse in memory
+      const fl = new THREE.FileLoader();
+      fl.load(MODEL_URL, text => {
+        try {
+          const bin = atob(text.trim()), buf = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+          loader.parse(buf.buffer, '', onLoad, onError);
+        } catch (e) { onError(e); }
+      }, onProgress, onError);
+    } else {
+      loader.load(MODEL_URL, onLoad, onProgress, onError);
+    }
   }
   ui.retry.addEventListener('click', loadModel);
 
