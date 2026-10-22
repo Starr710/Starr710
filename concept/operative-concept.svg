@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 1000" width="1100" height="1000" font-family="Courier New, monospace">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c3326"/><stop offset="1" stop-color="#171b15"/>
+    </linearGradient>
+    <linearGradient id="olive" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3f4429"/><stop offset=".5" stop-color="#5a6038"/><stop offset="1" stop-color="#3a3f26"/>
+    </linearGradient>
+    <linearGradient id="oliveLeg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3a3f26"/><stop offset=".55" stop-color="#555b35"/><stop offset="1" stop-color="#363a23"/>
+    </linearGradient>
+    <linearGradient id="poncho" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0d0e0f"/><stop offset=".35" stop-color="#23262a"/><stop offset=".65" stop-color="#1c1e21"/><stop offset="1" stop-color="#0b0c0d"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e9c6a6"/><stop offset="1" stop-color="#c99a78"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e6cf93"/><stop offset=".6" stop-color="#c7a865"/><stop offset="1" stop-color="#9a7f45"/>
+    </linearGradient>
+    <radialGradient id="shadow"><stop offset="0" stop-color="#000" stop-opacity=".55"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+  </defs>
+
+  <rect width="1100" height="1000" fill="url(#bg)"/>
+  <ellipse cx="300" cy="955" rx="150" ry="26" fill="url(#shadow)"/>
+
+  <!-- ============ PONCHO (back layer + hood down) ============ -->
+  <path d="M196 268 Q170 420 150 640 Q230 676 300 672 Q370 676 450 640 Q430 420 404 268 Z" fill="#0f1012"/>
+  <!-- hood bunched behind the neck -->
+  <path d="M232 236 Q300 196 368 236 Q384 270 362 286 L238 286 Q216 270 232 236 Z" fill="#17191c"/>
+  <path d="M246 248 Q300 222 354 248" stroke="#2c2f34" stroke-width="3" fill="none"/>
+
+  <!-- ============ LEGS ============ -->
+  <!-- left leg (viewer's left = her right) -->
+  <path d="M238 560 L232 700 Q230 760 240 840 L246 880 L290 880 L292 840 Q296 760 294 700 L298 590 Z" fill="url(#oliveLeg)"/>
+  <!-- right leg -->
+  <path d="M362 560 L368 700 Q370 760 360 840 L354 880 L310 880 L308 840 Q304 760 306 700 L302 590 Z" fill="url(#oliveLeg)"/>
+  <path d="M234 552 L366 552 L362 572 Q330 596 300 604 Q270 596 238 572 Z" fill="#4a4f2f"/>
+  <!-- knee seams / cargo pockets -->
+  <path d="M244 690 Q264 700 288 690" stroke="#2c3020" stroke-width="3" fill="none"/>
+  <path d="M312 690 Q336 700 356 690" stroke="#2c3020" stroke-width="3" fill="none"/>
+  <rect x="236" y="620" width="30" height="44" rx="4" fill="#4a4f2f" stroke="#2c3020" stroke-width="2"/>
+  <rect x="334" y="620" width="30" height="44" rx="4" fill="#4a4f2f" stroke="#2c3020" stroke-width="2"/>
+  <!-- boots -->
+  <path d="M240 838 L292 838 L296 920 Q300 944 286 948 L222 948 Q206 946 212 930 Q226 912 238 906 Z" fill="#1a1714"/>
+  <path d="M360 838 L308 838 L304 920 Q300 944 314 948 L378 948 Q394 946 388 930 Q374 912 362 906 Z" fill="#1a1714"/>
+  <g stroke="#3b342c" stroke-width="2">
+    <line x1="252" y1="852" x2="282" y2="852"/><line x1="252" y1="868" x2="282" y2="868"/><line x1="252" y1="884" x2="282" y2="884"/>
+    <line x1="318" y1="852" x2="348" y2="852"/><line x1="318" y1="868" x2="348" y2="868"/><line x1="318" y1="884" x2="348" y2="884"/>
+  </g>
+  <rect x="212" y="940" width="86" height="9" rx="3" fill="#0c0b0a"/>
+  <rect x="302" y="940" width="86" height="9" rx="3" fill="#0c0b0a"/>
+
+  <!-- ============ TORSO (field suit) ============ -->
+  <path d="M222 262 Q300 246 378 262 L386 360 Q372 440 362 470 L366 560 L234 560 L238 470 Q228 440 214 360 Z" fill="url(#olive)"/>
+  <!-- chest pocket flaps -->
+  <rect x="246" y="318" width="40" height="34" rx="3" fill="#4d5331" stroke="#2c3020" stroke-width="2"/>
+  <rect x="314" y="318" width="40" height="34" rx="3" fill="#4d5331" stroke="#2c3020" stroke-width="2"/>
+  <!-- front zip -->
+  <line x1="300" y1="262" x2="300" y2="555" stroke="#2c3020" stroke-width="3"/>
+
+  <!-- ============ ARMS (forearms out of the poncho) ============ -->
+  <path d="M196 420 Q186 470 192 520 L222 524 Q228 474 226 430 Z" fill="#4a4f2f"/>
+  <path d="M404 420 Q414 470 408 520 L378 524 Q372 474 374 430 Z" fill="#4a4f2f"/>
+  <rect x="188" y="508" width="38" height="16" rx="4" fill="#3a3e25"/>
+  <rect x="374" y="508" width="38" height="16" rx="4" fill="#3a3e25"/>
+  <!-- gloves -->
+  <path d="M190 522 Q182 560 194 584 Q210 596 222 582 Q230 556 224 522 Z" fill="#1c1916"/>
+  <path d="M410 522 Q418 560 406 584 Q390 596 378 582 Q370 556 376 522 Z" fill="#1c1916"/>
+
+  <!-- ============ HARNESS ============ -->
+  <g fill="#141414">
+    <path d="M250 262 L268 262 L292 468 L276 470 Z"/>
+    <path d="M350 262 L332 262 L308 468 L324 470 Z"/>
+    <rect x="262" y="386" width="76" height="14" rx="2"/>
+  </g>
+  <rect x="290" y="384" width="20" height="18" rx="2" fill="none" stroke="#8c8a80" stroke-width="2.5"/>
+  <!-- suspender drops to belt -->
+  <g fill="#141414"><rect x="270" y="470" width="14" height="22"/><rect x="316" y="470" width="14" height="22"/></g>
+  <!-- knife sheathed high on her left strap -->
+  <g transform="rotate(-24 340 300)">
+    <rect x="332" y="270" width="18" height="74" rx="5" fill="#2a2520"/>
+    <rect x="335" y="248" width="12" height="26" rx="3" fill="#3d362e"/>
+    <rect x="330" y="270" width="22" height="5" fill="#77746b"/>
+  </g>
+
+  <!-- ============ BELT ============ -->
+  <rect x="232" y="488" width="136" height="22" rx="3" fill="#161616"/>
+  <rect x="288" y="486" width="24" height="26" rx="3" fill="none" stroke="#8c8a80" stroke-width="3"/>
+  <rect x="244" y="492" width="30" height="34" rx="4" fill="#2b2e1f" stroke="#111" stroke-width="2"/>
+  <rect x="326" y="492" width="30" height="34" rx="4" fill="#2b2e1f" stroke="#111" stroke-width="2"/>
+  <!-- holster on her right hip -->
+  <path d="M226 498 L246 498 L250 588 Q240 600 228 590 Z" fill="#1d1a17"/>
+
+  <!-- ============ PONCHO (front drape, open down the front) ============ -->
+  <path d="M220 254 Q194 300 180 420 Q176 448 190 462 Q214 430 236 432 Q248 360 262 268 Z" fill="url(#poncho)"/>
+  <path d="M380 254 Q406 300 420 420 Q424 448 410 462 Q386 430 364 432 Q352 360 338 268 Z" fill="url(#poncho)"/>
+  <path d="M190 462 Q214 430 236 432" stroke="#303338" stroke-width="2" fill="none"/>
+  <path d="M410 462 Q386 430 364 432" stroke="#303338" stroke-width="2" fill="none"/>
+  <!-- fabric folds -->
+  <path d="M208 300 Q200 360 198 420" stroke="#2e3136" stroke-width="2" fill="none"/>
+  <path d="M392 300 Q400 360 402 420" stroke="#2e3136" stroke-width="2" fill="none"/>
+
+  <!-- ============ NECK + TURTLENECK ============ -->
+  <path d="M276 196 L324 196 L326 236 L274 236 Z" fill="#d2a684"/>
+  <path d="M266 222 Q300 212 334 222 L338 262 Q300 272 262 262 Z" fill="#111214"/>
+  <path d="M270 236 Q300 228 330 236" stroke="#24262a" stroke-width="2" fill="none"/>
+
+  <!-- ============ HEAD ============ -->
+  <!-- ears -->
+  <ellipse cx="252" cy="150" rx="9" ry="16" fill="#cfa07e"/>
+  <ellipse cx="348" cy="150" rx="9" ry="16" fill="#cfa07e"/>
+  <!-- face -->
+  <path d="M258 118 Q258 76 300 74 Q342 76 342 118 L340 160 Q334 194 300 206 Q266 194 260 160 Z" fill="url(#skin)"/>
+  <!-- cheek / jaw shading -->
+  <!-- brows -->
+  <path d="M270 126 Q282 119 294 124" stroke="#8c6e3c" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M306 124 Q318 119 330 126" stroke="#8c6e3c" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- eyes -->
+  <path d="M272 138 Q282 131 292 138 Q282 142 272 138 Z" fill="#f3ece4"/>
+  <path d="M308 138 Q318 131 328 138 Q318 142 308 138 Z" fill="#f3ece4"/>
+  <circle cx="282" cy="137.5" r="3.6" fill="#4f7487"/><circle cx="318" cy="137.5" r="3.6" fill="#4f7487"/>
+  <circle cx="282" cy="137.5" r="1.6" fill="#141414"/><circle cx="318" cy="137.5" r="1.6" fill="#141414"/>
+  <path d="M271 137 Q282 129 293 137" stroke="#3a2a1c" stroke-width="2" fill="none"/>
+  <path d="M307 137 Q318 129 329 137" stroke="#3a2a1c" stroke-width="2" fill="none"/>
+  <!-- nose -->
+  <path d="M300 140 L296 166 Q300 170 306 166" stroke="#a8795a" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- mouth: calm, focused -->
+  <path d="M288 182 Q300 186 312 182" stroke="#9a5f52" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M291 186 Q300 190 309 186" stroke="#c48a7c" stroke-width="2" fill="none" stroke-linecap="round"/>
+
+  <!-- hair: short, swept back -->
+  <path d="M254 128 Q248 70 296 60 Q346 56 352 108 Q354 126 346 140 Q342 110 330 98 Q306 86 280 96 Q262 106 260 140 Z" fill="url(#hair)"/>
+  <path d="M262 108 Q290 80 336 94" stroke="#f1e0ae" stroke-width="3" fill="none" opacity=".8"/>
+  <path d="M268 98 Q300 76 342 104" stroke="#9a7f45" stroke-width="2" fill="none"/>
+
+  <!-- ============ HOOD-UP INSET ============ -->
+  <g transform="translate(500 70)">
+    <rect width="200" height="220" rx="4" fill="#101310" stroke="#4a4f3a" stroke-width="2"/>
+    <path d="M40 214 Q36 120 60 80 Q100 20 140 80 Q164 120 160 214 Z" fill="url(#poncho)"/>
+    <path d="M72 120 Q72 84 100 82 Q128 84 128 120 L126 150 Q120 176 100 184 Q80 176 74 150 Z" fill="url(#skin)"/>
+    <path d="M60 96 Q100 56 140 96 Q138 74 100 66 Q62 74 60 96 Z" fill="#1d2023"/>
+    <path d="M70 120 Q100 92 130 120 Q126 104 100 100 Q74 104 70 120 Z" fill="#0b0c0d" opacity=".85"/>
+    <circle cx="88" cy="130" r="3" fill="#4f7487"/><circle cx="112" cy="130" r="3" fill="#4f7487"/>
+    <path d="M90 166 Q100 169 110 166" stroke="#9a5f52" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    <text x="100" y="18" fill="#a3a68a" font-size="12" text-anchor="middle" letter-spacing="2">HOOD UP</text>
+  </g>
+
+  <!-- ============ NOTES ============ -->
+  <g fill="#d6ceb0">
+    <text x="740" y="96" font-size="30" font-weight="bold" letter-spacing="4">SHADOW CELL</text>
+    <text x="740" y="124" font-size="14" fill="#8d8f78" letter-spacing="3">LEAD OPERATIVE · CONCEPT v1</text>
+    <g font-size="15" fill="#d6ceb0">
+      <text x="740" y="180">AGE ........ 28–29</text>
+      <text x="740" y="206">BUILD ...... athletic, grounded</text>
+      <text x="740" y="232">HAIR ....... short blonde, swept back</text>
+      <text x="740" y="258">EYES ....... grey-blue</text>
+    </g>
+    <text x="740" y="304" font-size="14" fill="#a7c46a" letter-spacing="2">KIT</text>
+    <g font-size="15">
+      <text x="740" y="330">· black hooded poncho, open front</text>
+      <text x="740" y="356">· black turtleneck</text>
+      <text x="740" y="382">· olive one-piece field suit</text>
+      <text x="740" y="408">· black Y-harness + suspenders</text>
+      <text x="740" y="434">· knife high on left strap</text>
+      <text x="740" y="460">· pistol belt, pouches, holster</text>
+      <text x="740" y="486">· leather gloves, laced boots</text>
+    </g>
+    <text x="740" y="532" font-size="14" fill="#a7c46a" letter-spacing="2">3D TARGET</text>
+    <g font-size="15">
+      <text x="740" y="558">· 15–25k triangles, ≤3 materials</text>
+      <text x="740" y="584">· 1024px textures (512 low tier)</text>
+      <text x="740" y="610">· Mixamo-named game rig</text>
+      <text x="740" y="636">· poncho skinned to spine/head</text>
+    </g>
+    <text x="740" y="900" font-size="12" fill="#8d8f78">2D concept sketch for direction only.</text>
+    <text x="740" y="918" font-size="12" fill="#8d8f78">The in-game model will be a rigged 3D human.</text>
+    <text x="740" y="936" font-size="12" fill="#8d8f78">Original design, not an existing character.</text>
+  </g>
+</svg>
