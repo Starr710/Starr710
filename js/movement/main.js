@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -87,7 +87,7 @@
     posture = new mv.TacticalPosture(visual, { carry: location.hash === '#rifle' ? 'rifle' : 'unarmed' });
     footsteps = new mv.FootstepEmitter(noise, visual, motor, 'player');
     // one stationary test guard sharing the player's model and clips
-    guard = new mv.Guard(scene, world, visual, Object.assign({ vision: 'regular' }, area.guard));
+    guard = new mv.Guard(scene, world, visual, Object.assign({ vision: 'regular', hearing: 'regular' }, area.guard), noise);
     guardView = new mv.GuardDebugView(scene, guard);
     seeTarget = mv.visionTarget(visual, motor);
     const s = animator.stride;
@@ -134,6 +134,7 @@
       footsteps.update(dt);
       guard.update(dt, seeTarget);
       guardView.update(camera, seeTarget);
+      guard.hearing.updateDebug(scene);
     }
     noise.update(dt);
     cam.update(dt, motor, input.look, input.mouse);
@@ -155,6 +156,8 @@
         const s = guard.vision.seen;
         ui.guard.textContent = (s.zone ? s.zone.toUpperCase() : '—') + ' · ' + (isFinite(s.distance) ? s.distance.toFixed(1) + ' m' : '–') + (s.zone ? ' · ' + Math.round(s.exposure * 100) + '% exposed' : '');
         ui.detect.textContent = Math.round(guard.vision.meter * 100) + '% ' + guard.vision.state();
+        const h = guard.hearing.last;
+        ui.hear.textContent = h ? `${h.heard ? 'HEARD' : 'IGNORED'} ${h.type} L${h.level} ${h.surface} i${h.intensity.toFixed(1)} · ${h.distance.toFixed(1)}/${h.reach.toFixed(1)} m · ${guard.hearing.state()}` : 'LISTENING';
       }
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
       ui.fps.textContent = fps.toFixed(0) + ' · ' + renderer.info.render.calls + ' draws';

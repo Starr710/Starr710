@@ -371,9 +371,9 @@ const CHECKS = {
       place(3.2, -3.8, 'crouch'); out.lowCrouch = watch(3);
       // a 2.8 m wall (the corridor at x = 16) between them, with long range and the guard turned to face her
       const yaw0 = g.yaw, prof = v.profile; v.profile = 'great';
-      place(17, -8, 'stand'); g.yaw = Math.atan2(17 - 2, -8 + 16); g.place(); out.wall = watch(3);
+      place(17, -8, 'stand'); g.yaw = Math.atan2(17 - 2, -8 + 16); g.faceYaw(g.yaw); g.place(); out.wall = watch(3);
       place(15, -8, 'stand'); out.wallFront = watch(3);
-      g.yaw = yaw0; g.place(); v.profile = prof;
+      g.yaw = yaw0; g.faceYaw(yaw0); g.place(); v.profile = prof;
       return out;
     });
     const ok = r.tallStand.meter === 0 && r.tallStand.why === 'blocked' && r.lowStand.meter > 0 && r.lowCrouch.meter === 0 && r.lowCrouch.why === 'blocked' && r.wall.meter === 0 && r.wall.exposure === 0 && r.wallFront.meter > 0;
@@ -397,6 +397,123 @@ const CHECKS = {
     });
     const ok = r.at05 >= r.peak - 0.02 && r.at2 < r.at05 - 0.1 && r.at2 > 0.05 && r.at5 === 0 && r.rises === 0;
     return { pass: ok, detail: `meter ${Math.round(r.peak * 100)}% → after 0.5 s ${Math.round(r.at05 * 100)}%, 2 s ${Math.round(r.at2 * 100)}%, 5 s ${Math.round(r.at5 * 100)}% (hold ${r.hold} s, then −${r.rate}/s)` };
+  },
+
+  // ---- guard hearing (the same guard, Regular hearing). Synthetic events use the
+  // noise system's own emit, so their reach is exactly what footsteps would carry.
+
+  // heard inside the event's own reach × sensitivity, ignored outside; the reach
+  // (surface included) is taken from the event, not recomputed
+  async hearingRange() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const g = MV.guard, h = g.hearing, n = MV.noise, gp = g.position;
+      const at = (d, level, surface) => { n.emit(level, 'footstep', new THREE.Vector3(gp.x + d, 0, gp.z), surface, 'player'); return Object.assign({}, h.last); };
+      const out = {
+        c55: at(5.5, 2, 'concrete'), c65: at(6.5, 2, 'concrete'),
+        m9: at(9, 2, 'metal'), c9: at(9, 2, 'concrete'), g5: at(5, 2, 'grass'), g3: at(3, 2, 'grass'),
+      };
+      h.profile = 'keen'; out.keen7 = at(7, 2, 'concrete'); h.profile = 'poor'; out.poor5 = at(5, 2, 'concrete'); h.profile = 'regular';
+      out.ownGuardIgnored = (() => { const before = h.heardCount; n.emit(3, 'footstep', new THREE.Vector3(gp.x + 1, 0, gp.z), 'concrete', 'guard'); return h.heardCount === before; })();
+      return out;
+    });
+    const ok = r.c55.heard && !r.c65.heard && r.m9.heard && !r.c9.heard && !r.g5.heard && r.g3.heard && r.keen7.heard && !r.poor5.heard && r.ownGuardIgnored
+      && Math.abs(r.c55.reach - 6) < 1e-6 && Math.abs(r.m9.reach - 11.5) < 0.05 && Math.abs(r.g5.reach - 3.6125) < 0.01;
+    const f = (k, x) => `${k} ${x.heard ? 'heard' : 'ignored'} (${x.distance.toFixed(1)}/${x.reach.toFixed(1)} m)`;
+    return { pass: ok, detail: [f('concrete L2 at 5.5', r.c55), f('6.5', r.c65), f('metal L2 at 9', r.m9), f('concrete L2 at 9', r.c9), f('grass L2 at 5', r.g5), f('3', r.g3), f('keen concrete at 7', r.keen7), f('poor concrete at 5', r.poor5)].join(', ') + (r.ownGuardIgnored ? '' : ', OWN SOUND HEARD') };
+  },
+
+  // real footsteps on each strip: heard just inside their reach, ignored just outside;
+  // metal carries farther than concrete, concrete farther than grass; sneaking is
+  // quieter than jogging; standing still makes no sound for him to hear
+  async hearingSurfaces() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, h = g.hearing, fs = MV.footsteps, evs = [];
+      noise.on(e => evs.push(e));
+      const go = (m, st) => { step(m, st); fs.update(1 / 60); noise.update(1 / 60); };
+      const post = g.position.clone(), out = {};
+      let edgesOk = true;
+      for (const [x, surf] of [[-3.3, 'concrete'], [0, 'metal'], [3.3, 'grass']]) for (const [gait, m] of [['sneak', 0.3], ['stealth walk', 0.78], ['jog', 1]]) {
+        motor.teleport(x, 0.5, 0); for (let f = 0; f < 400 && motor.position.z < 4.6; f++) go(m, 'stand');
+        evs.length = 0; for (let f = 0; f < 400 && motor.position.z < 8.4; f++) go(m, 'stand');
+        const ev = evs.filter(e => e.surface === surf)[0];
+        // stand the guard just inside, then just outside, this step's reach
+        const reach = ev.radius * h.sensitivity();
+        g.position.set(ev.position.x + reach - 0.3, 0, ev.position.z); const inside = h.evaluate(ev).heard;
+        g.position.set(ev.position.x + reach + 0.3, 0, ev.position.z); const outside = h.evaluate(ev).heard;
+        edgesOk = edgesOk && inside && !outside;
+        out[surf + ' ' + gait] = reach;
+      }
+      g.position.copy(post); g.place();
+      // standing still on each strip for 5 s: no footsteps, nothing heard
+      const before = h.heardCount; let idleSteps = 0;
+      for (const x of [-3.3, 0, 3.3]) { motor.teleport(x, 6.5, Math.PI); for (let f = 0; f < 120; f++) go(0, 'stand'); evs.length = 0; for (let f = 0; f < 300; f++) { go(0, 'stand'); g.update(1 / 60); } idleSteps += evs.length; }
+      return { reach: out, edgesOk, idleSteps, idleHeard: h.heardCount - before };
+    });
+    const R = r.reach, gaits = ['sneak', 'stealth walk', 'jog'];
+    const surfOk = gaits.every(gt => R['metal ' + gt] > R['concrete ' + gt] && R['concrete ' + gt] > R['grass ' + gt]);
+    const gaitOk = ['concrete', 'metal', 'grass'].every(sf => R[sf + ' sneak'] < R[sf + ' stealth walk'] && R[sf + ' stealth walk'] < R[sf + ' jog']);
+    const ok = surfOk && gaitOk && r.edgesOk && r.idleSteps === 0 && r.idleHeard === 0;
+    return { pass: ok, detail: gaits.map(gt => `${gt} grass/concrete/metal ${R['grass ' + gt].toFixed(1)}/${R['concrete ' + gt].toFixed(1)}/${R['metal ' + gt].toFixed(1)} m`).join(', ') + `; heard inside / ignored outside each: ${r.edgesOk}; idle: ${r.idleSteps} steps, ${r.idleHeard} heard` };
+  },
+
+  // he turns (not snaps) toward where the sound was made, after a short beat, looks,
+  // then returns to his post; he faces the sound's origin, not the player; his vision
+  // cone turns with him; hearing alone never fills the vision meter
+  async hearingTurn() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, h = g.hearing, v = g.vision, T = MV.seeTarget, dt = 1 / 60;
+      const wrapD = a => Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) * 57.3;
+      // the player stands far off to his left, silent, out of his view
+      motor.teleport(-12, -18, 0); for (let f = 0; f < 120; f++) step(0, 'stand');
+      const soundAt = new THREE.Vector3(g.position.x + 5, 0, g.position.z);   // 90° to his right
+      const bearing = Math.atan2(soundAt.x - g.position.x, soundAt.z - g.position.z);
+      noise.emit(3, 'footstep', soundAt, 'concrete', 'player');
+      const yaw0 = g.yaw; let maxStep = 0, prev = g.yaw, t = 0, startT = null, faceT = null, meterMax = 0;
+      for (let f = 0; f < 180; f++) { step(0, 'stand'); g.update(dt, T); t += dt; const d = wrapD(g.yaw - prev); maxStep = Math.max(maxStep, d); prev = g.yaw; if (startT == null && wrapD(g.yaw - yaw0) > 0.5) startT = t; if (faceT == null && wrapD(g.yaw - bearing) < 3) faceT = t; meterMax = Math.max(meterMax, v.meter); }
+      const facingSound = wrapD(g.yaw - bearing), facingPlayer = wrapD(g.yaw - Math.atan2(motor.position.x - g.position.x, motor.position.z - g.position.z));
+      // the cone turned with him: the player at the sound's spot is now in his fastest zone
+      motor.teleport(soundAt.x + 1.5, soundAt.z, Math.PI); for (let f = 0; f < 120; f++) step(0, 'stand');
+      const seenAfterTurn = Object.assign({}, v.look(T));
+      motor.teleport(-12, -18, 0); for (let f = 0; f < 60; f++) step(0, 'stand');
+      // after the look he returns to his post facing
+      let back = null; for (let f = 0; f < 600 && back == null; f++) { step(0, 'stand'); g.update(dt, T); if (h.lookYaw == null && wrapD(g.yaw - g.postYaw) < 3) back = f * dt; }
+      return { startT, faceT, maxStep, facingSound, facingPlayer, meterMax, zoneAfter: seenAfterTurn.zone, rateAfter: seenAfterTurn.rate, back, react: h.cfg.reactDelay, maxRate: g.cfg.turn.maxRate };
+    });
+    const perFrame = r.maxRate / 60 * 57.3 + 0.05;
+    const ok = r.startT >= r.react - 0.02 && r.startT < r.react + 0.2 && r.faceT != null && r.faceT < 2.5 && r.maxStep <= perFrame && r.facingSound < 3 && r.facingPlayer > 30
+      && r.meterMax === 0 && r.zoneAfter === 'fastest' && r.rateAfter > 0 && r.back != null;
+    return { pass: ok, detail: `starts turning after ${r.startT.toFixed(2)} s, faces the sound in ${r.faceT == null ? 'never' : r.faceT.toFixed(2) + ' s'}, max ${r.maxStep.toFixed(2)}°/frame (limit ${perFrame.toFixed(2)}); facing sound ±${r.facingSound.toFixed(1)}°, player ${r.facingPlayer.toFixed(0)}° away; meter while only heard ${r.meterMax}; after the turn the player there is in ${r.zoneAfter} (${r.rateAfter.toFixed(2)}/s); back at post ${r.back == null ? 'never' : 'after ' + r.back.toFixed(1) + ' s'}` };
+  },
+
+  // a run of real footsteps circling behind him: redirects are spaced out, the turn
+  // stays smooth (no rapid reversals), and his limbs never pop
+  async hearingJitter() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, h = g.hearing, fs = MV.footsteps, T = MV.seeTarget, dt = 1 / 60, B = g.bones;
+      const names = ['spine1', 'chest', 'neck', 'head', 'leftArm', 'rightArm', 'leftForeArm', 'rightForeArm', 'leftUpLeg', 'rightUpLeg', 'leftLeg', 'rightLeg'];
+      const prevQ = {}, lastA = {}; let pops = 0, worst = 0, redirects = 0, maxDav = 0, flips = 0, prevAv = 0, lastFlip = -9;
+      let lr = h.lastRedirect;
+      motor.teleport(g.position.x - 4, g.position.z - 3, 0); for (let f = 0; f < 60; f++) step(0, 'stand');
+      for (let f = 0; f < 600; f++) {
+        // jog on a 4 m circle around a point behind him
+        const a = f * dt * 1.1, x = Math.cos(a), z = -Math.sin(a);
+        step(1, 'stand', x, z); fs.update(dt); noise.update(dt); g.update(dt, T);
+        if (h.lastRedirect !== lr) { redirects++; lr = h.lastRedirect; }
+        const av = g.body.angularVelocity; maxDav = Math.max(maxDav, Math.abs(av - prevAv));
+        if (Math.sign(av) !== Math.sign(prevAv) && Math.abs(av) > 0.3 && Math.abs(prevAv) > 0.3) { if (f * dt - lastFlip < 0.5) flips++; lastFlip = f * dt; }
+        prevAv = av;
+        const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert();
+        for (const nm of names) { const q = ri.clone().multiply(B[nm].getWorldQuaternion(new THREE.Quaternion())); if (prevQ[nm] && f > 30) { const ang = 2 * Math.acos(Math.min(1, Math.abs(q.dot(prevQ[nm])))) * 57.3, leg = nm.endsWith('Leg'); const spike = leg ? (ang > 12 && ang > 2 * (lastA[nm] || 0)) : ang > 9; lastA[nm] = ang; if (spike) { pops++; worst = Math.max(worst, ang); } } prevQ[nm] = q; }
+      }
+      return { heard: h.heardCount, redirects, maxDav, flips, pops, worst, gap: h.cfg.retargetGap };
+    });
+    const maxRedirects = Math.floor(10 / r.gap) + 1;
+    const ok = r.heard > 5 && r.redirects <= maxRedirects && r.maxDav < 0.75 && r.flips === 0 && r.pops === 0;
+    return { pass: ok, detail: `${r.heard} footsteps heard in 10 s, ${r.redirects} look redirects (max ${maxRedirects}), largest turn-rate change ${r.maxDav.toFixed(2)} rad/s per frame, rapid reversals ${r.flips}, guard joint pops ${r.pops}${r.worst ? ' (worst ' + r.worst.toFixed(1) + '°)' : ''}` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
