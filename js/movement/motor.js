@@ -21,12 +21,16 @@
     { id: 'sprint', label: 'SPRINT', max: Infinity },
   ];
 
+  mv.CROUCH_GAITS = [{ id: 'crouch', label: 'CROUCH' }, { id: 'crouchwalk', label: 'CROUCH WALK' }];
+
   mv.MotorDefaults = {
     radius: 0.32,
     // stick magnitude → target speed, piecewise linear
     // wide, separate zones: sneak up to ~60% push, stealth walk ~68–88%, jog past ~94%
-    speedCurve: [[0.12, 0.75], [0.6, 1.0], [0.68, 1.75], [0.88, 1.85], [0.94, 3.2], [1.0, 3.2]],
+    speedCurve: [[0.12, 0.75], [0.6, 1.0], [0.68, 1.45], [0.88, 1.55], [0.94, 3.2], [1.0, 3.2]],
     sprintSpeed: 5.6,
+    // crouch-walk: light push creeps, full push is a steady crouch-walk
+    crouchSpeedCurve: [[0.12, 0.5], [0.55, 0.7], [0.8, 1.05], [1.0, 1.1]],
     accel: 3.4,            // m/s² when speeding up at walking pace…
     accelFast: 2.6,        // …and when pushing past jog into a sprint (it takes effort)
     decel: 5.2,            // m/s² when easing off
@@ -50,6 +54,7 @@
     this.accel = 0;            // m/s², for animation lean
     this.targetSpeed = 0;
     this.gait = mv.GAITS[0];
+    this.stance = 'stand';     // 'stand' | 'crouch'
     this.blocked = false;
     this.stopDistance = 0;     // set by the animator while finishing a step
     this.contactX = 0; this.contactZ = 0;
@@ -76,8 +81,9 @@
   // dirX/dirZ: desired world-space direction (unit or zero), magnitude 0..1, sprint flag.
   mv.CharacterMotor.prototype.update = function (dt, dirX, dirZ, magnitude, sprint) {
     const c = this.cfg;
-    let target = curve(c.speedCurve, magnitude);
-    if (sprint && magnitude > 0.35) target = c.sprintSpeed;
+    const crouched = this.stance === 'crouch';
+    let target = curve(crouched ? c.crouchSpeedCurve : c.speedCurve, magnitude);
+    if (sprint && magnitude > 0.35 && !crouched) target = c.sprintSpeed;
     const hasInput = target > 0;
 
     // ---- turning: chase the stick angle with a limited, smoothed angular rate
@@ -135,6 +141,6 @@
 
     // ---- gait label (for animation + HUD)
     const s = this.speed;
-    this.gait = mv.GAITS.find(g => s <= g.max);
+    this.gait = crouched ? (s < 0.05 ? mv.CROUCH_GAITS[0] : mv.CROUCH_GAITS[1]) : mv.GAITS.find(g => s <= g.max);
   };
 })(SC.mv);

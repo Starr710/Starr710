@@ -44,17 +44,20 @@
     this.roll = 0; this.pitch = 0;
     const mixer = visual.mixer;
     this.actions = {};
-    for (const k of ['idle', 'walk', 'run', 'sprint']) {
+    for (const k of ['idle', 'walk', 'run', 'sprint', 'crouchIdle', 'crouchWalk']) {
       const clip = visual.clips[k];
       if (!clip) continue;
       const a = mixer.clipAction(clip);
       a.play();
       a.setEffectiveWeight(k === 'idle' ? 1 : 0);
-      if (k !== 'idle') a.setEffectiveTimeScale(0);   // gait clips are scrubbed by phase
+      if (k !== 'idle' && k !== 'crouchIdle') a.setEffectiveTimeScale(0);   // gait clips are scrubbed by phase
       this.actions[k] = a;
     }
-    this.stride = {};
-    for (const k of ['walk', 'run', 'sprint']) if (visual.clips[k]) this.stride[k] = this.calibrate(visual.clips[k]);
+    const S = this.stride = {};
+    for (const k of ['walk', 'run', 'sprint', 'crouchWalk']) if (visual.clips[k]) this.stride[k] = this.calibrate(visual.clips[k]);
+    // a profile may pin measured speeds (stylized clips can fool the measurement)
+    const pin = visual.profile.strideSpeeds || {};
+    for (const k in pin) if (this.stride[k]) { this.stride[k].speed = pin[k]; this.stride[k].length = pin[k] * this.stride[k].duration; }
     // which way the idle clip's hips face relative to the walk's (mocap idles
     // often stand turned side-on); the posture layer squares the stance up
     this.idleYaw = this.facing(visual.clips.idle) - this.facing(visual.clips.walk);
@@ -65,12 +68,24 @@
       const fi = this.facing(visual.clips.idle, side), fw = this.facing(visual.clips.walk, side);
       return fi == null || fw == null ? 0 : wrapA(fw - (fi - this.idleYaw));
     });
+    // stride table and blend points may be tuned per character
+    if (visual.profile.strideScale) this.cfg.strideScale = visual.profile.strideScale;
+    this.blendPts = visual.profile.blend || null;
+    // crouch walk shares the gait phase: offset its clock so the same foot leads
+    this.crouchOffset = 0;
+    if (S.crouchWalk && S.walk) {
+      const lead = (clip, ph) => this.leadFoot(clip, ph);
+      let off = ((S.crouchWalk.passing[0] - S.walk.passing[0]) % 1 + 1) % 1;
+      if (lead(visual.clips.walk, S.walk.passing[0] + 0.15) !== lead(visual.clips.crouchWalk, S.crouchWalk.passing[0] + 0.15)) off = (off + 0.5) % 1;
+      this.crouchOffset = off;
+    }
+    this.crouchW = 0;
     // the probe shares the mixer's cached actions, so restart them after measuring
     for (const k in this.actions) {
       const a = this.actions[k];
       a.reset().play();
       a.setEffectiveWeight(k === 'idle' ? 1 : 0);
-      a.setEffectiveTimeScale(k === 'idle' ? 1 : 0);
+      a.setEffectiveTimeScale(k === 'idle' || k === 'crouchIdle' ? 1 : 0);
     }
     this.weights = { idle: 1, walk: 0, run: 0, sprint: 0 };
     this.strideScale = 1;
@@ -110,6 +125,21 @@
     return Math.atan2(sx, sz);
   };
 
+  // Which foot is further forward at a phase: 0 = left, 1 = right.
+  mv.AnimationController.prototype.leadFoot = function (clip, phase) {
+    const v = this.v, b = v.bones, mixer = v.mixer, root = v.root;
+    const probe = mixer.clipAction(clip).stop();
+    const others = Object.values(this.actions).map(a => [a, a.getEffectiveWeight()]);
+    others.forEach(([a]) => a.setEffectiveWeight(0));
+    probe.reset().play().setEffectiveWeight(1).setEffectiveTimeScale(0);
+    probe.time = clip.duration * (((phase % 1) + 1) % 1);
+    mixer.update(0); root.updateMatrixWorld(true);
+    const l = root.worldToLocal(b.leftFoot.getWorldPosition(new THREE.Vector3())).z, r = root.worldToLocal(b.rightFoot.getWorldPosition(new THREE.Vector3())).z;
+    probe.stop();
+    others.forEach(([a, wt]) => a.setEffectiveWeight(wt));
+    return l > r ? 0 : 1;
+  };
+
   // Measure a looping gait clip's natural ground speed from its planted foot:
   // whichever foot is lowest is on the ground, and it travels backward relative
   // to the body at exactly the speed the body would move forward.
@@ -135,7 +165,8 @@
     for (let i = 1; i <= N; i++) {
       for (let k = 0; k < 2; k++) {
         const a = samples[i - 1][k], b = samples[i][k];
-        const planted = a.y < minY[k] + 0.03 && b.y < minY[k] + 0.03 && a.y <= samples[i - 1][1 - k].y;
+        // planted: at its lowest (within 1.5 cm), below the other foot, and moving back
+        const planted = a.y < minY[k] + 0.015 && b.y < minY[k] + 0.015 && a.y <= samples[i - 1][1 - k].y && b.z < a.z;
         if (planted) speeds.push(-(b.z - a.z) / (T / N));
       }
     }
@@ -159,10 +190,17 @@
     const s = Math.max(0, motor.speed);
     const walk = S.walk, run = S.run, sprint = S.sprint;
 
-    // ---- blend space weights
+    // ---- stance: crouch fades in/out over ~0.3 s
+    const cw = S.crouchWalk && A.crouchIdle ? (motor.stance === 'crouch' ? 1 : 0) : 0;
+    this.crouchW += (cw - this.crouchW) * (1 - Math.exp(-9 * dt));
+    if (Math.abs(this.crouchW - cw) < 1e-3) this.crouchW = cw;
+    const C = this.crouchW, cwk = S.crouchWalk;
+
     // ---- locomotion state: moving / stopping (finish the step) / stopped
     const wantsMove = motor.targetSpeed > 0;
-    const passing = walk.passing && walk.passing.length ? walk.passing : [0, 0.5];
+    const standPass = walk.passing && walk.passing.length ? walk.passing : [0, 0.5];
+    // stops land on the passing pose of whichever stance is active (in walk-phase terms)
+    const passing = C > 0.5 && cwk ? cwk.passing.map(p => ((p - this.crouchOffset) % 1 + 1) % 1) : standPass;
     const ahead = p => ((p - this.phase) % 1 + 1) % 1;
     if (wantsMove) {
       if (this.state === 'stopped' && s < 0.05) this.phase = passing[0];  // first step starts from the passing pose
@@ -196,7 +234,8 @@
       } else if (s <= 0.03 || this.stopRemain <= 0.004) {
         // land on the stop pose if we're (nearly) there; never jump the pose otherwise
         if (this.stopRemain < 0.03) this.phase = this.stopTarget;
-        this.state = 'stopped'; this.settle = 0;
+        // carry on from the idle blend the stop already reached (never dip back)
+        this.state = 'stopped'; this.settle = this.stopIdle || 0;
         motor.stopDistance = s > 0.03 ? 0.02 : 0;      // pull up the last few cm/s
       }
     }
@@ -210,15 +249,20 @@
     // the idle weight glides; state changes can never pop the pose
     this.idleSm = this.idleSm == null ? idleW : this.idleSm + (idleW - this.idleSm) * (1 - Math.exp(-14 * dt));
     idleW = this.idleSm;
-    const toRun = smooth(walk.speed * 1.05, run.speed * 0.85, s);
-    const toSprint = sprint ? smooth(run.speed * 1.1, sprint.speed * 0.95, s) : 0;
+    const bp = this.blendPts;
+    const toRun = bp ? smooth(bp.walkToRun[0], bp.walkToRun[1], s) : smooth(walk.speed * 1.05, run.speed * 0.85, s);
+    const toSprint = sprint ? (bp ? smooth(bp.runToSprint[0], bp.runToSprint[1], s) : smooth(run.speed * 1.1, sprint.speed * 0.95, s)) : 0;
     const moveW = 1 - idleW;
-    const wWalk = moveW * (1 - toRun), wRun = moveW * toRun * (1 - toSprint), wSprint = moveW * toRun * toSprint;
+    const St = 1 - C;
+    const wWalk = St * moveW * (1 - toRun), wRun = St * moveW * toRun * (1 - toSprint), wSprint = St * moveW * toRun * toSprint;
 
     // ---- shared gait phase: distance / blended stride length, clamped play rate
-    this.strideScale = mv.table(c.strideScale, s);
-    const blendLen = lerp(lerp(walk.length, run.length, toRun), sprint ? sprint.length : run.length, toSprint) * this.strideScale;
-    const blendDur = lerp(lerp(walk.duration, run.duration, toRun), sprint ? sprint.duration : run.duration, toSprint);
+    // (crouch-walk plays at its own stride; stealth stride shaping is standing-only)
+    this.strideScale = lerp(mv.table(c.strideScale, s), 1, C);
+    const standLen = lerp(lerp(walk.length, run.length, toRun), sprint ? sprint.length : run.length, toSprint);
+    const standDur = lerp(lerp(walk.duration, run.duration, toRun), sprint ? sprint.duration : run.duration, toSprint);
+    const blendLen = lerp(standLen * mv.table(c.strideScale, s), cwk ? cwk.length : standLen, C);
+    const blendDur = lerp(standDur, cwk ? cwk.duration : standDur, C);
     let rate = s / blendLen * blendDur;                       // cycles per cycle-duration
     // while stopping, the phase follows ground distance exactly (no minimum rate),
     // so the planted foot stays put as the body decelerates into the stop
@@ -230,11 +274,13 @@
     this.phase = (this.phase + dPhase) % 1;
     this._lastLen = blendLen;
 
-    A.idle.setEffectiveWeight(idleW);
+    A.idle.setEffectiveWeight(idleW * St);
+    if (A.crouchIdle) A.crouchIdle.setEffectiveWeight(idleW * C);
+    if (A.crouchWalk) { A.crouchWalk.setEffectiveWeight(moveW * C); A.crouchWalk.time = ((this.phase + this.crouchOffset) % 1) * cwk.duration; }
     A.walk.setEffectiveWeight(wWalk); A.walk.time = this.phase * walk.duration;
     A.run.setEffectiveWeight(wRun); A.run.time = this.phase * run.duration;
     if (A.sprint) { A.sprint.setEffectiveWeight(wSprint); A.sprint.time = this.phase * sprint.duration; }
-    this.weights.idle = idleW; this.weights.walk = wWalk; this.weights.run = wRun; this.weights.sprint = wSprint;
+    this.weights.idle = idleW; this.weights.crouch = C; this.weights.walk = wWalk; this.weights.run = wRun; this.weights.sprint = wSprint;
     this.playRate = rate;
 
     this.v.mixer.update(dt);

@@ -91,4 +91,15 @@ Then load `movement.html` with `window.SC_CHARACTER = 'operative'` set before `m
 Gait clips must loop cleanly and start with the **left foot planted**, or at least share a consistent phase convention. The walk and run phases are synced by normalized time.
 
 ## Current temporary character
-`assets/characters/test-soldier.glb` is the Mixamo "Vanguard" from the three.js examples, carrying motion-captured idle, walk and run clips. It's used under Mixamo's terms (free to use in projects, but not to redistribute as a standalone asset). It's a stand-in only, and will be replaced by the operative.
+`assets/characters/ual-mannequin.glb` is the mannequin from Quaternius's **Universal Animation Library (Standard)**, licensed **CC0** (public domain; see `ual-mannequin.LICENSE.txt`). It's a 53-bone Rigify `DEF-*` skeleton, mapped in the `mannequin` profile.
+- **Clips used:** `Idle_Loop`, `Walk_Loop`, `Jog_Fwd_Loop` (jog, and sprint at full stride), `Crouch_Idle_Loop`, `Crouch_Fwd_Loop`.
+- **Kept for later stages:** Roll, PickUp_Table, Interact and the Pistol set.
+- **Build:** `tools/optimize-ual.mjs` trims the clips and meshopt-compresses the file to 2.7 MB.
+- **Clip speeds:** fitted by a foot-slip sweep through the full controller (`strideSpeeds` and `strideScale` in the profile).
+- **Previous stand-in:** the Mixamo soldier (`test-soldier.glb`) is still available as the `testSoldier` profile.
+
+## Stances
+- **Motor:** `motor.stance` is `'stand'` or `'crouch'`, with a separate `crouchSpeedCurve` (creep about 0.5–0.7 m/s, crouch-walk up to 1.1 m/s). Sprint is unavailable while crouched; pressing RUN stands her up.
+- **Animator:** crouch idle and crouch walk are their own blend layer. The layer fades over about 0.3 s and shares the gait phase, with an offset measured so the same foot leads. Stops land on the crouch walk's passing pose.
+- **Posture:** stealth shaping fades out while crouched, because the crouch clips carry their own posture.
+- **Camera:** drops 0.45 m when crouched.

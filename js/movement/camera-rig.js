@@ -9,7 +9,7 @@
   const wrap = a => { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; };
 
   mv.CameraDefaults = {
-    distance: 3.6, height: 1.45, shoulder: 0.38,
+    distance: 3.6, height: 1.45, shoulder: 0.38, crouchDrop: 0.45,
     pitch: 0.2, minPitch: -0.45, maxPitch: 1.05,
     sensitivity: 0.0062,      // rad per px of thumb drag (touch)
     mouseSensitivity: 0.0038,
@@ -61,7 +61,9 @@
     }
 
     // critically damped spring toward the character
-    const tx = motor.position.x, ty = motor.position.y + c.height, tz = motor.position.z;
+    // camera drops with the operative when she crouches
+    this.crouchK = (this.crouchK || 0) + ((motor.stance === 'crouch' ? 1 : 0) - (this.crouchK || 0)) * (1 - Math.exp(-6 * dt));
+    const tx = motor.position.x, ty = motor.position.y + c.height - c.crouchDrop * this.crouchK, tz = motor.position.z;
     const w = c.followStiffness, f = this.focus, v = this.focusVel, e = Math.exp(-w * dt);
     for (const [axis, t] of [['x', tx], ['y', ty], ['z', tz]]) {
       const x = f[axis] - t, tmp = (v[axis] + w * x) * dt;

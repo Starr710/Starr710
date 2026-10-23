@@ -54,10 +54,10 @@ body { position: fixed; inset: 0; }
   display: grid; place-items: center; font-size: 10px; letter-spacing: 2px; color: var(--muted); opacity: .7;
   left: calc(36px + env(safe-area-inset-left, 0px)); bottom: calc(30px + env(safe-area-inset-bottom, 0px));
 }
-.mv-look-hint { position: absolute; pointer-events: none; font-size: 10px; letter-spacing: 2px; color: var(--muted); opacity: .6; right: calc(118px + env(safe-area-inset-right, 0px)); bottom: calc(46px + env(safe-area-inset-bottom, 0px)); }
+.mv-look-hint { position: absolute; pointer-events: none; font-size: 10px; letter-spacing: 2px; color: var(--muted); opacity: .6; right: calc(200px + env(safe-area-inset-right, 0px)); bottom: calc(52px + env(safe-area-inset-bottom, 0px)); }
 .stick-on #mv-joy-base, .stick-on #mv-joy-knob { opacity: 1; }
 .stick-on #mv-joy-hint { opacity: 0; }
-body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.playing) #mv-sprint { visibility: hidden; }
+body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.playing) #mv-sprint, body:not(.playing) #mv-crouch { visibility: hidden; }
 
 #mv-sprint {
   position: absolute; width: 78px; height: 78px; border-radius: 50%;
@@ -66,6 +66,14 @@ body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.pla
   background: var(--panel); border: 1.5px solid var(--text); touch-action: none;
 }
 #mv-sprint.on { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+#mv-crouch {
+  position: absolute; width: 66px; height: 66px; border-radius: 50%;
+  right: calc(118px + env(safe-area-inset-right, 0px)); bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px; color: var(--text);
+  background: var(--panel); border: 1.5px solid var(--text); touch-action: none;
+}
+#mv-crouch.on { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+#mv-crouch:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 .mv-overlay {
   position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;

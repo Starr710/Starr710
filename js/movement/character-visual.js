@@ -35,7 +35,42 @@
   // finger chains: <Left|Right>Hand<Thumb|Index|Middle|Ring|Pinky><1..3>
   const FINGER = /(left|right)_?hand_?(thumb|index|middle|ring|pinky)_?([123])$/i;
 
+  // Rigify DEF-* skeleton (Quaternius UAL). three.js strips "." from node names,
+  // so "DEF-thigh.L" arrives as "DEF-thighL" and "DEF-spine.001" as "DEF-spine001".
+  const RIGIFY_BONES = {
+    hips: 'DEF-hips', spine: 'DEF-spine001', spine1: 'DEF-spine002', chest: 'DEF-spine003', neck: 'DEF-neck', head: 'DEF-head',
+    leftShoulder: 'DEF-shoulderL', rightShoulder: 'DEF-shoulderR',
+    leftArm: 'DEF-upper_armL', rightArm: 'DEF-upper_armR', leftForeArm: 'DEF-forearmL', rightForeArm: 'DEF-forearmR',
+    leftHand: 'DEF-handL', rightHand: 'DEF-handR',
+    leftUpLeg: 'DEF-thighL', rightUpLeg: 'DEF-thighR', leftLeg: 'DEF-shinL', rightLeg: 'DEF-shinR',
+    leftFoot: 'DEF-footL', rightFoot: 'DEF-footR', leftToe: 'DEF-toeL', rightToe: 'DEF-toeR',
+  };
+  // DEF-f_index01L / DEF-thumb01L → side, finger, segment
+  const RIGIFY_FINGER = /^DEF-(?:f_)?(thumb|index|middle|ring|pinky)0([123])(L|R)$/;
+
   mv.CHARACTER_PROFILES = {
+    // Temporary playable character: Quaternius "Universal Animation Library" mannequin (CC0),
+    // with real mocap-style idle, walk, jog, sprint, crouch idle and crouch walk.
+    mannequin: {
+      url: 'assets/characters/ual-mannequin.glb',
+      forwardYaw: 0,
+      bones: RIGIFY_BONES,
+      fingerPattern: RIGIFY_FINGER,
+      // (its Sprint_Loop's foot contacts don't match any ground speed, so the long-
+      // striding jog clip doubles as the sprint at full stride)
+      clips: { idle: 'Idle_Loop', walk: 'Walk_Loop', run: 'Jog_Fwd_Loop', crouchIdle: 'Crouch_Idle_Loop', crouchWalk: 'Crouch_Fwd_Loop' },
+      inPlace: true,
+      materialFix: { roughness: 0.75, color: 0x6b6f5a },
+      // natural ground speed of each clip (m/s), found by a foot-slip sweep; the
+      // stylized jog and sprint take long strides, so they're shortened in play
+      // clip ground speeds (m/s) as played here, fitted by a foot-slip sweep through
+      // the full controller; sneak takes shorter steps than the stealth walk
+      strideSpeeds: { walk: 1.13, run: 5.6, crouchWalk: 0.75 },
+      // the long stylized jog strides are shortened by the leg layer; playback rates
+      // land at ~0.94 sneak, ~1.26 stealth walk, ~0.92 jog, ~1.0 sprint
+      strideScale: [[0, 0.85], [1.0, 0.85], [1.45, 1.05], [2.2, 0.8], [3.2, 0.62], [4.4, 0.82], [5.6, 1.0]],
+      blend: { walkToRun: [1.6, 3.0], runToSprint: [3.8, 5.3] },
+    },
     // Temporary playable character: Mixamo "Vanguard" mocap rig from the three.js examples.
     testSoldier: {
       url: 'assets/characters/test-soldier.glb',
@@ -92,12 +127,22 @@
         o.frustumCulled = false;          // skinned bounds don't follow the animated pose
         if (o.isSkinnedMesh) this.skinned.push(o);
         const m = o.material;
-        if (m && p.materialFix) { if (p.materialFix.roughness != null) m.roughness = Math.max(m.roughness, p.materialFix.roughness); m.metalness = 0; }
+        if (m && p.materialFix) {
+          if (p.materialFix.roughness != null) m.roughness = Math.max(m.roughness, p.materialFix.roughness);
+          if (p.materialFix.color != null && m.color) m.color.setHex(p.materialFix.color);
+          m.metalness = 0;
+        }
       }
       if (o.isBone) {
-        for (const k in BONE_PATTERNS) if (!this.bones[k] && BONE_PATTERNS[k].test(o.name)) this.bones[k] = o;
-        const f = FINGER.exec(o.name);
-        if (f) (this.fingers[f[1].toLowerCase()] = this.fingers[f[1].toLowerCase()] || []).push({ bone: o, finger: f[2].toLowerCase(), seg: +f[3] });
+        if (p.bones) { for (const k in p.bones) if (p.bones[k] === o.name) this.bones[k] = o; }
+        else for (const k in BONE_PATTERNS) if (!this.bones[k] && BONE_PATTERNS[k].test(o.name)) this.bones[k] = o;
+        if (p.fingerPattern) {
+          const f = p.fingerPattern.exec(o.name);
+          if (f) { const side = f[3] === 'L' ? 'left' : 'right'; (this.fingers[side] = this.fingers[side] || []).push({ bone: o, finger: f[1], seg: +f[2] }); }
+        } else {
+          const f = FINGER.exec(o.name);
+          if (f) (this.fingers[f[1].toLowerCase()] = this.fingers[f[1].toLowerCase()] || []).push({ bone: o, finger: f[2].toLowerCase(), seg: +f[3] });
+        }
       }
     });
     for (const k of ['hips', 'leftFoot', 'rightFoot']) if (!this.bones[k]) throw new Error('Character rig is missing a "' + k + '" bone');
@@ -111,6 +156,8 @@
     this.clips.walk = pick('walk', /walk/i);
     this.clips.run = pick('run', /run|jog/i);
     if (p.clips.sprint) this.clips.sprint = pick('sprint', /sprint/i);
+    if (p.clips.crouchIdle) this.clips.crouchIdle = pick('crouchIdle', /crouch.*idle/i);
+    if (p.clips.crouchWalk) this.clips.crouchWalk = pick('crouchWalk', /crouch.*(fwd|walk)/i);
     for (const k of ['idle', 'walk', 'run']) if (!this.clips[k]) throw new Error('Character is missing a "' + k + '" animation clip');
 
     if (p.inPlace) for (const k in this.clips) if (this.clips[k]) this._stripRootMotion(this.clips[k]);

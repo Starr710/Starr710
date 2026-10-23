@@ -231,6 +231,8 @@
   // ---------------------------------------------------------------- per frame
   mv.TacticalPosture.prototype.update = function (dt, motor, animator) {
     const v = this.v, b = v.bones, root = v.root, c = this.cfg, t = this.t;
+    // stealth shaping is for the standing gaits; the crouch clips carry their own posture
+    const st = this.st = animator && animator.weights.crouch != null ? 1 - animator.weights.crouch : 1;
     root.updateMatrixWorld(true);
     if (!this._calibrated) this._calibrate();
     const s = Math.max(0, motor.speed);
@@ -242,7 +244,7 @@
     // -1. square up the idle stance: turn hips + legs to face forward, and turn the
     // spine back by the same amount so the shoulders stay where the clip had them
     if (animator && animator.idleYaw && b.hips) {
-      const k = animator.weights.idle * this.cfg.idleSquare;
+      const k = animator.weights.idle * this.cfg.idleSquare * st;
       if (k > 1e-3) {
         const q = new THREE.Quaternion().setFromAxisAngle(up, -animator.idleYaw * k);
         rotateWorld(b.hips, q, t);
@@ -257,6 +259,7 @@
     // 1. forward lean
     let lean = c.lean[c.lean.length - 1][1];
     for (let i = 1; i < c.lean.length; i++) if (s <= c.lean[i][0]) { const a = c.lean[i - 1], bb = c.lean[i]; lean = lerp(a[1], bb[1], (s - a[0]) / (bb[0] - a[0])); break; }
+    lean *= st;
     [b.spine, b.spine1, b.chest].forEach((bone, i) => { if (bone) rotateWorld(bone, new THREE.Quaternion().setFromAxisAngle(left, lean * c.leanShare[i]), t); });
 
     // 2. damp shoulder twist: turn the chest back toward the travel direction
@@ -281,13 +284,14 @@
   mv.TacticalPosture.prototype._legs = function (dt, s, stride, fwd, left, up, animator) {
     const b = this.v.bones, t = this.t;
     if (!b.leftUpLeg || !b.leftLeg || !b.rightUpLeg || !b.rightLeg) return;
-    const want = mv.table(this.cfg.hipDrop, s);
+    const st = this.st == null ? 1 : this.st;
+    const want = mv.table(this.cfg.hipDrop, s) * st;
     this.drop = this.drop == null ? want : this.drop + (want - this.drop) * (1 - Math.exp(-6 * dt));
     const hips = b.hips, H = wpos(hips, V());
     // sneaking keeps the body level: flatten the clip's vertical hip bob toward
     // its running average (this also removes a knee hitch under the lowered stance)
     this.hipsMean = this.hipsMean == null ? H.y : this.hipsMean + (H.y - this.hipsMean) * (1 - Math.exp(-2 * dt));
-    H.y += (this.hipsMean - H.y) * mv.table(this.cfg.levelHips, s);
+    H.y += (this.hipsMean - H.y) * mv.table(this.cfg.levelHips, s) * st;
     // where the clip put each foot, pulled toward the hips along travel for shorter steps
     const feet = ['left', 'right'].map(side => {
       const foot = b[side + 'Foot'], p = wpos(foot, V()), q = foot.getWorldQuaternion(Q());
@@ -321,7 +325,7 @@
     H.addScaledVector(up, -this.drop).addScaledVector(fwd, -this.drop * this.cfg.hipsBack);
     hips.position.copy(hips.parent.worldToLocal(H));
     hips.updateMatrixWorld(true);
-    rotateWorld(hips, new THREE.Quaternion().setFromAxisAngle(left, mv.table(this.cfg.pelvisTilt, s)), t);
+    rotateWorld(hips, new THREE.Quaternion().setFromAxisAngle(left, mv.table(this.cfg.pelvisTilt, s) * st), t);
     for (const f of feet) {
       const out = f.side === 'left' ? left.clone() : left.clone().negate();
       const pole = fwd.clone().add(out.multiplyScalar(0.15));
@@ -337,7 +341,7 @@
   mv.TacticalPosture.prototype._idleFeet = function (animator, up) {
     const b = this.v.bones, t = this.t;
     if (!animator || !animator.idleFootYaw) return;
-    const k = animator.weights.idle * this.cfg.idleSquare;
+    const k = animator.weights.idle * this.cfg.idleSquare * (this.st == null ? 1 : this.st);
     if (k < 1e-3) return;
     ['left', 'right'].forEach((side, i) => {
       const f = b[side + 'Foot'];
@@ -363,7 +367,8 @@
 
   mv.TacticalPosture.prototype._unarmed = function (dt, s, walkF, sprintF, fwd, left, up) {
     const b = this.v.bones, t = this.t;
-    const keep = armGait(s, 1), bend = armGait(s, 2), forward = armGait(s, 3);
+    const st = this.st == null ? 1 : this.st;
+    const keep = lerp(1, armGait(s, 1), st), bend = armGait(s, 2) * st, forward = armGait(s, 3) * st;
     const k = 1 - Math.exp(-2.5 * dt);
     this.armMean = this.armMean || {};
     for (const side of ['left', 'right']) {

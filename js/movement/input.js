@@ -11,6 +11,7 @@
     this.move = { x: 0, y: 0 };
     this.look = { dx: 0, dy: 0 };
     this.sprint = false;
+    this.crouch = false;
     this.mouse = false;          // last look came from a mouse
     this.enabled = false;
     this.els = els;
@@ -21,7 +22,16 @@
 
   const P = mv.Input.prototype;
 
+  // CROUCH toggles; sprinting stands her up, crouching cancels a sprint
+  P.setCrouch = function (on) {
+    this.crouch = on;
+    this.els.crouch.classList.toggle('on', on);
+    this.els.crouch.setAttribute('aria-pressed', String(on));
+    if (on && this.sprint) this.setSprint(false);
+  };
+
   P.setSprint = function (on) {
+    if (on && this.crouch) this.setCrouch(false);
     this.sprint = on;
     this.els.sprint.classList.toggle('on', on);
     this.els.sprint.setAttribute('aria-pressed', String(on));
@@ -55,6 +65,7 @@
     });
     window.addEventListener('mouseup', () => { drag = null; });
     this.els.sprint.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail !== 0) this.setSprint(!this.sprint); });
+    this.els.crouch.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail !== 0) this.setCrouch(!this.crouch); });
   };
 
   P._ts = function (e) {
@@ -63,6 +74,7 @@
     for (const t of e.changedTouches) {
       const el = document.elementFromPoint(t.clientX, t.clientY);
       if (el && el.closest && el.closest('#mv-sprint')) { this.btn.set(t.identifier, 'sprint'); this.setSprint(!this.sprint); continue; }
+      if (el && el.closest && el.closest('#mv-crouch')) { this.btn.set(t.identifier, 'crouch'); this.setCrouch(!this.crouch); continue; }
       if (el && el.closest && el.closest('button, .mv-panel')) { allow = true; continue; }
       if (!this.joy && t.clientX < window.innerWidth * 0.45) {
         this.joy = { id: t.identifier, ox: t.clientX, oy: t.clientY };
@@ -113,6 +125,7 @@
     const k = e.code;
     if (down) this.keys.add(k); else this.keys.delete(k);
     if (k === 'ShiftLeft' || k === 'ShiftRight') this.setSprint(down);
+    if (k === 'KeyC' && down && !e.repeat) this.setCrouch(!this.crouch);
     let x = 0, y = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1;

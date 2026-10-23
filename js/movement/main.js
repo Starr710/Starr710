@@ -59,10 +59,10 @@
   const world = new mv.CollisionWorld();
   const area = mv.buildTestArea(scene, world, renderer);
   const motor = new mv.CharacterMotor(world);
-  const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), sprint: $('mv-sprint') });
+  const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), sprint: $('mv-sprint'), crouch: $('mv-crouch') });
   const cam = new mv.ThirdPersonCamera(camera, world);
   const actions = new mv.ActionSystem();
-  const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
+  const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'mannequin'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
   scene.add(visual.root);
@@ -113,6 +113,7 @@
       const mag = Math.min(1, Math.hypot(mx, my));
       const l = Math.hypot(dx, dz); if (l > 1e-4) { dx /= l; dz /= l; }
 
+      motor.stance = input.crouch ? 'crouch' : 'stand';
       if (!actions.busy()) motor.update(dt, dx, dz, mag, input.sprint);
       actions.update({ motor, world, visual, input }, dt, false);
       visual.place(motor.position, motor.yaw);
