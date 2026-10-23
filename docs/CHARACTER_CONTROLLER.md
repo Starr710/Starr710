@@ -16,6 +16,10 @@ Playable test: `movement.html`. The code is in `js/movement/`.
   - While idle, the hips and legs turn to face forward, the spine counter-turns so the shoulders stay put, and each foot's toe-out is matched to the walk.
   - `idleSquare` (0–1) controls it.
 
+**Two stealth gaits:** the shaping tables have a plateau for each.
+  - **Sneak** (≤0.8 m/s): hips about 6.5 cm low, pelvis tipped 0.2 rad, torso lean 0.38 rad, steps at 55%, body fully level, hands drawn up near the chest.
+  - **Stealth walk** (≥1.15 m/s): near-normal height and stride (86–90%), lean about 0.15 rad, arms ready with some swing.
+
 **Stealth legs:**
   - The hips lower slightly and the pelvis tips forward at sneaking pace.
   - Steps shorten, using the animator's `strideScale`, which also slows playback to match so the feet stay planted.

@@ -33,12 +33,12 @@
 
   mv.PostureDefaults = {
     // forward lean (rad) by ground speed (m/s)
-    lean: [[0, 0.08], [0.6, 0.3], [1.3, 0.25], [2.2, 0.19], [3.2, 0.2], [5.6, 0.3]],
-    hipDrop: [[0, 0.015], [0.5, 0.035], [1.0, 0.032], [1.5, 0.026], [2.4, 0.018], [3.4, 0.01], [5.0, 0]],
-    levelHips: [[0, 0], [0.4, 0.75], [1.4, 0.65], [2.4, 0.3], [3.4, 0]],   // share of hip bob removed
+    lean: [[0, 0.08], [0.4, 0.38], [0.8, 0.38], [1.15, 0.15], [1.6, 0.14], [2.2, 0.16], [3.2, 0.2], [5.6, 0.3]],
+    hipDrop: [[0, 0.015], [0.4, 0.065], [0.8, 0.065], [1.15, 0.02], [1.6, 0.018], [2.4, 0.012], [3.4, 0.006], [5.0, 0]],
+    levelHips: [[0, 0], [0.4, 0.9], [0.8, 0.9], [1.15, 0.45], [1.6, 0.4], [2.4, 0.25], [3.4, 0]],   // share of hip bob removed
     ankleLock: 0.7,
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
-    pelvisTilt: [[0, 0.04], [0.5, 0.15], [1.3, 0.13], [2.4, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
+    pelvisTilt: [[0, 0.04], [0.4, 0.2], [0.8, 0.2], [1.15, 0.07], [1.6, 0.06], [2.4, 0.05], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
     leanShare: [0.4, 0.3, 0.3],       // spine, spine1, chest
     twistDamp: 0.7,                   // 0 = clip twist, 1 = chest locked to travel direction
@@ -92,7 +92,8 @@
   // by gait, and how much of the clip's own arm swing survives.
   const UNARMED = {
     idle: { r: [-0.21, -0.42, 0.1], l: [0.21, -0.42, 0.1], keep: 0.55 },
-    walk: { r: [-0.2, -0.3, 0.19], l: [0.2, -0.3, 0.19], keep: 0.28 },
+    sneak: { r: [-0.17, -0.2, 0.22], l: [0.17, -0.2, 0.22], keep: 0.1 },   // hands drawn up near the chest, barely swinging
+    walk: { r: [-0.21, -0.34, 0.15], l: [0.21, -0.34, 0.15], keep: 0.42 },  // ready but relaxed, some swing
     jog: { r: [-0.21, -0.26, 0.15], l: [0.21, -0.26, 0.15], keep: 0.4 },
     sprint: { r: [-0.22, -0.24, 0.1], l: [0.22, -0.24, 0.1], keep: 0.75 },
   };
@@ -349,8 +350,10 @@
     const v = this.v, b = v.bones, root = v.root, t = this.t;
     const jogF = smooth(1.8, 3.0, s);
     const U = UNARMED;
-    const mixArr = side => U.idle[side].map((x, i) => lerp(lerp(lerp(x, U.walk[side][i], walkF), U.jog[side][i], jogF), U.sprint[side][i], sprintF));
-    const keep = lerp(lerp(lerp(U.idle.keep, U.walk.keep, walkF), U.jog.keep, jogF), U.sprint.keep, sprintF);
+    // idle → sneak (≤0.8 m/s) → stealth walk (≥1.15 m/s) → jog → sprint
+    const toWalk = smooth(0.8, 1.15, s);
+    const mixArr = side => U.idle[side].map((x, i) => lerp(lerp(lerp(x, lerp(U.sneak[side][i], U.walk[side][i], toWalk), walkF), U.jog[side][i], jogF), U.sprint[side][i], sprintF));
+    const keep = lerp(lerp(lerp(U.idle.keep, lerp(U.sneak.keep, U.walk.keep, toWalk), walkF), U.jog.keep, jogF), U.sprint.keep, sprintF);
     const chestL = root.worldToLocal(wpos(b.chest, V()));
     const right = left.clone().negate();
     const rPole = right.clone().multiplyScalar(0.5).add(up.clone().multiplyScalar(-0.6)).add(fwd.clone().multiplyScalar(-1));
