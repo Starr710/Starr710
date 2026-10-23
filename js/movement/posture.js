@@ -51,9 +51,9 @@
     twistDamp: 0.7,                   // 0 = clip twist, 1 = chest locked to travel direction
     headSteady: 0.65,
     headPitch: 0.04,                  // eyes slightly down the line of travel
-    // crouch idle (MGSV-style): low kneeling crouch, the back knee near the ground and that
-    // foot on its toes, one hand down to the ground; slow breathing, weight shifts, head scans
-    crouchIdle: { drop: 0.1, heel: 0.07, reach: [-0.1, -0.35], idleBend: [0.35, -0.8], idleInward: 0.08, breathe: 0.03, sway: 0.018, scan: 0.45 },
+    // crouch idle (MGSV-style): low kneeling crouch with the back knee near the ground,
+    // one hand down to the ground; slow breathing, weight shifts, head scans
+    crouchIdle: { drop: 0.18, reach: [-0.1, -0.35], idleBend: [0.35, -0.8], idleInward: 0.08, breathe: 0.03, sway: 0.018, scan: 0.45 },
     crouchHeadSteady: 0.8,            // crouched: how firmly the head is held to the gaze below
     crouchHeadPitch: 0.1,             // crouched: rad the gaze tips down (head follows the spine more)
     weaponStiffness: 55,              // carbine follow spring (higher = less lag)
@@ -340,14 +340,11 @@
       p.addScaledVector(fwd, -along * (1 - stride));
       return { side, foot, p, q };
     });
-    // crouch idle: sink into a low kneeling crouch (the back knee near the ground, the
-    // back foot up on its toes), with the hips shifting their weight slowly side to side
+    // crouch idle: sink into a low kneeling crouch (the clip already has the back foot
+    // on its toes; the feet stay planted and the back knee comes down near the ground),
+    // with the hips shifting their weight slowly side to side
     const ci = this.ci || 0, cic = this.cfg.crouchIdle;
-    this.rearFoot = -1;
     if (ci > 1e-3) {
-      const al = feet.map(f => f.p.clone().sub(H).dot(fwd));
-      this.rearFoot = al[0] < al[1] ? 0 : 1;
-      feet[this.rearFoot].p.addScaledVector(up, cic.heel * ci);
       H.addScaledVector(up, -cic.drop * ci).addScaledVector(left, cic.sway * Math.sin(this.clock * 2 * Math.PI / 7.5) * ci);
     }
     // settle step after a stop: the planted foot stays locked to the ground and the
@@ -399,15 +396,6 @@
       // the shin a little, so the joint never folds sharply
       const kept = f.foot.getWorldQuaternion(Q()).slerp(f.q, this.cfg.ankleLock);
       setWorldQuat(f.foot, kept, t);
-      // crouch idle: the raised back foot pitches toe-down so it rests on its toes
-      const toe = b[f.side + 'ToeBase'];
-      if (feet.indexOf(f) === this.rearFoot && toe) {
-        const ankle = wpos(f.foot, V()), tp = wpos(toe, V());
-        const L = Math.max(0.05, tp.distanceTo(ankle));
-        const a = Math.asin(Math.min(0.9, this.cfg.crouchIdle.heel * ci / L));
-        rotateWorld(f.foot, new THREE.Quaternion().setFromAxisAngle(left, a), t);
-        if (wpos(toe, V()).y > tp.y) rotateWorld(f.foot, new THREE.Quaternion().setFromAxisAngle(left, -2 * a), t);
-      }
     }
   };
 
