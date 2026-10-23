@@ -37,13 +37,13 @@
     hipDrop: [[0, 0.015], [0.7, 0.035], [1.3, 0.032], [1.9, 0.026], [2.6, 0.018], [3.4, 0.01], [5.0, 0]],
     levelHips: [[0, 0], [0.6, 0.75], [1.8, 0.65], [2.6, 0.3], [3.4, 0]],   // share of hip bob removed
     ankleLock: 0.7,
-    // tactical crouch (MGS-style): hinge forward from the hips, upper back rounded,
-    // head following the spine with the eyes ahead, arms hanging loose and swinging
+    // tactical crouch (MGSV-style): hinge forward from the hips with a fairly flat back,
+    // head up looking ahead, elbows bent with the hands out in front, arms swinging
     crouchHinge: 0.48,                // rad pelvis tips forward (the lean comes from the hips)
     crouchChestUp: 0.08,               // rad the spine is straightened against the clip's rounding
-    crouchNeckLift: 0.4,
-    crouchHunch: 0.5,                  // rad the upper back rounds forward (the neck lifts by as much)
-    crouchArms: { keep: 0.8, bend: 0.35, forward: 0.35, inward: 0.12, swing: 1.05 },   // swing: rad per metre the opposite foot is ahead
+    crouchNeckLift: 0.5,
+    crouchHunch: 0.25,                 // rad the upper back rounds forward (the neck lifts by as much)
+    crouchArms: { keep: 0.8, bend: 0.8, forward: 0.7, inward: 0.12, swing: 1.05 },   // swing: rad per metre the opposite foot is ahead
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.7, 0.15], [1.7, 0.13], [2.6, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
@@ -53,9 +53,9 @@
     headPitch: 0.04,                  // eyes slightly down the line of travel
     // crouch idle (MGSV-style): squat with the feet only slightly staggered, the
     // lead hand low toward the ground, slow breathing, weight shifts and head scans
-    crouchIdle: { stagger: 0.2, reach: [0.75, 0.35], idleBend: 0.35, idleInward: 0.12, breathe: 0.03, sway: 0.018, scan: 0.45 },
-    crouchHeadSteady: 0.6,            // crouched: how firmly the head is held to the gaze below
-    crouchHeadPitch: 0.3,             // crouched: rad the gaze tips down (head follows the spine more)
+    crouchIdle: { stagger: 0.2, reach: [0.35, 0.0], idleBend: -0.2, idleInward: 0.12, breathe: 0.03, sway: 0.018, scan: 0.45 },
+    crouchHeadSteady: 0.8,            // crouched: how firmly the head is held to the gaze below
+    crouchHeadPitch: 0.1,             // crouched: rad the gaze tips down (head follows the spine more)
     weaponStiffness: 55,              // carbine follow spring (higher = less lag)
     gripCurl: [0.95, 1.05, 0.75],
     supportCurl: [0.7, 0.8, 0.6],
