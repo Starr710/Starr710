@@ -1,16 +1,15 @@
 // SHADOW CELL — movement: player input.
-// Touch: a floating stick spawns wherever the left thumb lands (left 45% of the
-// screen); any drag elsewhere turns the camera; RUN toggles sprint and switches
-// itself off when the stick is released. Keyboard/mouse mirror it for desktop.
-// Output is device-independent: move {x,y} (stick space, |m| ≤ 1), look deltas
-// in px, and a sprint flag. Nothing here knows about the character.
+// Touch: the stick appears wherever the left thumb lands (left 45% of the
+// screen) and stays put; how far it's pushed picks sneak, stealth walk or jog.
+// Any drag elsewhere turns the camera; CROUCH toggles crouch. Keyboard/mouse
+// mirror it for desktop. Output is device-independent: move {x,y} (stick space,
+// |m| ≤ 1), look deltas in px, and a crouch flag. Nothing here knows about the character.
 (function (mv) {
   'use strict';
 
   mv.Input = function (els) {
     this.move = { x: 0, y: 0 };
     this.look = { dx: 0, dy: 0 };
-    this.sprint = false;
     this.crouch = false;
     this.mouse = false;          // last look came from a mouse
     this.enabled = false;
@@ -22,19 +21,11 @@
 
   const P = mv.Input.prototype;
 
-  // CROUCH toggles; sprinting stands her up, crouching cancels a sprint
+  // CROUCH toggles
   P.setCrouch = function (on) {
     this.crouch = on;
     this.els.crouch.classList.toggle('on', on);
     this.els.crouch.setAttribute('aria-pressed', String(on));
-    if (on && this.sprint) this.setSprint(false);
-  };
-
-  P.setSprint = function (on) {
-    if (on && this.crouch) this.setCrouch(false);
-    this.sprint = on;
-    this.els.sprint.classList.toggle('on', on);
-    this.els.sprint.setAttribute('aria-pressed', String(on));
   };
 
   P._knob = function (dx, dy) { this.els.knob.style.transform = `translate(${dx}px, ${dy}px)`; };
@@ -64,7 +55,6 @@
       drag.x = e.clientX; drag.y = e.clientY;
     });
     window.addEventListener('mouseup', () => { drag = null; });
-    this.els.sprint.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail !== 0) this.setSprint(!this.sprint); });
     this.els.crouch.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail !== 0) this.setCrouch(!this.crouch); });
   };
 
@@ -73,7 +63,6 @@
     let allow = false;
     for (const t of e.changedTouches) {
       const el = document.elementFromPoint(t.clientX, t.clientY);
-      if (el && el.closest && el.closest('#mv-sprint')) { this.btn.set(t.identifier, 'sprint'); this.setSprint(!this.sprint); continue; }
       if (el && el.closest && el.closest('#mv-crouch')) { this.btn.set(t.identifier, 'crouch'); this.setCrouch(!this.crouch); continue; }
       if (el && el.closest && el.closest('button, .mv-panel')) { allow = true; continue; }
       if (!this.joy && t.clientX < window.innerWidth * 0.45) {
@@ -112,7 +101,6 @@
       if (this.joy && t.identifier === this.joy.id) {
         this.joy = null; this.move.x = this.move.y = 0;
         this.els.root.classList.remove('stick-on');
-        this.setSprint(false);
       } else if (this.lookT && t.identifier === this.lookT.id) this.lookT = null;
       this.btn.delete(t.identifier);
     }
@@ -124,15 +112,14 @@
     if (!this.enabled) return;
     const k = e.code;
     if (down) this.keys.add(k); else this.keys.delete(k);
-    if (k === 'ShiftLeft' || k === 'ShiftRight') this.setSprint(down);
     if (k === 'KeyC' && down && !e.repeat) this.setCrouch(!this.crouch);
     let x = 0, y = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) y += 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) y -= 1;
-    // Ctrl = slow walk, Alt = walk, nothing = jog
-    const m = this.keys.has('ControlLeft') ? 0.35 : this.keys.has('AltLeft') ? 0.65 : 1;
+    // Ctrl = sneak, Alt = stealth walk, nothing = jog (each in the middle of its stick zone)
+    const m = this.keys.has('ControlLeft') ? 0.35 : this.keys.has('AltLeft') ? 0.78 : 1;
     const l = Math.hypot(x, y) || 1;
     if (!this.joy) { this.move.x = x / l * m; this.move.y = y / l * m; }
   };
@@ -140,7 +127,6 @@
   P.clear = function () {
     this.move.x = this.move.y = 0; this.look.dx = this.look.dy = 0;
     this.joy = this.lookT = null; this.btn.clear(); this.keys.clear();
-    this.setSprint(false);
     this.els.root.classList.remove('stick-on');
   };
 })(SC.mv);

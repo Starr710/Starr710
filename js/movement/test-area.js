@@ -1,6 +1,6 @@
 // SHADOW CELL — movement: Stage 1 test yard.
 // A flat 44 × 44 m concrete yard with a 1 m grid. It contains:
-// - a 30 m sprint lane with markings every 5 m
+// - a 30 m speed lane with markings every 5 m
 // - crates and pillars to collide with
 // - a long wall and a narrow L-shaped corridor to test wall sliding and camera pull-in
 // - a perimeter wall
@@ -60,7 +60,7 @@
     box(0, -H, SIZE, 0.5, 1.4, mats.wall); box(0, H, SIZE, 0.5, 1.4, mats.wall);
     box(-H, 0, 0.5, SIZE, 1.4, mats.wall); box(H, 0, 0.5, SIZE, 1.4, mats.wall);
 
-    // sprint lane along +Z from the start, painted every 5 m
+    // speed lane along +Z from the start, painted every 5 m
     for (let m = 0; m <= 30; m += 5) {
       const stripe = new THREE.Mesh(new THREE.PlaneGeometry(3, m % 10 === 0 ? 0.18 : 0.08).rotateX(-Math.PI / 2), mats.paint);
       stripe.position.set(-6, 0.005, -18 + m + 2); scene.add(stripe);

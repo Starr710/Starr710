@@ -40,7 +40,6 @@
 <div id="mv-joy-base"></div>
 <div id="mv-joy-knob"></div>
 <div class="mv-look-hint">DRAG TO LOOK</div>
-<button type="button" id="mv-sprint" aria-pressed="false">RUN</button>
 <button type="button" id="mv-crouch" aria-pressed="false">CROUCH</button>
 
 <div class="mv-overlay" id="mv-loader" role="status" aria-live="polite">
@@ -51,10 +50,9 @@
     <div class="mv-small" id="mv-load-text">Loading character…</div>
     <ul class="mv-help">
       <li>Left thumb: move. A light push sneaks, a medium push is a stealth walk, a full push jogs.</li>
-      <li>RUN: sprint (turns off when you let go of the stick).</li>
-      <li>CROUCH: toggle crouch. Move while crouched to crouch-walk; RUN stands you up.</li>
+      <li>CROUCH: toggle crouch. Crouched, a light push is a slow crouch, a fuller push a fast crouch.</li>
       <li>Right thumb: turn the camera.</li>
-      <li>Keyboard: WASD, Shift sprint, C crouch, Alt walk, Ctrl slow walk, mouse drag to look.</li>
+      <li>Keyboard: WASD jog, hold Alt to stealth walk or Ctrl to sneak, C crouch, mouse drag to look.</li>
     </ul>
     <button type="button" class="mv-chip mv-primary" id="mv-start" hidden>START</button>
   </div>

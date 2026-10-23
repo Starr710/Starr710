@@ -33,7 +33,7 @@ body { position: fixed; inset: 0; }
   background: var(--panel); border: 1px solid var(--line); border-radius: 3px; min-height: 36px; padding: 0 12px; cursor: pointer;
 }
 .mv-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
-.mv-chip:focus-visible, #mv-sprint:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.mv-chip:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .mv-primary { background: var(--accent); color: var(--ink); border-color: var(--accent); font-size: 14px; min-height: 44px; }
 
 .mv-panel {
@@ -57,15 +57,8 @@ body { position: fixed; inset: 0; }
 .mv-look-hint { position: absolute; pointer-events: none; font-size: 10px; letter-spacing: 2px; color: var(--muted); opacity: .6; right: calc(200px + env(safe-area-inset-right, 0px)); bottom: calc(52px + env(safe-area-inset-bottom, 0px)); }
 .stick-on #mv-joy-base, .stick-on #mv-joy-knob { opacity: 1; }
 .stick-on #mv-joy-hint { opacity: 0; }
-body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.playing) #mv-sprint, body:not(.playing) #mv-crouch { visibility: hidden; }
+body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.playing) #mv-crouch { visibility: hidden; }
 
-#mv-sprint {
-  position: absolute; width: 78px; height: 78px; border-radius: 50%;
-  right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-  font-family: var(--font-mono); font-size: 13px; letter-spacing: 2px; color: var(--text);
-  background: var(--panel); border: 1.5px solid var(--text); touch-action: none;
-}
-#mv-sprint.on { background: var(--accent); color: var(--ink); border-color: var(--accent); }
 #mv-crouch {
   position: absolute; width: 66px; height: 66px; border-radius: 50%;
   right: calc(118px + env(safe-area-inset-right, 0px)); bottom: calc(28px + env(safe-area-inset-bottom, 0px));

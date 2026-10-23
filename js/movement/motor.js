@@ -12,13 +12,12 @@
   const smooth = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
   const lerp = (a, b, t) => a + (b - a) * t;
 
-  // Gait speeds (m/s). The stick picks a speed continuously; RUN overrides to sprint.
+  // Gait speeds (m/s). How far the stick is pushed picks sneak, stealth walk or jog.
   mv.GAITS = [
     { id: 'idle', label: 'IDLE', max: 0.05 },
     { id: 'sneak', label: 'SNEAK', max: 1.3 },
     { id: 'walk', label: 'STEALTH WALK', max: 2.3 },
-    { id: 'jog', label: 'JOG', max: 4.3 },
-    { id: 'sprint', label: 'SPRINT', max: Infinity },
+    { id: 'jog', label: 'JOG', max: Infinity },
   ];
 
   mv.CROUCH_GAITS = [{ id: 'crouch', label: 'CROUCH' }, { id: 'crouchslow', label: 'SLOW CROUCH' }, { id: 'crouchfast', label: 'FAST CROUCH' }];
@@ -28,17 +27,23 @@
     // stick magnitude → target speed, piecewise linear
     // wide, separate zones: sneak up to ~60% push, stealth walk ~68–88%, jog past ~94%
     speedCurve: [[0.12, 1.0], [0.6, 1.25], [0.68, 1.9], [0.88, 2.0], [0.94, 3.2], [1.0, 3.2]],
-    sprintSpeed: 5.6,
     // crouch-walk: light push creeps, full push is a steady crouch-walk
     // two crouch speeds, zoned like standing: slow crouch to ~60% push, fast crouch from ~68%
     crouchSpeedCurve: [[0.12, 0.8], [0.6, 1.0], [0.68, 1.85], [0.88, 2.0], [1.0, 2.0]],
-    accel: 3.4,            // m/s² when speeding up at walking pace…
-    accelFast: 2.6,        // …and when pushing past jog into a sprint (it takes effort)
+    // stick-travel zones, one per speed (the flat parts of the curves above). The
+    // zone only changes once the thumb is clearly past the midpoint between two
+    // zones (by zoneHysteresis), so there are no in-between speeds and a wobbling
+    // thumb can't flicker between two speeds
+    speedZones: [[0.12, 0.6], [0.68, 0.88], [0.94, 1.0]],
+    crouchSpeedZones: [[0.12, 0.6], [0.68, 1.0]],
+    zoneHysteresis: 0.035, // of full stick travel (≈2 px on the 64 px stick)
+    accel: 3.4,            // m/s² when speeding up
     decel: 5.2,            // m/s² when easing off
     brake: 9.0,            // m/s² when reversing hard
     maxStopTime: 0.9,      // s; finishing a step never drags on longer than this
-    turnRateWalk: 6.5,     // rad/s max body turn rate at walking speed
-    turnRateSprint: 2.6,   // rad/s at full sprint (wide arcs)
+    turnRateWalk: 6.5,     // rad/s max body turn rate at walking speed…
+    turnRateFast: 2.6,     // …tapering toward this as speed rises from 1.6 m/s to turnFastSpeed
+    turnFastSpeed: 5.6,    //   (≈5.1 rad/s at jog: wider arcs the faster she moves)
     turnRateIdle: 7.5,     // rad/s turning on the spot from a stand
     turnStiffness: 9,      // how hard the body chases the stick angle
     turnSmoothing: 16,     // angular-velocity smoothing (higher = snappier)
@@ -56,6 +61,7 @@
     this.targetSpeed = 0;
     this.gait = mv.GAITS[0];
     this.stance = 'stand';     // 'stand' | 'crouch'
+    this.zone = 0;             // current stick zone (0 = sneak / slow crouch)
     this.blocked = false;
     this.stopDistance = 0;     // set by the animator while finishing a step
     this.contactX = 0; this.contactZ = 0;
@@ -79,12 +85,27 @@
     return points[points.length - 1][1];
   }
 
-  // dirX/dirZ: desired world-space direction (unit or zero), magnitude 0..1, sprint flag.
-  mv.CharacterMotor.prototype.update = function (dt, dirX, dirZ, magnitude, sprint) {
+  // stick magnitude → the zone it's in, with hysteresis at the zone edges
+  mv.CharacterMotor.prototype._zone = function (zones, m) {
+    const h = this.cfg.zoneHysteresis;
+    if (m < zones[0][0]) return (this.zone = 0);
+    let z = Math.min(this.zone, zones.length - 1);
+    while (z < zones.length - 1 && m > (zones[z][1] + zones[z + 1][0]) / 2 + h) z++;
+    while (z > 0 && m < (zones[z - 1][1] + zones[z][0]) / 2 - h) z--;
+    return (this.zone = z);
+  };
+
+  // dirX/dirZ: desired world-space direction (unit or zero), magnitude 0..1.
+  mv.CharacterMotor.prototype.update = function (dt, dirX, dirZ, magnitude) {
     const c = this.cfg;
     const crouched = this.stance === 'crouch';
-    let target = curve(crouched ? c.crouchSpeedCurve : c.speedCurve, magnitude);
-    if (sprint && magnitude > 0.35 && !crouched) target = c.sprintSpeed;
+    const zones = crouched ? c.crouchSpeedZones : c.speedZones;
+    let target = 0;
+    if (magnitude >= zones[0][0]) {
+      // the push is held inside its zone, so the speed is always that zone's speed
+      const z = zones[this._zone(zones, magnitude)];
+      target = curve(crouched ? c.crouchSpeedCurve : c.speedCurve, Math.min(z[1], Math.max(z[0], magnitude)));
+    } else this.zone = 0;
     const hasInput = target > 0;
 
     // ---- turning: chase the stick angle with a limited, smoothed angular rate
@@ -93,7 +114,7 @@
       diff = wrap(Math.atan2(dirX, dirZ) - this.yaw);
       const sp = Math.max(0, this.speed);
       const maxRate = sp < 0.6 ? lerp(c.turnRateIdle, c.turnRateWalk, sp / 0.6)
-        : lerp(c.turnRateWalk, c.turnRateSprint, smooth(1.6, c.sprintSpeed, sp));
+        : lerp(c.turnRateWalk, c.turnRateFast, smooth(1.6, c.turnFastSpeed, sp));
       const want = Math.max(-maxRate, Math.min(maxRate, diff * c.turnStiffness));
       this.angularVelocity += (want - this.angularVelocity) * (1 - Math.exp(-c.turnSmoothing * dt));
     } else {
@@ -110,7 +131,7 @@
     this.targetSpeed = target;
     const prev = this.speed;
     let rate;
-    if (target > this.speed) rate = this.speed > 3.2 ? c.accelFast : c.accel;
+    if (target > this.speed) rate = c.accel;
     else rate = align < 0 && this.speed > 1.5 ? c.brake : c.decel;
     // the animator may ask for a specific stopping distance so the last step lands
     // on a natural stop pose; brake just hard enough to cover exactly that distance

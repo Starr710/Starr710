@@ -6,8 +6,8 @@ Playable test: `movement.html`. The code is in `js/movement/`.
 
 | File | Owns | Knows nothing about |
 |---|---|---|
-| `input.js` | Touch stick (left 45% of the screen), camera drag (rest of the screen), RUN toggle, keyboard and mouse. Outputs `move {x,y}`, `look {dx,dy}` and `sprint`. | The character, the camera |
-| `motor.js` | Movement and physics: target speed from stick magnitude, acceleration/deceleration, limited and smoothed turning, braking on reversal, collision sliding, ground height. Outputs `position`, `yaw`, `speed`, `angularVelocity`, `accel` and `gait`. | Meshes, bones, clips |
+| `input.js` | Touch stick (left 45% of the screen), camera drag (rest of the screen), CROUCH toggle, keyboard and mouse. Outputs `move {x,y}`, `look {dx,dy}` and `crouch`. There is no run button: how far the stick is pushed picks the speed. | The character, the camera |
+| `motor.js` | Movement and physics: target speed from stick magnitude (in zones, with hysteresis), acceleration/deceleration, limited and smoothed turning, braking on reversal, collision sliding, ground height. Outputs `position`, `yaw`, `speed`, `angularVelocity`, `accel` and `gait`. | Meshes, bones, clips |
 | `collision.js` | Static world: boxes and cylinders, with a circle-vs-world resolver. Holds the obstacle meshes that the camera avoids. | — |
 | `character-visual.js` | Loads a GLB through a **profile**. Exposes `root`, `mixer`, `clips.{idle,walk,run,sprint?}` and canonical `bones`. Strips root motion. Conditions each clip: resamples it at 60 fps on Catmull-Rom splines and applies a light cyclic Gaussian smooth (`clipSmoothing` in the profile), so mocap keyframe kinks don't show when a gait is slowed. | Input, movement rules |
 | `animator.js` | Animation state machine. Grounded locomotion runs through **moving → stopping → stopped**. On release she finishes the step: the motor is told how far to brake so she comes to rest at the walk clip's *passing* pose (feet level), measured automatically from the clip. If she stops short, a settle step follows: the planted foot stays locked while the other foot lifts and steps into the idle stance. Starts begin from the passing pose. Underneath is a speed blend space (idle ↔ walk ↔ run[/sprint]). One shared gait phase keeps the feet in step. Playback rate is matched to ground speed using stride speeds measured from the clips. A procedural whole-body lean sits on top. | Input, collision |
@@ -27,7 +27,7 @@ Playable test: `movement.html`. The code is in `js/movement/`.
   - Soft IK: the limb eases into full reach rather than snapping straight.
 
 Above the legs: forward lean grows with speed, shoulder twist is damped, the head is steadied, Arms follow a **carry profile**. `unarmed` is the default. It keeps the clip's own arm motion: each arm bone is pulled toward its running-average pose to reduce swing, the elbow gets extra bend about its own hinge, and the hands are loosely closed. Per-gait values are in the `ARM_GAIT` table. No IK is used. `rifle` is kept for a later stage: a carbine at low ready, port arms in a sprint, on a lag spring, with the hands on grip and handguard. Preview it with `movement.html#rifle`. Pistol, knife and other carries become further profiles. Legs, hips and gait rhythm stay 100% mocap. | Input, collision |
-| `camera-rig.js` | Third-person orbit: a spring-damped follow point, a shoulder offset, re-centring behind the character after 1.4 s without camera input, pull-in on obstacles, and a small sprint FOV kick. | The character mesh |
+| `camera-rig.js` | Third-person orbit: a spring-damped follow point, a shoulder offset, re-centring behind the character after 1.4 s without camera input, pull-in on obstacles, and a fixed field of view. | The character mesh |
 | `actions.js` | Context-action framework: register / available / start / update / end. **No actions are registered in Stage 1.** | — |
 | `test-area.js` | The test yard. | — |
 | `main.js` | Wiring and the frame loop: input → motor → place visual → animator → camera → render. | — |
@@ -36,11 +36,12 @@ Swapping the character never touches `motor.js`, `camera-rig.js`, `input.js` or 
 
 ## Tuning (all in one place)
 - **Speeds and feel:** `SC.mv.MotorDefaults` in `motor.js`.
-  - Stick-to-speed curve: sneak 1.0–1.25 m/s (up to about 60% push), stealth walk 1.9–2.0 (about 68–88%), jog 3.2 (from about 94%). Sprint (RUN) is 5.6.
-  - Accel 3.4 m/s² (2.6 above jog), decel 5.2, brake 9.
+  - Stick-to-speed curve: sneak 1.0–1.25 m/s (up to about 60% push), stealth walk 1.9–2.0 (about 68–88%), jog 3.2 (from about 94%). These are the only standing speeds; there is no sprint.
+  - **Stick zones** (`speedZones`, `crouchSpeedZones`, `zoneHysteresis`): each speed owns a zone of stick travel, and a push is held inside its zone, so there are no in-between speeds. The zone only changes once the thumb is about 2 px (`zoneHysteresis` 0.035) past the midpoint between two zones: sneak ↔ stealth walk at about 64%, stealth walk ↔ jog at about 91%. A wobbling thumb can't flicker between speeds; acceleration and the animation blend smooth the change when it happens.
+  - Accel 3.4 m/s², decel 5.2, brake 9.
   - Stops never last more than `maxStopTime` (0.9 s).
   - `settleTime` (0.45 s) in the animator sets the idle settle.
-  - Turn rates: 7.5 rad/s standing, 6.5 walking, 2.6 at full sprint.
+  - Turn rates: 7.5 rad/s standing, 6.5 walking, tapering to about 5.1 at jog (`turnRateFast`, `turnFastSpeed`).
 - **Blend thresholds, clip-rate limits and lean:** `SC.mv.AnimatorDefaults` in `animator.js`.
 - **Stealth gait:**
   - `strideScale` lives in `SC.mv.AnimatorDefaults`.
@@ -105,7 +106,7 @@ from a local server; the output is in `window.RESULT`.
 - **Direction-aware camera recentering** (`camera-rig.js`): the camera only drifts behind her when she's travelling away from or across the view. Walking toward the camera never swings it around. Manual look still cancels recentering for 1.4 s.
 
 ## Stances
-- **Motor:** `motor.stance` is `'stand'` or `'crouch'`, with a separate `crouchSpeedCurve` and two crouch speeds: slow crouch 0.8–1.0 m/s (up to about 60% push) and fast crouch 1.85–2.0 m/s (from about 68% push). Crouch steps are kept short (`crouchStrideScale`: 0.8× of the clip at slow crouch, up to 1.1× at fast crouch), so speed comes mostly from quicker steps (`crouchMaxPlayRate` 2.6). The crouched arms keep 40% of the clip's swing (`crouchArms.keep`). Sprint is unavailable while crouched; pressing RUN stands her up.
+- **Motor:** `motor.stance` is `'stand'` or `'crouch'`, with a separate `crouchSpeedCurve` and two crouch speeds: slow crouch 0.8–1.0 m/s (up to about 60% push) and fast crouch 1.85–2.0 m/s (from about 68% push). Crouch steps are kept short (`crouchStrideScale`: 0.8× of the clip at slow crouch, up to 1.1× at fast crouch), so speed comes mostly from quicker steps (`crouchMaxPlayRate` 2.6). The crouched arms keep 40% of the clip's swing (`crouchArms.keep`). The same stick zones apply: slow crouch ↔ fast crouch at about 64% push.
 - **Animator:** crouch idle and crouch walk are their own blend layer. The layer fades over about 0.3 s and shares the gait phase, with an offset measured so the same foot leads. Stops land on the crouch walk's passing pose.
 - **Posture:** stealth shaping fades out while crouched, because the crouch clips carry their own posture. On top, an MGSV-style shaping: hip hinge, a fairly flat back with a slight rounding (`crouchHunch`, with the neck lifted so the head stays looking ahead) and arms held forward with the elbows bent about 90° and the hands out in front of the knees. The crouch clip barely moves its arms, so each arm swings with the opposite leg (`crouchArms.swing`). The head follows the spine (`crouchHeadSteady`, `crouchHeadPitch`) rather than being cranked level. Hinging much past 0.48 folds the head under, so extra lean should come from the hunch.
 - **Crouch idle** (`crouchIdle` in `PostureDefaults`), layered on the crouch idle clip, which barely moves on its own:

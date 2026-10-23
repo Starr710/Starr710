@@ -16,7 +16,6 @@
     mouseSensitivity: 0.0038,
     followStiffness: 13,      // spring stiffness on the follow point
     recenterDelay: 1.4, recenterRate: 1.6,
-    sprintFov: 6,             // extra degrees of FOV at full sprint
     baseFov: 58,
   };
 
@@ -90,7 +89,7 @@
     this.cam.position.set(px, py, pz);
     this.cam.lookAt(ox - d.x * 4, oy - d.y * 4 + 0.05, oz - d.z * 4);
 
-    const fov = c.baseFov + c.sprintFov * Math.min(1, Math.max(0, (motor.speed - 4) / 1.6));
+    const fov = c.baseFov;
     if (Math.abs(this.cam.fov - fov) > 0.05) { this.cam.fov += (fov - this.cam.fov) * (1 - Math.exp(-4 * dt)); this.cam.updateProjectionMatrix(); }
   };
 })(SC.mv);
