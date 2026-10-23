@@ -6,10 +6,9 @@
   'use strict';
 
   const MODEL_URL = window.SC_MODEL_URL || 'assets/models/operative.glb';
-  // Current file is a stand-in used to validate the pipeline and iPhone performance;
-  // it faces -Z, so it is turned to face the FRONT camera.
-  const MODEL_YAW = Math.PI;
-  const MODEL_NOTE = 'STAND-IN MODEL · FINAL OPERATIVE PENDING';
+  // the operative faces +Z; overrides let other assets be reviewed on the same stage
+  const MODEL_YAW = window.SC_MODEL_YAW != null ? window.SC_MODEL_YAW : 0;
+  const MODEL_NOTE = window.SC_MODEL_NOTE != null ? window.SC_MODEL_NOTE : '';
   const LOAD_TIMEOUT_MS = 45000;
   const BG = 0x16191a;
 
@@ -39,7 +38,7 @@
   }
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 0.9;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = true;
@@ -69,7 +68,7 @@
 
   const hemi = new THREE.HemisphereLight(0xdfe4e6, 0x4b4536, 0.75);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff1dc, 2.1);
+  const key = new THREE.DirectionalLight(0xffeedd, 1.8);
   key.position.set(2.2, 4.2, 3.0);
   key.castShadow = true;
   const sc = key.shadow.camera;
@@ -79,7 +78,7 @@
   key.shadow.radius = 3;
   scene.add(key);
   scene.add(key.target);
-  const rim = new THREE.DirectionalLight(0xc8d8ff, 1.1);
+  const rim = new THREE.DirectionalLight(0xdfe6f0, 0.8);
   rim.position.set(-2.5, 3.0, -3.5);
   scene.add(rim);
   const fill = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -314,6 +313,7 @@
   if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
   // ------------------------------------------------------------------ model
+  const skinned = [], restPose = [];
   let hips = null, model = null, mixer = null, actions = {}, current = null, skeletonHelper = null, loadT0 = 0;
 
   function setProgress(frac, detail) {
@@ -336,6 +336,7 @@
     }, LOAD_TIMEOUT_MS);
 
     const loader = new THREE.GLTFLoader();
+    if (window.MeshoptDecoder) loader.setMeshoptDecoder(window.MeshoptDecoder);
     const onLoad = gltf => {
       if (finished) return;
       finished = true;
@@ -385,23 +386,44 @@
         o.frustumCulled = false;
         const m = o.material;
         if (m.map) m.map.anisotropy = maxAniso;
-        if (m.normalMap) m.normalScale.set(1, 1);
+        // fabric weave normals alias into moiré at phone resolutions; keep them subtle
+        if (m.normalMap) m.normalScale.set(0.35, 0.35);
         m.envMapIntensity = 0;
         m.metalness = 0;
-        m.roughness = 0.82;
+        m.roughness = Math.max(m.roughness, 0.7);
+        // hair, brows and lashes are alpha-masked: alpha-to-coverage gives soft,
+        // order-independent edges using the MSAA samples (no blending cost)
+        if (m.alphaTest > 0 || m.transparent) {
+          m.transparent = false;
+          m.alphaTest = 0.35;
+          m.alphaToCoverage = true;
+          m.depthWrite = true;
+        }
       }
     });
     model.rotation.y = MODEL_YAW;
     scene.add(model);
     if (MODEL_NOTE) { const n = $('model-note'); n.textContent = MODEL_NOTE; n.hidden = false; }
 
-    // ground the figure: lowest point of the bind pose sits exactly on y = 0
-    const box = new THREE.Box3().setFromObject(model);
-    model.position.y -= box.min.y;
+    // ground the figure: lowest point of the bind pose sits exactly on y = 0.
+    // Quantized (meshopt) skinned geometry stores integer positions whose
+    // dequantization lives in the inverse bind matrices, so a plain bounding box
+    // is meaningless there; those exports are already authored feet-at-origin.
+    let quantized = false;
+    model.traverse(o => { if (o.isMesh && !(o.geometry.attributes.position.array instanceof Float32Array)) quantized = true; });
+    if (!quantized) {
+      const box = new THREE.Box3().setFromObject(model);
+      model.position.y -= box.min.y;
+    }
 
-    hips = model.getObjectByName('mixamorigHips') || model.getObjectByName('mixamorig:Hips');
+    hips = model.getObjectByName('mixamorigHips') || model.getObjectByName('Hips');
     mixer = new THREE.AnimationMixer(model);
-    gltf.animations.forEach(clip => { actions[clip.name] = mixer.clipAction(clip); });
+    // clip names differ between sources ("idle" vs "Idle"); index them lower-case
+    gltf.animations.forEach(clip => { actions[clip.name.toLowerCase()] = mixer.clipAction(clip); });
+    model.traverse(o => { if (o.isSkinnedMesh && skinned.indexOf(o) < 0) skinned.push(o); });
+    const bones = new Set();
+    skinned.forEach(m => m.skeleton.bones.forEach(b => bones.add(b)));
+    bones.forEach(b => restPose.push({ bone: b, p: b.position.clone(), q: b.quaternion.clone(), s: b.scale.clone() }));
     skeletonHelper = new THREE.SkeletonHelper(model);
     skeletonHelper.visible = false;
     skeletonHelper.material.depthTest = false;
@@ -424,10 +446,17 @@
 
   function playPose(name, fade) {
     const next = actions[name];
-    if (!next || next === current) return;
-    next.reset().setEffectiveWeight(1).play();
-    if (current) current.crossFadeTo(next, fade == null ? 0.35 : fade, false);
-    current = next;
+    if (name === 'bindpose' && !next) {
+      // no T-pose clip: restore every bone's authored rest transform
+      mixer.stopAllAction();
+      current = null;
+      restPose.forEach(r => { r.bone.position.copy(r.p); r.bone.quaternion.copy(r.q); r.bone.scale.copy(r.s); });
+    } else {
+      if (!next || next === current) return;
+      next.reset().setEffectiveWeight(1).play();
+      if (current) current.crossFadeTo(next, fade == null ? 0.35 : fade, false);
+      current = next;
+    }
     document.querySelectorAll('[data-pose]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.pose === name)));
   }
 

@@ -4,10 +4,13 @@
   "type": "module",
   "description": "Asset pipeline for SHADOW CELL (not needed to play the game)",
   "scripts": {
-    "character": "node optimize-character.mjs ../assets/source/Soldier.glb ../assets/models/operative.glb"
+    "character": "node add-poncho.mjs ../assets/source/operative_raw.glb ../assets/source/operative_poncho.glb && node optimize-operative.mjs ../assets/source/operative_poncho.glb ../assets/models/operative.glb"
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.0.0",
-    "@gltf-transform/functions": "^4.0.0"
+    "@gltf-transform/extensions": "^4.0.0",
+    "@gltf-transform/functions": "^4.0.0",
+    "meshoptimizer": "^0.21.0",
+    "sharp": "^0.33.0"
   }
 }
