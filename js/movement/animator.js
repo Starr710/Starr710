@@ -25,6 +25,7 @@
     leanAccelMax: 0.06,
     leanSmoothing: 7,
     settleTime: 0.45,
+    crouchSettleTime: 0.75,    // crouch idle stands further from the walk pose: two unhurried steps
     stanceSpring: 11,
     // fast crouch-walk: longer, quicker strides than the clip's own (it is authored slow)
     crouchStrideScale: [[0, 1], [1.0, 1.0], [2.0, 1.3]],
@@ -254,7 +255,7 @@
     if (this.state === 'stopped') {
       // settle into idle over a fixed time; the posture layer turns this into a
       // small settle step (one foot stays planted, the other steps in)
-      this.settle = Math.min(1, (this.settle || 0) + dt / c.settleTime);
+      this.settle = Math.min(1, (this.settle || 0) + dt / lerp(c.settleTime, c.crouchSettleTime, C));
       idleW = smooth(0, 1, this.settle);
     }
     if (this.state === 'moving') idleW = 1 - smooth(c.idleOut[0], c.idleOut[1], s);
