@@ -10,7 +10,7 @@ Playable test: `movement.html`. The code is in `js/movement/`.
 | `motor.js` | Movement and physics: target speed from stick magnitude, acceleration/deceleration, limited and smoothed turning, braking on reversal, collision sliding, ground height. Outputs `position`, `yaw`, `speed`, `angularVelocity`, `accel` and `gait`. | Meshes, bones, clips |
 | `collision.js` | Static world: boxes and cylinders, with a circle-vs-world resolver. Holds the obstacle meshes that the camera avoids. | — |
 | `character-visual.js` | Loads a GLB through a **profile**. Exposes `root`, `mixer`, `clips.{idle,walk,run,sprint?}` and canonical `bones`. Strips root motion. Conditions each clip: resamples it at 60 fps on Catmull-Rom splines and applies a light cyclic Gaussian smooth (`clipSmoothing` in the profile), so mocap keyframe kinks don't show when a gait is slowed. | Input, movement rules |
-| `animator.js` | Animation state machine. Stage 1 has a single `grounded` state with a speed blend space (idle ↔ walk ↔ run[/sprint]). One shared gait phase keeps the feet in step. Playback rate is matched to ground speed using stride speeds measured from the clips. A procedural whole-body lean sits on top. | Input, collision |
+| `animator.js` | Animation state machine. Grounded locomotion runs through **moving → stopping → stopped**. On release she finishes the step: the motor is told how far to brake so she comes to rest at the walk clip's *passing* pose (feet level), measured automatically from the clip. If she stops short, a settle step follows: the planted foot stays locked while the other foot lifts and steps into the idle stance. Starts begin from the passing pose. Underneath is a speed blend space (idle ↔ walk ↔ run[/sprint]). One shared gait phase keeps the feet in step. Playback rate is matched to ground speed using stride speeds measured from the clips. A procedural whole-body lean sits on top. | Input, collision |
 | `posture.js` | Tactical upper-body layer, run after the mixer. **Stealth legs:**
   - The hips lower slightly and the pelvis tips forward at sneaking pace.
   - Steps shorten, using the animator's `strideScale`, which also slows playback to match so the feet stay planted.
@@ -33,6 +33,8 @@ Swapping the character never touches `motor.js`, `camera-rig.js`, `input.js` or 
 - **Speeds and feel:** `SC.mv.MotorDefaults` in `motor.js`.
   - Stick-to-speed curve: sneak about 0.45–0.8 m/s, stealth walk about 1.3, jog about 3.2. Sprint is 5.6.
   - Accel 3.4 m/s² (2.6 above jog), decel 5.2, brake 9.
+  - Stops never last more than `maxStopTime` (0.9 s).
+  - `settleTime` (0.45 s) in the animator sets the idle settle.
   - Turn rates: 7.5 rad/s standing, 6.5 walking, 2.6 at full sprint.
 - **Blend thresholds, clip-rate limits and lean:** `SC.mv.AnimatorDefaults` in `animator.js`.
 - **Stealth gait:**

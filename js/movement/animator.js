@@ -24,9 +24,10 @@
     leanAccel: 0.012,         // body pitch per m/s²
     leanAccelMax: 0.06,
     leanSmoothing: 7,
+    settleTime: 0.45,          // s from stopping to a full idle stance
     // stealth gait shaping: stride length multiplier by speed (m/s). Shorter
     // steps at sneaking pace; the posture layer pulls the feet in to match.
-    strideScale: [[0, 1], [0.4, 0.58], [0.9, 0.64], [1.4, 0.78], [2.2, 0.95], [3.0, 1]],
+    strideScale: [[0, 0.58], [0.4, 0.58], [0.9, 0.64], [1.4, 0.78], [2.2, 0.95], [3.0, 1]],
   };
   mv.table = (pts, x) => {
     if (x <= pts[0][0]) return pts[0][1];
@@ -37,7 +38,8 @@
   mv.AnimationController = function (visual, opts) {
     this.v = visual;
     this.cfg = Object.assign({}, mv.AnimatorDefaults, opts || {});
-    this.state = 'grounded';
+    this.state = 'stopped';          // grounded locomotion: moving / stopping / stopped
+    this._lastLen = 1;
     this.phase = 0;
     this.roll = 0; this.pitch = 0;
     const mixer = visual.mixer;
@@ -95,7 +97,15 @@
     }
     speeds.sort((p, q) => p - q);
     const speed = speeds.length ? speeds[Math.floor(speeds.length / 2)] : (clip.name.match(/run/i) ? 3.5 : 1.4);
-    const res = { speed: Math.max(0.3, speed), duration: T, length: Math.max(0.3, speed) * T, footMinY: Math.min(minY[0], minY[1]) };
+    // "passing" phases: where the feet are level with each other front-to-back.
+    // Stops end here and starts begin here, so the hand-off to idle is a small
+    // foot placement instead of a slide from mid-stride.
+    const gap = samples.slice(0, N).map(sm => Math.abs(sm[0].z - sm[1].z));
+    const minima = [];
+    for (let i = 0; i < N; i++) if (gap[i] <= gap[(i + N - 1) % N] && gap[i] < gap[(i + 1) % N]) minima.push({ phase: i / N, gap: gap[i] });
+    minima.sort((p, q) => p.gap - q.gap);
+    const passing = minima.slice(0, 2).map(m => m.phase).sort((p, q) => p - q);
+    const res = { speed: Math.max(0.3, speed), duration: T, length: Math.max(0.3, speed) * T, footMinY: Math.min(minY[0], minY[1]), passing };
     return res;
   };
 
@@ -106,7 +116,56 @@
     const walk = S.walk, run = S.run, sprint = S.sprint;
 
     // ---- blend space weights
-    const idleW = 1 - smooth(c.idleOut[0], c.idleOut[1], s);
+    // ---- locomotion state: moving / stopping (finish the step) / stopped
+    const wantsMove = motor.targetSpeed > 0;
+    const passing = walk.passing && walk.passing.length ? walk.passing : [0, 0.5];
+    const ahead = p => ((p - this.phase) % 1 + 1) % 1;
+    if (wantsMove) {
+      if (this.state === 'stopped' && s < 0.05) this.phase = passing[0];  // first step starts from the passing pose
+      this.state = 'moving';
+      motor.stopDistance = 0;
+    } else if (this.state === 'moving' && s > 0.05) {
+      // pick the next passing phase that is far enough ahead to reach smoothly
+      // far enough that braking stays comfortable (≈5.5 m/s²) over that distance
+      // (strides shrink as the gait slows toward a walk, so plan with the slow-walk stride)
+      const slowLen = walk.length * mv.table(c.strideScale, 0.5);
+      const minAhead = Math.min(0.95, Math.max(0.06, s * s / (2 * 4 * slowLen)));
+      const cands = passing.map(p => ({ p, d: ahead(p) })).map(o => (o.d < minAhead ? { p: o.p, d: o.d + 1 } : o)).sort((x, y) => x.d - y.d);
+      this.stopTarget = cands[0].p;
+      this.stopRemain = cands[0].d;
+      this.stopIdle = 0;
+      this.state = 'stopping';
+    } else if (this.state === 'moving') this.state = 'stopped';
+    let idleW;
+    if (this.state === 'stopping') {
+      // the motor brakes so the body comes to rest exactly at the stop phase
+      motor.stopDistance = Math.max(0.01, this.stopRemain * this._lastLen);
+      // idle only ever rises during a stop (an extra step must not pop the pose back)
+      this.stopIdle = Math.max(this.stopIdle || 0, 1 - smooth(0.02, 0.16, this.stopRemain));
+      idleW = this.stopIdle;
+      if (this.stopRemain <= 0.004 && s > 0.6) {
+        // still moving when the step runs out (e.g. a hard stop from a sprint): take one more step
+        const next = passing.find(p => p !== this.stopTarget);
+        const step = next != null ? ((next - this.stopTarget) % 1 + 1) % 1 : 1;
+        this.stopTarget = next != null ? next : this.stopTarget;
+        this.stopRemain += step;
+      } else if (s <= 0.03 || this.stopRemain <= 0.004) {
+        // land on the stop pose if we're (nearly) there; never jump the pose otherwise
+        if (this.stopRemain < 0.03) this.phase = this.stopTarget;
+        this.state = 'stopped'; this.settle = 0;
+        motor.stopDistance = s > 0.03 ? 0.02 : 0;      // pull up the last few cm/s
+      }
+    }
+    if (this.state === 'stopped') {
+      // settle into idle over a fixed time; the posture layer turns this into a
+      // small settle step (one foot stays planted, the other steps in)
+      this.settle = Math.min(1, (this.settle || 0) + dt / c.settleTime);
+      idleW = smooth(0, 1, this.settle);
+    }
+    if (this.state === 'moving') idleW = 1 - smooth(c.idleOut[0], c.idleOut[1], s);
+    // the idle weight glides; state changes can never pop the pose
+    this.idleSm = this.idleSm == null ? idleW : this.idleSm + (idleW - this.idleSm) * (1 - Math.exp(-14 * dt));
+    idleW = this.idleSm;
     const toRun = smooth(walk.speed * 1.05, run.speed * 0.85, s);
     const toSprint = sprint ? smooth(run.speed * 1.1, sprint.speed * 0.95, s) : 0;
     const moveW = 1 - idleW;
@@ -117,8 +176,15 @@
     const blendLen = lerp(lerp(walk.length, run.length, toRun), sprint ? sprint.length : run.length, toSprint) * this.strideScale;
     const blendDur = lerp(lerp(walk.duration, run.duration, toRun), sprint ? sprint.duration : run.duration, toSprint);
     let rate = s / blendLen * blendDur;                       // cycles per cycle-duration
-    rate = Math.min(c.maxPlayRate, Math.max(s > 0.02 ? c.minPlayRate : 0, rate));
-    this.phase = (this.phase + dt * rate / blendDur) % 1;
+    // while stopping, the phase follows ground distance exactly (no minimum rate),
+    // so the planted foot stays put as the body decelerates into the stop
+    if (this.state === 'moving') rate = Math.min(c.maxPlayRate, Math.max(s > 0.02 ? c.minPlayRate : 0, rate));
+    else rate = Math.min(c.maxPlayRate, rate);
+    let dPhase = dt * rate / blendDur;
+    if (this.state === 'stopping') { dPhase = Math.min(dPhase, this.stopRemain); this.stopRemain -= dPhase; }
+    if (this.state === 'stopped') dPhase = 0;
+    this.phase = (this.phase + dPhase) % 1;
+    this._lastLen = blendLen;
 
     A.idle.setEffectiveWeight(idleW);
     A.walk.setEffectiveWeight(wWalk); A.walk.time = this.phase * walk.duration;

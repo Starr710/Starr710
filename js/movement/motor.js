@@ -30,6 +30,7 @@
     accelFast: 2.6,        // …and when pushing past jog into a sprint (it takes effort)
     decel: 5.2,            // m/s² when easing off
     brake: 9.0,            // m/s² when reversing hard
+    maxStopTime: 0.9,      // s; finishing a step never drags on longer than this
     turnRateWalk: 6.5,     // rad/s max body turn rate at walking speed
     turnRateSprint: 2.6,   // rad/s at full sprint (wide arcs)
     turnRateIdle: 7.5,     // rad/s turning on the spot from a stand
@@ -49,6 +50,7 @@
     this.targetSpeed = 0;
     this.gait = mv.GAITS[0];
     this.blocked = false;
+    this.stopDistance = 0;     // set by the animator while finishing a step
     this.contactX = 0; this.contactZ = 0;
     this._res = { x: 0, z: 0, nx: 0, nz: 0, hit: false };
   };
@@ -102,10 +104,14 @@
     let rate;
     if (target > this.speed) rate = this.speed > 3.2 ? c.accelFast : c.accel;
     else rate = align < 0 && this.speed > 1.5 ? c.brake : c.decel;
+    // the animator may ask for a specific stopping distance so the last step lands
+    // on a natural stop pose; brake just hard enough to cover exactly that distance
+    if (target > 0 || this.stopV0 == null) this.stopV0 = target > 0 ? null : this.speed;
+    if (target === 0 && this.stopDistance > 0 && this.speed > 0.05) rate = Math.min(c.brake, Math.max(0.8, (this.stopV0 || this.speed) / c.maxStopTime, this.speed * this.speed / (2 * this.stopDistance)));
     const dv = target - this.speed;
     this.speed += Math.sign(dv) * Math.min(Math.abs(dv), rate * dt);
     // soften the last few cm/s so starts and stops ease in and out
-    if (Math.abs(dv) < 0.25) this.speed += (target - this.speed) * (1 - Math.exp(-6 * dt));
+    if (Math.abs(dv) < 0.25 && !(target === 0 && this.stopDistance > 0)) this.speed += (target - this.speed) * (1 - Math.exp(-6 * dt));
     if (this.speed < 0.005 && target === 0) this.speed = 0;
 
     // ---- integrate + collide

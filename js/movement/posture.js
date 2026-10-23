@@ -239,7 +239,7 @@
     const left = new THREE.Vector3(1, 0, 0).applyQuaternion(rootQ);
 
     // 0. stealth legs
-    this._legs(dt, s, animator ? animator.strideScale : 1, fwd, left, up);
+    this._legs(dt, s, animator ? animator.strideScale : 1, fwd, left, up, animator);
 
     // 1. forward lean
     let lean = c.lean[c.lean.length - 1][1];
@@ -265,7 +265,7 @@
     else this._rifle(dt, walkF, sprintF, fwd, left, up);
   };
 
-  mv.TacticalPosture.prototype._legs = function (dt, s, stride, fwd, left, up) {
+  mv.TacticalPosture.prototype._legs = function (dt, s, stride, fwd, left, up, animator) {
     const b = this.v.bones, t = this.t;
     if (!b.leftUpLeg || !b.leftLeg || !b.rightUpLeg || !b.rightLeg) return;
     const want = mv.table(this.cfg.hipDrop, s);
@@ -282,6 +282,28 @@
       p.addScaledVector(fwd, -along * (1 - stride));
       return { side, foot, p, q };
     });
+    // settle step after a stop: the planted foot stays locked to the ground and the
+    // other foot lifts a little and steps into the idle stance, instead of both
+    // feet sliding while the pose blends
+    const settling = animator && animator.state === 'stopped' && animator.settle < 1;
+    if (settling) {
+      if (!this.lock && this.lastFeet) {
+        const along = this.lastFeet.map(p => Math.abs(p.clone().sub(H).dot(fwd)));
+        this.lock = { pos: this.lastFeet.map(p => p.clone()), mover: along[0] > along[1] ? 0 : 1 };
+      }
+      if (this.lock) {
+        const u = animator.settle;
+        feet.forEach((f, i) => {
+          const L = this.lock.pos[i];
+          if (i === this.lock.mover) {
+            const w = smooth(0.05, 0.85, u);
+            f.p.lerpVectors(L, f.p, w).addScaledVector(up, 0.06 * Math.sin(Math.PI * w));
+          } else f.p.lerpVectors(L, f.p, smooth(0.8, 1, u));
+        });
+      }
+    } else this.lock = null;
+    this.lastFeet = feet.map(f => f.p.clone());
+
     // lower the pelvis (and ease it back) in world space, then tip it forward
     H.addScaledVector(up, -this.drop).addScaledVector(fwd, -this.drop * this.cfg.hipsBack);
     hips.position.copy(hips.parent.worldToLocal(H));
