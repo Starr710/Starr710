@@ -51,9 +51,9 @@
     twistDamp: 0.7,                   // 0 = clip twist, 1 = chest locked to travel direction
     headSteady: 0.65,
     headPitch: 0.04,                  // eyes slightly down the line of travel
-    // crouch idle (MGSV-style): squat with the feet only slightly staggered, the
-    // lead hand low toward the ground, slow breathing, weight shifts and head scans
-    crouchIdle: { stagger: 0.2, reach: [0.35, 0.0], idleBend: -0.2, idleInward: 0.12, breathe: 0.03, sway: 0.018, scan: 0.45 },
+    // crouch idle (MGSV-style): low kneeling crouch, the back knee near the ground and that
+    // foot on its toes, one hand down to the ground; slow breathing, weight shifts, head scans
+    crouchIdle: { drop: 0.1, heel: 0.07, reach: [-0.1, -0.35], idleBend: [0.35, -0.8], idleInward: 0.08, breathe: 0.03, sway: 0.018, scan: 0.45 },
     crouchHeadSteady: 0.8,            // crouched: how firmly the head is held to the gaze below
     crouchHeadPitch: 0.1,             // crouched: rad the gaze tips down (head follows the spine more)
     weaponStiffness: 55,              // carbine follow spring (higher = less lag)
@@ -340,14 +340,15 @@
       p.addScaledVector(fwd, -along * (1 - stride));
       return { side, foot, p, q };
     });
-    // crouch idle: bring the back foot up into a squat (feet slightly staggered); it
-    // lifts a little while it moves, and the hips shift their weight slowly side to side
+    // crouch idle: sink into a low kneeling crouch (the back knee near the ground, the
+    // back foot up on its toes), with the hips shifting their weight slowly side to side
     const ci = this.ci || 0, cic = this.cfg.crouchIdle;
+    this.rearFoot = -1;
     if (ci > 1e-3) {
       const al = feet.map(f => f.p.clone().sub(H).dot(fwd));
-      const r = al[0] < al[1] ? 0 : 1, want = al[1 - r] - cic.stagger;
-      if (want > al[r]) feet[r].p.addScaledVector(fwd, (want - al[r]) * ci).addScaledVector(up, 0.05 * Math.sin(Math.PI * ci));
-      H.addScaledVector(left, cic.sway * Math.sin(this.clock * 2 * Math.PI / 7.5) * ci);
+      this.rearFoot = al[0] < al[1] ? 0 : 1;
+      feet[this.rearFoot].p.addScaledVector(up, cic.heel * ci);
+      H.addScaledVector(up, -cic.drop * ci).addScaledVector(left, cic.sway * Math.sin(this.clock * 2 * Math.PI / 7.5) * ci);
     }
     // settle step after a stop: the planted foot stays locked to the ground and the
     // other foot lifts a little and steps into the idle stance, instead of both
@@ -398,6 +399,15 @@
       // the shin a little, so the joint never folds sharply
       const kept = f.foot.getWorldQuaternion(Q()).slerp(f.q, this.cfg.ankleLock);
       setWorldQuat(f.foot, kept, t);
+      // crouch idle: the raised back foot pitches toe-down so it rests on its toes
+      const toe = b[f.side + 'ToeBase'];
+      if (feet.indexOf(f) === this.rearFoot && toe) {
+        const ankle = wpos(f.foot, V()), tp = wpos(toe, V());
+        const L = Math.max(0.05, tp.distanceTo(ankle));
+        const a = Math.asin(Math.min(0.9, this.cfg.crouchIdle.heel * ci / L));
+        rotateWorld(f.foot, new THREE.Quaternion().setFromAxisAngle(left, a), t);
+        if (wpos(toe, V()).y > tp.y) rotateWorld(f.foot, new THREE.Quaternion().setFromAxisAngle(left, -2 * a), t);
+      }
     }
   };
 
@@ -433,10 +443,11 @@
     const b = this.v.bones, t = this.t;
     const st = this.st == null ? 1 : this.st, ca = this.cfg.crouchArms;
     const ci = this.ciArms || 0, cic = this.cfg.crouchIdle;
-    const keep = lerp(ca.keep, armGait(s, 1), st), bend = lerp(ca.bend, armGait(s, 2), st) + cic.idleBend * ci, forward = lerp(ca.forward, armGait(s, 3), st);
+    const keep = lerp(ca.keep, armGait(s, 1), st), bend0 = lerp(ca.bend, armGait(s, 2), st), forward = lerp(ca.forward, armGait(s, 3), st);
     const k = 1 - Math.exp(-2.5 * dt);
     this.armMean = this.armMean || {};
     for (const side of ['left', 'right']) {
+      const bend = bend0 + cic.idleBend[side === 'left' ? 0 : 1] * ci;
       const upper = b[side + 'Arm'], lower = b[side + 'ForeArm'], hand = b[side + 'Hand'];
       // 1. damp swing: blend each bone's local rotation toward its running mean
       for (const bone of [upper, lower]) {
@@ -446,7 +457,7 @@
       }
       // 2. carry the upper arm slightly forward
       if (forward) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(left, -forward), t);
-      // crouch idle: the lead (left) hand reaches low toward the ground, the other rests by the knee
+      // crouch idle: the right hand (kneeling side) reaches down to the ground, the left rests on the knee
       if (ci > 1e-3) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(left, -cic.reach[side === 'left' ? 0 : 1] * ci), t);
       // draw the arm in toward the body's midline (crouched)
       const inward = ca.inward * (1 - st) + cic.idleInward * ci;
