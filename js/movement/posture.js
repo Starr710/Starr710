@@ -36,7 +36,8 @@
     lean: [[0, 0.08], [0.6, 0.3], [1.3, 0.25], [2.2, 0.19], [3.2, 0.2], [5.6, 0.3]],
     hipDrop: [[0, 0.015], [0.5, 0.035], [1.0, 0.032], [1.5, 0.026], [2.4, 0.018], [3.4, 0.01], [5.0, 0]],
     levelHips: [[0, 0], [0.4, 0.75], [1.4, 0.65], [2.4, 0.3], [3.4, 0]],   // share of hip bob removed
-    ankleLock: 0.7,                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
+    ankleLock: 0.7,
+    idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.5, 0.15], [1.3, 0.13], [2.4, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
     leanShare: [0.4, 0.3, 0.3],       // spine, spine1, chest
@@ -238,8 +239,20 @@
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(rootQ);
     const left = new THREE.Vector3(1, 0, 0).applyQuaternion(rootQ);
 
+    // -1. square up the idle stance: turn hips + legs to face forward, and turn the
+    // spine back by the same amount so the shoulders stay where the clip had them
+    if (animator && animator.idleYaw && b.hips) {
+      const k = animator.weights.idle * this.cfg.idleSquare;
+      if (k > 1e-3) {
+        const q = new THREE.Quaternion().setFromAxisAngle(up, -animator.idleYaw * k);
+        rotateWorld(b.hips, q, t);
+        rotateWorld(b.spine, q.clone().invert(), t);
+      }
+    }
+
     // 0. stealth legs
     this._legs(dt, s, animator ? animator.strideScale : 1, fwd, left, up, animator);
+    this._idleFeet(animator, up);
 
     // 1. forward lean
     let lean = c.lean[c.lean.length - 1][1];
@@ -318,6 +331,18 @@
       const kept = f.foot.getWorldQuaternion(Q()).slerp(f.q, this.cfg.ankleLock);
       setWorldQuat(f.foot, kept, t);
     }
+  };
+
+  // after the leg IK: turn each foot about the vertical so the idle toe-out matches the walk
+  mv.TacticalPosture.prototype._idleFeet = function (animator, up) {
+    const b = this.v.bones, t = this.t;
+    if (!animator || !animator.idleFootYaw) return;
+    const k = animator.weights.idle * this.cfg.idleSquare;
+    if (k < 1e-3) return;
+    ['left', 'right'].forEach((side, i) => {
+      const f = b[side + 'Foot'];
+      if (f && animator.idleFootYaw[i]) rotateWorld(f, new THREE.Quaternion().setFromAxisAngle(up, animator.idleFootYaw[i] * k), t);
+    });
   };
 
   mv.TacticalPosture.prototype._unarmed = function (dt, s, walkF, sprintF, fwd, left, up) {

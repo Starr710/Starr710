@@ -55,6 +55,16 @@
     }
     this.stride = {};
     for (const k of ['walk', 'run', 'sprint']) if (visual.clips[k]) this.stride[k] = this.calibrate(visual.clips[k]);
+    // which way the idle clip's hips face relative to the walk's (mocap idles
+    // often stand turned side-on); the posture layer squares the stance up
+    this.idleYaw = this.facing(visual.clips.idle) - this.facing(visual.clips.walk);
+    this.idleYaw = Math.atan2(Math.sin(this.idleYaw), Math.cos(this.idleYaw));
+    // per-foot toe-out correction so the squared-up idle feet splay like the walk's
+    const wrapA = x => Math.atan2(Math.sin(x), Math.cos(x));
+    this.idleFootYaw = ['left', 'right'].map(side => {
+      const fi = this.facing(visual.clips.idle, side), fw = this.facing(visual.clips.walk, side);
+      return fi == null || fw == null ? 0 : wrapA(fw - (fi - this.idleYaw));
+    });
     // the probe shares the mixer's cached actions, so restart them after measuring
     for (const k in this.actions) {
       const a = this.actions[k];
@@ -64,6 +74,40 @@
     }
     this.weights = { idle: 1, walk: 0, run: 0, sprint: 0 };
     this.strideScale = 1;
+  };
+
+  // Average facing (yaw, rad) of a clip's pelvis, from the left→right hip axis.
+  // With `footSide` ('left'/'right'), the average heel→toe yaw of that foot instead.
+  mv.AnimationController.prototype.facing = function (clip, footSide) {
+    const v = this.v, b = v.bones, mixer = v.mixer, root = v.root;
+    if (!b.leftUpLeg || !b.rightUpLeg) return 0;
+    const foot = footSide && b[footSide + 'Foot'], toe = footSide && b[footSide + 'Toe'];
+    if (footSide && (!foot || !toe)) return null;
+    const probe = mixer.clipAction(clip).stop();
+    const others = Object.values(this.actions).map(a => [a, a.getEffectiveWeight()]);
+    others.forEach(([a]) => a.setEffectiveWeight(0));
+    probe.reset().play().setEffectiveWeight(1).setEffectiveTimeScale(0);
+    let sx = 0, sz = 0;
+    const N = 24, a = new THREE.Vector3(), c = new THREE.Vector3();
+    for (let i = 0; i < N; i++) {
+      probe.time = clip.duration * i / N;
+      mixer.update(0);
+      root.updateMatrixWorld(true);
+      let yaw;
+      if (footSide) {
+        root.worldToLocal(toe.getWorldPosition(a)); root.worldToLocal(foot.getWorldPosition(c));
+        yaw = Math.atan2(a.x - c.x, a.z - c.z);
+      } else {
+        root.worldToLocal(b.leftUpLeg.getWorldPosition(a));
+        root.worldToLocal(b.rightUpLeg.getWorldPosition(c));
+        const lx = a.x - c.x, lz = a.z - c.z;      // left-pointing hip axis; facing = axis rotated -90°
+        yaw = Math.atan2(-lz, lx);
+      }
+      sx += Math.sin(yaw); sz += Math.cos(yaw);
+    }
+    probe.stop();
+    others.forEach(([act, wt]) => act.setEffectiveWeight(wt));
+    return Math.atan2(sx, sz);
   };
 
   // Measure a looping gait clip's natural ground speed from its planted foot:

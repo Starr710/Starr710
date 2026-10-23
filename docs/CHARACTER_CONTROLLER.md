@@ -11,7 +11,12 @@ Playable test: `movement.html`. The code is in `js/movement/`.
 | `collision.js` | Static world: boxes and cylinders, with a circle-vs-world resolver. Holds the obstacle meshes that the camera avoids. | — |
 | `character-visual.js` | Loads a GLB through a **profile**. Exposes `root`, `mixer`, `clips.{idle,walk,run,sprint?}` and canonical `bones`. Strips root motion. Conditions each clip: resamples it at 60 fps on Catmull-Rom splines and applies a light cyclic Gaussian smooth (`clipSmoothing` in the profile), so mocap keyframe kinks don't show when a gait is slowed. | Input, movement rules |
 | `animator.js` | Animation state machine. Grounded locomotion runs through **moving → stopping → stopped**. On release she finishes the step: the motor is told how far to brake so she comes to rest at the walk clip's *passing* pose (feet level), measured automatically from the clip. If she stops short, a settle step follows: the planted foot stays locked while the other foot lifts and steps into the idle stance. Starts begin from the passing pose. Underneath is a speed blend space (idle ↔ walk ↔ run[/sprint]). One shared gait phase keeps the feet in step. Playback rate is matched to ground speed using stride speeds measured from the clips. A procedural whole-body lean sits on top. | Input, collision |
-| `posture.js` | Tactical upper-body layer, run after the mixer. **Stealth legs:**
+| `posture.js` | Tactical upper-body layer, run after the mixer. **Idle square-up:**
+  - The idle clip's hip facing and toe-out are measured against the walk at load.
+  - While idle, the hips and legs turn to face forward, the spine counter-turns so the shoulders stay put, and each foot's toe-out is matched to the walk.
+  - `idleSquare` (0–1) controls it.
+
+**Stealth legs:**
   - The hips lower slightly and the pelvis tips forward at sneaking pace.
   - Steps shorten, using the animator's `strideScale`, which also slows playback to match so the feet stay planted.
   - Two-bone leg IK holds each foot where the clip put it, keeping the clip's foot angle.
