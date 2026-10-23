@@ -51,6 +51,9 @@
     twistDamp: 0.7,                   // 0 = clip twist, 1 = chest locked to travel direction
     headSteady: 0.65,
     headPitch: 0.04,                  // eyes slightly down the line of travel
+    // crouch idle (MGSV-style): squat with the feet only slightly staggered, the
+    // lead hand low toward the ground, slow breathing, weight shifts and head scans
+    crouchIdle: { stagger: 0.2, reach: [0.75, 0.35], idleBend: 0.35, idleInward: 0.12, breathe: 0.03, sway: 0.018, scan: 0.45 },
     crouchHeadSteady: 0.6,            // crouched: how firmly the head is held to the gaze below
     crouchHeadPitch: 0.3,             // crouched: rad the gaze tips down (head follows the spine more)
     weaponStiffness: 55,              // carbine follow spring (higher = less lag)
@@ -242,6 +245,11 @@
     const v = this.v, b = v.bones, root = v.root, c = this.cfg, t = this.t;
     // stealth shaping is for the standing gaits; the crouch clips carry their own posture
     const st = this.st = animator && animator.weights.crouch != null ? 1 - animator.weights.crouch : 1;
+    this.clock = (this.clock || 0) + dt;
+    // crouch idle weight: crouched and settled into the idle
+    this.ci = animator && animator.weights.idle != null ? animator.weights.idle * (1 - st) : 0;
+    // the arms ease into (and out of) the idle pose more gently than the legs
+    this.ciArms = (this.ciArms || 0) + (this.ci - (this.ciArms || 0)) * (1 - Math.exp(-3.5 * dt));
     root.updateMatrixWorld(true);
     if (!this._calibrated) this._calibrate();
     const s = Math.max(0, motor.speed);
@@ -293,11 +301,21 @@
     // a slight hunch: round the upper back forward, lift the neck to match
     if (b.chest && this.st < 1) rotateWorld(b.chest, new THREE.Quaternion().setFromAxisAngle(left, c.crouchHunch * (1 - this.st)), t);
     if (b.neck && this.st < 1) rotateWorld(b.neck, new THREE.Quaternion().setFromAxisAngle(left, -(c.crouchNeckLift + c.crouchHunch) * (1 - this.st)), t);
+    // crouch idle: slow breathing in the upper back
+    if (this.ci > 1e-3 && b.chest) rotateWorld(b.chest, new THREE.Quaternion().setFromAxisAngle(left, -c.crouchIdle.breathe * Math.sin(this.clock * 2 * Math.PI / 3.8) * this.ci), t);
     // 3. steady head: blend toward level, looking slightly down the line of travel
     const hf = this.headFwd.clone().applyQuaternion(b.head.getWorldQuaternion(Q()));
     const want = fwd.clone().applyAxisAngle(left, lerp(c.crouchHeadPitch, c.headPitch, this.st));
     const hq = new THREE.Quaternion().setFromUnitVectors(hf.normalize(), want.normalize());
     rotateWorld(b.head, new THREE.Quaternion().slerp(hq, lerp(c.crouchHeadSteady, c.headSteady, this.st)), t);
+    // crouch idle: look around slowly, holding each look for a few seconds
+    if (this.ci > 1e-3) {
+      const sc = this.scan = this.scan || { at: 0, v: 0, vel: 0, next: 2 };
+      if (this.clock > sc.next) { sc.at = (Math.random() * 2 - 1) * c.crouchIdle.scan; sc.next = this.clock + 2.2 + Math.random() * 2.5; }
+      sc.vel += ((sc.at - sc.v) * 9 - sc.vel * 6) * dt; sc.v += sc.vel * dt;   // soft spring: eases in and out of each look
+      if (b.neck) rotateWorld(b.neck, new THREE.Quaternion().setFromAxisAngle(up, sc.v * this.ci * 0.4), t);
+      rotateWorld(b.head, new THREE.Quaternion().setFromAxisAngle(up, sc.v * this.ci * 0.6), t);
+    }
 
     const walkF = smooth(0.1, 1.0, s), sprintF = smooth(4.4, 5.4, s);
     if (this.carry === 'unarmed') this._unarmed(dt, s, walkF, sprintF, fwd, left, up);
@@ -322,6 +340,15 @@
       p.addScaledVector(fwd, -along * (1 - stride));
       return { side, foot, p, q };
     });
+    // crouch idle: bring the back foot up into a squat (feet slightly staggered); it
+    // lifts a little while it moves, and the hips shift their weight slowly side to side
+    const ci = this.ci || 0, cic = this.cfg.crouchIdle;
+    if (ci > 1e-3) {
+      const al = feet.map(f => f.p.clone().sub(H).dot(fwd));
+      const r = al[0] < al[1] ? 0 : 1, want = al[1 - r] - cic.stagger;
+      if (want > al[r]) feet[r].p.addScaledVector(fwd, (want - al[r]) * ci).addScaledVector(up, 0.05 * Math.sin(Math.PI * ci));
+      H.addScaledVector(left, cic.sway * Math.sin(this.clock * 2 * Math.PI / 7.5) * ci);
+    }
     // settle step after a stop: the planted foot stays locked to the ground and the
     // other foot lifts a little and steps into the idle stance, instead of both
     // feet sliding while the pose blends
@@ -405,7 +432,8 @@
   mv.TacticalPosture.prototype._unarmed = function (dt, s, walkF, sprintF, fwd, left, up) {
     const b = this.v.bones, t = this.t;
     const st = this.st == null ? 1 : this.st, ca = this.cfg.crouchArms;
-    const keep = lerp(ca.keep, armGait(s, 1), st), bend = lerp(ca.bend, armGait(s, 2), st), forward = lerp(ca.forward, armGait(s, 3), st);
+    const ci = this.ciArms || 0, cic = this.cfg.crouchIdle;
+    const keep = lerp(ca.keep, armGait(s, 1), st), bend = lerp(ca.bend, armGait(s, 2), st) + cic.idleBend * ci, forward = lerp(ca.forward, armGait(s, 3), st);
     const k = 1 - Math.exp(-2.5 * dt);
     this.armMean = this.armMean || {};
     for (const side of ['left', 'right']) {
@@ -418,8 +446,10 @@
       }
       // 2. carry the upper arm slightly forward
       if (forward) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(left, -forward), t);
+      // crouch idle: the lead (left) hand reaches low toward the ground, the other rests by the knee
+      if (ci > 1e-3) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(left, -cic.reach[side === 'left' ? 0 : 1] * ci), t);
       // draw the arm in toward the body's midline (crouched)
-      const inward = ca.inward * (1 - st);
+      const inward = ca.inward * (1 - st) + cic.idleInward * ci;
       if (inward) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(fwd, side === 'left' ? -inward : inward), t);
       // crouched: the crouch clip barely moves its arms, so swing each arm with the
       // opposite leg (arm forward as the other foot steps ahead), faded in with speed
