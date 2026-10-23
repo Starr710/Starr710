@@ -26,6 +26,8 @@
     leanSmoothing: 7,
     settleTime: 0.45,
     crouchSettleTime: 0.75,    // crouch idle stands further from the walk pose: two unhurried steps
+    startPhaseSnap: 0.04,      // a start jumps the stride to the passing pose only if the jump would be
+                               // invisible: (gait clip weight showing) × (phase distance) below this
     stanceSpring: 11,
     // fast crouch-walk: longer, quicker strides than the clip's own (it is authored slow)
     crouchStrideScale: [[0, 0.8], [1.0, 0.8], [2.0, 1.1]],   // shorter, quicker crouch steps
@@ -216,7 +218,13 @@
     const passing = C > 0.5 && cwk ? cwk.passing.map(p => ((p - this.crouchOffset) % 1 + 1) % 1) : standPass;
     const ahead = p => ((p - this.phase) % 1 + 1) % 1;
     if (wantsMove) {
-      if (this.state === 'stopped' && s < 0.05) this.phase = passing[0];  // first step starts from the passing pose
+      // first step starts from the passing pose, but only where that jump can't be
+      // seen: if the gait clip is already showing (stepping while turning on the
+      // spot, or mid settle step) a long jump would pop the legs, so the stride carries on
+      if (this.state === 'stopped' && s < 0.05) {
+        const jump = Math.abs((((passing[0] - this.phase) % 1) + 1.5) % 1 - 0.5);
+        if ((1 - (this.idleSm == null ? 1 : this.idleSm)) * jump < c.startPhaseSnap) this.phase = passing[0];
+      }
       this.state = 'moving';
       motor.stopDistance = 0;
     } else if (this.state === 'moving' && s > 0.05) {

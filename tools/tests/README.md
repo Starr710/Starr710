@@ -19,6 +19,6 @@ Run from the repo root. The script starts its own local server, opens `movement.
 | `groundContact` | In the crouch idle both feet touch the ground (lowest skinned vertex ≤ 3 cm) |
 | `clearance` | Limbs stay out of the body: hand to shin ≥ 15 cm in the crouch idle (≥ 12 cm during the crouch-walk arm swing), thigh to spine ≥ 15 cm |
 
-## Known failures
+## Fixed issues
 
-- **`jointPops`:** turning sharply on the spot out of the crouch idle, just as she starts to move, makes the back (right) knee jump about 19° in one frame. This predates the suite and is logged for a fix.
+- **Knee jump on a sharp turn out of the crouch idle** (found by `jointPops`): starting to move reset the stride to the passing pose even while the turn-in-place steps were already showing the walk clip, so the legs jumped (≈19° at the back knee). Now the stride only resets when that jump would be invisible (`startPhaseSnap` in `animator.js`).
