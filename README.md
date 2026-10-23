@@ -7,7 +7,8 @@ A third-person tactical stealth game for the browser, built with Three.js and tu
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Jungle map, controllable operative, follow camera, touch controls | Playable (blocky placeholder operative) |
-| 1A | Rigged human operative, character review stage, iPhone optimization | **In progress**: viewer done, final model pending |
+| 1A | Rigged human operative, character review stage, iPhone optimization | Paused: first operative build (poncho + hood) in `character.html`; appearance work resumes later |
+| M1 | Movement Stage 1: idle, slow walk, walk, jog, sprint, turning, collision (`movement.html`) | **Ready for review** |
 | 2 | Four selectable operatives, guard patrol AI, stealth detection | Next |
 | 3 | Objectives, extraction, per-operative ranks and team grade | Planned |
 | 4 | Squad AI orders (Follow / Hold / Hide / Regroup), full solo mode | Planned |
@@ -23,6 +24,10 @@ A third-person tactical stealth game for the browser, built with Three.js and tu
 - **Controls:** touch controls as listed below, plus keyboard and mouse for desktop testing.
 - **Sound:** synthesized jungle ambience and footsteps (no audio files).
 - **Performance:** quality scaling that drops resolution and shadows automatically on slow devices. Static props are merged into about 80 draw calls.
+
+## Movement Stage 1 (`movement.html`)
+
+A test yard with a mocap-animated stand-in character. Left thumb moves (a light push walks, a full push jogs), RUN sprints, and the right thumb turns the camera. The architecture, tuning, and skeleton/clip requirements for the final character are in `docs/CHARACTER_CONTROLLER.md`.
 
 ## Phase 1A: operative review (`character.html`)
 

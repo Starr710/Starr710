@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shadow Cell">
+<meta name="theme-color" content="#2b302b">
+<title>Shadow Cell Movement Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&display=swap">
+<link rel="stylesheet" href="css/movement.css">
+</head>
+<body>
+<!-- BODY:START -->
+<div id="mv-stage"></div>
+
+<header class="mv-head">
+  <div class="mv-title">SHADOW CELL</div>
+  <div class="mv-sub">MOVEMENT LAB · STAGE 1</div>
+</header>
+
+<div class="mv-topright">
+  <button type="button" class="mv-chip" id="mv-reset">RESET</button>
+  <button type="button" class="mv-chip" id="mv-stats-btn" aria-pressed="true">STATS</button>
+</div>
+<div class="mv-panel" id="mv-stats">
+  <div><span>GAIT</span><b id="mv-gait">IDLE</b></div>
+  <div><span>SPEED</span><b id="mv-speed">0.00 m/s</b></div>
+  <div><span>CLIP RATE</span><b id="mv-rate">–</b></div>
+  <div><span>FPS</span><b id="mv-fps">–</b></div>
+  <div><span>QUALITY</span><b id="mv-quality">–</b></div>
+  <div><span>STRIDES</span><b id="mv-calib">–</b></div>
+</div>
+
+<div id="mv-joy-hint">MOVE</div>
+<div id="mv-joy-base"></div>
+<div id="mv-joy-knob"></div>
+<div class="mv-look-hint">DRAG TO LOOK</div>
+<button type="button" id="mv-sprint" aria-pressed="false">RUN</button>
+
+<div class="mv-overlay" id="mv-loader" role="status" aria-live="polite">
+  <div class="mv-box">
+    <div class="mv-title">SHADOW CELL</div>
+    <div class="mv-sub">MOVEMENT LAB · STAGE 1</div>
+    <div class="mv-progress"><i id="mv-load-bar"></i></div>
+    <div class="mv-small" id="mv-load-text">Loading character…</div>
+    <ul class="mv-help">
+      <li>Left thumb: move. A light push walks, a full push jogs.</li>
+      <li>RUN: sprint (turns off when you let go of the stick).</li>
+      <li>Right thumb: turn the camera.</li>
+      <li>Keyboard: WASD, Shift sprint, Alt walk, Ctrl slow walk, mouse drag to look.</li>
+    </ul>
+    <button type="button" class="mv-chip mv-primary" id="mv-start" hidden>START</button>
+  </div>
+</div>
+<div class="mv-overlay" id="mv-error" hidden role="alert">
+  <div class="mv-box"><div class="mv-err">Something went wrong</div><p id="mv-error-text"></p></div>
+</div>
+<div class="mv-overlay" id="mv-rotate"><div class="mv-box">Turn your phone sideways to play.</div></div>
+<!-- BODY:END -->
+
+<script src="lib/three.min.js"></script>
+<script src="lib/GLTFLoader.js"></script>
+<script src="lib/meshopt_decoder.js"></script>
+<!-- SCRIPTS:START -->
+<script src="js/movement/collision.js"></script>
+<script src="js/movement/motor.js"></script>
+<script src="js/movement/character-visual.js"></script>
+<script src="js/movement/animator.js"></script>
+<script src="js/movement/camera-rig.js"></script>
+<script src="js/movement/input.js"></script>
+<script src="js/movement/actions.js"></script>
+<script src="js/movement/test-area.js"></script>
+<script src="js/movement/main.js"></script>
+<!-- SCRIPTS:END -->
+</body>
+</html>

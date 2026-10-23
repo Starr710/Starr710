@@ -1,0 +1,133 @@
+// SHADOW CELL — movement: character motor (movement + "physics").
+// Knows nothing about meshes, bones or animation clips. It turns a desired
+// direction + intensity into a position, a facing and a speed with weight:
+// speed ramps with acceleration/deceleration, the body turns at a limited,
+// smoothed angular rate, hard reversals brake first, and collisions slide.
+// Characters move the way they face (no strafing in this stage).
+(function (mv) {
+  'use strict';
+
+  const TAU = Math.PI * 2;
+  const wrap = a => { a = (a + Math.PI) % TAU; if (a < 0) a += TAU; return a - Math.PI; };
+  const smooth = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  // Gait speeds (m/s). The stick picks a speed continuously; RUN overrides to sprint.
+  mv.GAITS = [
+    { id: 'idle', label: 'IDLE', max: 0.05 },
+    { id: 'slowwalk', label: 'SLOW WALK', max: 1.15 },
+    { id: 'walk', label: 'WALK', max: 2.0 },
+    { id: 'jog', label: 'JOG', max: 4.3 },
+    { id: 'sprint', label: 'SPRINT', max: Infinity },
+  ];
+
+  mv.MotorDefaults = {
+    radius: 0.32,
+    // stick magnitude → target speed, piecewise linear
+    speedCurve: [[0.12, 0.6], [0.45, 1.0], [0.72, 1.5], [0.86, 2.6], [1.0, 3.2]],
+    sprintSpeed: 5.6,
+    accel: 3.4,            // m/s² when speeding up at walking pace…
+    accelFast: 2.6,        // …and when pushing past jog into a sprint (it takes effort)
+    decel: 5.2,            // m/s² when easing off
+    brake: 9.0,            // m/s² when reversing hard
+    turnRateWalk: 6.5,     // rad/s max body turn rate at walking speed
+    turnRateSprint: 2.6,   // rad/s at full sprint (wide arcs)
+    turnRateIdle: 7.5,     // rad/s turning on the spot from a stand
+    turnStiffness: 9,      // how hard the body chases the stick angle
+    turnSmoothing: 16,     // angular-velocity smoothing (higher = snappier)
+  };
+
+  mv.CharacterMotor = function (world, opts) {
+    this.world = world;
+    this.cfg = Object.assign({}, mv.MotorDefaults, opts || {});
+    this.position = new THREE.Vector3();
+    this.velocity = new THREE.Vector3();
+    this.yaw = 0;              // facing; 0 = +Z
+    this.speed = 0;            // signed forward speed along the facing
+    this.angularVelocity = 0;  // rad/s, + = turning left
+    this.accel = 0;            // m/s², for animation lean
+    this.targetSpeed = 0;
+    this.gait = mv.GAITS[0];
+    this.blocked = false;
+    this.contactX = 0; this.contactZ = 0;
+    this._res = { x: 0, z: 0, nx: 0, nz: 0, hit: false };
+  };
+
+  mv.CharacterMotor.prototype.teleport = function (x, z, yaw) {
+    this.position.set(x, this.groundHeight(x, z), z);
+    this.yaw = yaw || 0;
+    this.speed = 0; this.angularVelocity = 0; this.velocity.set(0, 0, 0);
+  };
+
+  // flat test floor; later stages swap in terrain/stairs here
+  mv.CharacterMotor.prototype.groundHeight = function () { return 0; };
+
+  function curve(points, m) {
+    if (m <= points[0][0]) return 0;
+    for (let i = 1; i < points.length; i++) {
+      if (m <= points[i][0]) { const a = points[i - 1], b = points[i]; return lerp(a[1], b[1], (m - a[0]) / (b[0] - a[0])); }
+    }
+    return points[points.length - 1][1];
+  }
+
+  // dirX/dirZ: desired world-space direction (unit or zero), magnitude 0..1, sprint flag.
+  mv.CharacterMotor.prototype.update = function (dt, dirX, dirZ, magnitude, sprint) {
+    const c = this.cfg;
+    let target = curve(c.speedCurve, magnitude);
+    if (sprint && magnitude > 0.35) target = c.sprintSpeed;
+    const hasInput = target > 0;
+
+    // ---- turning: chase the stick angle with a limited, smoothed angular rate
+    let diff = 0;
+    if (hasInput) {
+      diff = wrap(Math.atan2(dirX, dirZ) - this.yaw);
+      const sp = Math.max(0, this.speed);
+      const maxRate = sp < 0.6 ? lerp(c.turnRateIdle, c.turnRateWalk, sp / 0.6)
+        : lerp(c.turnRateWalk, c.turnRateSprint, smooth(1.6, c.sprintSpeed, sp));
+      const want = Math.max(-maxRate, Math.min(maxRate, diff * c.turnStiffness));
+      this.angularVelocity += (want - this.angularVelocity) * (1 - Math.exp(-c.turnSmoothing * dt));
+    } else {
+      this.angularVelocity *= Math.exp(-c.turnSmoothing * dt);
+    }
+    this.yaw = wrap(this.yaw + this.angularVelocity * dt);
+
+    // ---- speed: only commit to moving once facing roughly the right way;
+    // a hard reversal at speed brakes before turning round
+    const align = Math.cos(Math.min(Math.abs(diff), Math.PI));
+    if (hasInput) target *= smooth(-0.2, 0.75, align);
+    // pushing straight into a wall: stand still rather than tread in place
+    if (this.blocked) target *= smooth(-0.85, -0.45, dirX * this.contactX + dirZ * this.contactZ);
+    this.targetSpeed = target;
+    const prev = this.speed;
+    let rate;
+    if (target > this.speed) rate = this.speed > 3.2 ? c.accelFast : c.accel;
+    else rate = align < 0 && this.speed > 1.5 ? c.brake : c.decel;
+    const dv = target - this.speed;
+    this.speed += Math.sign(dv) * Math.min(Math.abs(dv), rate * dt);
+    // soften the last few cm/s so starts and stops ease in and out
+    if (Math.abs(dv) < 0.25) this.speed += (target - this.speed) * (1 - Math.exp(-6 * dt));
+    if (this.speed < 0.005 && target === 0) this.speed = 0;
+
+    // ---- integrate + collide
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    const ox = this.position.x, oz = this.position.z;
+    const r = this.world.resolve(ox + fx * this.speed * dt, oz + fz * this.speed * dt, c.radius, this._res);
+    this.position.x = r.x; this.position.z = r.z;
+    this.position.y = this.groundHeight(r.x, r.z);
+    this.blocked = r.hit;
+    this.contactX = r.nx; this.contactZ = r.nz;
+    const vx = dt > 0 ? (r.x - ox) / dt : 0, vz = dt > 0 ? (r.z - oz) / dt : 0;
+    this.velocity.set(vx, 0, vz);
+    if (r.hit) {
+      // pressing into a wall: the legs slow to the speed actually achieved
+      // (head-on she settles to a stand instead of treading in place)
+      const achieved = Math.max(0, vx * fx + vz * fz) + Math.hypot(vx, vz) * 0.35;
+      if (achieved < this.speed) this.speed += (achieved - this.speed) * (1 - Math.exp(-10 * dt));
+    }
+    this.accel = dt > 0 ? (this.speed - prev) / dt : 0;
+
+    // ---- gait label (for animation + HUD)
+    const s = this.speed;
+    this.gait = mv.GAITS.find(g => s <= g.max);
+  };
+})(SC.mv);
