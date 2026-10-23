@@ -15,6 +15,7 @@ Run from the repo root. The script starts its own local server, opens `movement.
 | `stops` | Releasing the stick: she stops within 1 s and settles into idle, with the planted foot still. The jog stop's last stride drags the foot a little (≈ 0.7 m/s, known), so its limit is 0.8 |
 | `fingers` | Fingers don't drift or spin over 10 s (≤ 10°) |
 | `jointPops` | 60 s of random stick input, stance changes, turns, stops and starts. No single-frame joint pops while crouched, measured relative to the body. Standing fast reversals are counted but not failed |
+| `footsteps` | Footstep noise events: one per foot landing, alternating feet, in step with the gait cycle; level 1 for sneak and slow crouch, 2 for stealth walk and fast crouch, 3 for jog; none while standing or crouching still |
 | `groundContact` | In the crouch idle both feet touch the ground (lowest skinned vertex ≤ 3 cm) |
 | `clearance` | Limbs stay out of the body: hand to shin ≥ 15 cm in the crouch idle (≥ 12 cm during the crouch-walk arm swing), thigh to spine ≥ 15 cm |
 

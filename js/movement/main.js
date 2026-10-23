@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -62,6 +62,8 @@
   const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), crouch: $('mv-crouch') });
   const cam = new mv.ThirdPersonCamera(camera, world);
   const actions = new mv.ActionSystem();
+  const noise = new mv.NoiseSystem(scene);
+  let footsteps = null;
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
@@ -80,6 +82,7 @@
     animator = new mv.AnimationController(visual);
     // unarmed by default; '#rifle' previews the rifle carry kept for later stages
     posture = new mv.TacticalPosture(visual, { carry: location.hash === '#rifle' ? 'rifle' : 'unarmed' });
+    footsteps = new mv.FootstepEmitter(noise, visual, motor, 'player');
     const s = animator.stride;
     ui.calib.textContent = `walk ${s.walk.speed.toFixed(2)} · run ${s.run.speed.toFixed(2)} m/s`;
     visual.place(motor.position, motor.yaw);
@@ -119,7 +122,10 @@
       visual.place(motor.position, motor.yaw);
       animator.update(dt, motor);
       posture.update(dt, motor, animator);
+      visual.root.updateMatrixWorld(true);
+      footsteps.update(dt);
     }
+    noise.update(dt);
     cam.update(dt, motor, input.look, input.mouse);
     sun.position.set(motor.position.x + 6, 14, motor.position.z + 5);
     sun.target.position.copy(motor.position);
@@ -133,6 +139,8 @@
       hudT = 0;
       ui.gait.textContent = motor.gait.label;
       ui.speed.textContent = motor.speed.toFixed(2) + ' m/s';
+      const n = noise.last;
+      ui.noise.textContent = n && performance.now() / 1000 - n.time < 1.2 ? `L${n.level} ${n.type} · ${n.radius.toFixed(1)} m` : '–';
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
       ui.fps.textContent = fps.toFixed(0) + ' · ' + renderer.info.render.calls + ' draws';
     }
@@ -143,5 +151,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { motor, cam, input, world, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { motor, cam, input, world, noise, get footsteps() { return footsteps; }, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);
