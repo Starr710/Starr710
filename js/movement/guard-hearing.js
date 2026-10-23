@@ -2,24 +2,16 @@
 // The guard listens to the noise system. Each event already carries its
 // effective reach (level, surface and all), so a sound is heard when it happens
 // within that reach × the guard's hearing sensitivity; nothing is recomputed.
-// When he hears one he remembers where it came from (only the most recent), and
-// after a short beat turns on the spot to look there, holds the look, then turns
-// back to his post. He reacts to where the sound was made, never to where the
-// player is now. Hearing never fills the vision meter: only seeing does.
-// All values are initial test values, adjustable here.
+// Hearing is perception only: it records the last sound evaluated (heard or
+// ignored) and the last one heard, and hands each heard sound to the guard's
+// awareness (guard-awareness.js), which decides how to react. Hearing never
+// fills the vision meter: only seeing does. Values are adjustable here.
 (function (mv) {
   'use strict';
 
   mv.HearingDefaults = {
     // hearing capability: multiplies each sound's own reach
     profiles: { poor: { sensitivity: 0.7 }, regular: { sensitivity: 1 }, keen: { sensitivity: 1.3 } },
-    reactDelay: 0.35,      // s between hearing a sound and starting to turn toward it
-    lookTime: 3.0,         // s he keeps looking after the last sound he heard…
-    returnToPost: true,    // …then turns back to his post's facing
-    // repeated sounds (a run of footsteps): a new one only redirects his look if it
-    // comes from a clearly different direction and not too soon after the last redirect
-    retargetAngle: 12,     // degrees
-    retargetGap: 0.8,      // s
     ignoreSources: ['guard'],
     debug: true,           // developer marker at the last heard position (stats row is separate)
   };
@@ -32,9 +24,7 @@
     this.last = null;        // the last sound evaluated: heard or ignored, with why
     this.heard = null;       // the most recent sound he heard: { position, time, … }
     this.heardCount = 0;
-    this.pending = null;     // { yaw, at }: a turn waiting for the reaction delay
-    this.lookYaw = null;     // the direction he's looking toward (null = at his post)
-    this.lastRedirect = -Infinity;
+    this.onHeard = null;     // set by the guard: called with each heard sound's record
     this.off = noise.on(ev => this.hear(ev));
     this.marker = null;
   };
@@ -55,31 +45,10 @@
       distance: r.distance, reach: r.reach, heard: r.heard, position: ev.position.clone(), time: this.clock };
     if (!r.heard) return;
     this.heard = this.last; this.heardCount++;
-    const g = this.guard, yaw = Math.atan2(ev.position.x - g.position.x, ev.position.z - g.position.z);
-    const current = this.pending ? this.pending.yaw : this.lookYaw;
-    const apart = current == null ? Infinity : Math.abs(Math.atan2(Math.sin(yaw - current), Math.cos(yaw - current))) * 57.2958;
-    if (apart >= this.cfg.retargetAngle && this.clock - this.lastRedirect >= this.cfg.retargetGap) {
-      this.pending = { yaw, at: this.clock + this.cfg.reactDelay };
-      this.lastRedirect = this.clock;
-    }
+    if (this.onHeard) this.onHeard(this.last);
   };
 
-  mv.GuardHearing.prototype.update = function (dt) {
-    this.clock += dt;
-    const g = this.guard;
-    if (this.pending && this.clock >= this.pending.at) { this.lookYaw = this.pending.yaw; g.faceYaw(this.lookYaw); this.pending = null; }
-    if (this.lookYaw != null && !this.pending && this.heard && this.clock - this.heard.time > this.cfg.reactDelay + this.cfg.lookTime) {
-      this.lookYaw = null;
-      if (this.cfg.returnToPost) g.faceYaw(g.postYaw);
-    }
-  };
-
-  // short state for the developer view
-  mv.GuardHearing.prototype.state = function () {
-    if (this.pending) return 'HEARD — REACTING';
-    if (this.lookYaw != null) return 'LOOKING';
-    return 'LISTENING';
-  };
+  mv.GuardHearing.prototype.update = function (dt) { this.clock += dt; };
 
   // ---------------------------------------------------------------- developer marker
   // a small cyan ring at the last heard position (the sound's origin, not the player)

@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -66,7 +66,7 @@
   const footAudio = new mv.FootstepAudio(noise);
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
-  let footsteps = null, guard = null, guardView = null, seeTarget = null;
+  let footsteps = null, guard = null, guardView = null, awareView = null, seeTarget = null;
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
@@ -89,6 +89,7 @@
     // one stationary test guard sharing the player's model and clips
     guard = new mv.Guard(scene, world, visual, Object.assign({ vision: 'regular', hearing: 'regular' }, area.guard), noise);
     guardView = new mv.GuardDebugView(scene, guard);
+    awareView = new mv.GuardAwarenessView(scene, guard);
     seeTarget = mv.visionTarget(visual, motor);
     const s = animator.stride;
     ui.calib.textContent = `walk ${s.walk.speed.toFixed(2)} · run ${s.run.speed.toFixed(2)} m/s`;
@@ -105,7 +106,8 @@
     footAudio.unlock();
     document.body.classList.add('playing');
   });
-  ui.reset.addEventListener('click', spawn);
+  // RESET puts the player back at the start and the guard back at his post, calm
+  ui.reset.addEventListener('click', () => { spawn(); if (guard) guard.reset(); });
   ui.statsBtn.addEventListener('click', () => { ui.stats.hidden = !ui.stats.hidden; ui.statsBtn.setAttribute('aria-pressed', String(!ui.stats.hidden)); });
 
   // ---------------------------------------------------------------- loop
@@ -135,6 +137,7 @@
       guard.update(dt, seeTarget);
       guardView.update(camera, seeTarget);
       guard.hearing.updateDebug(scene);
+      awareView.update(camera);
     }
     noise.update(dt);
     cam.update(dt, motor, input.look, input.mouse);
@@ -157,7 +160,10 @@
         ui.guard.textContent = (s.zone ? s.zone.toUpperCase() : '—') + ' · ' + (isFinite(s.distance) ? s.distance.toFixed(1) + ' m' : '–') + (s.zone ? ' · ' + Math.round(s.exposure * 100) + '% exposed' : '');
         ui.detect.textContent = Math.round(guard.vision.meter * 100) + '% ' + guard.vision.state();
         const h = guard.hearing.last;
-        ui.hear.textContent = h ? `${h.heard ? 'HEARD' : 'IGNORED'} ${h.type} L${h.level} ${h.surface} i${h.intensity.toFixed(1)} · ${h.distance.toFixed(1)}/${h.reach.toFixed(1)} m · ${guard.hearing.state()}` : 'LISTENING';
+        ui.hear.textContent = h ? `${h.heard ? 'HEARD' : 'IGNORED'} ${h.type} L${h.level} ${h.surface} i${h.intensity.toFixed(1)} · ${h.distance.toFixed(1)}/${h.reach.toFixed(1)} m` : 'LISTENING';
+        const a = guard.awareness, xz = p => p ? `(${p.x.toFixed(1)}, ${p.z.toFixed(1)})` : '—';
+        ui.aware.textContent = `${a.state} · ${Math.round(a.suspicion * 100)}% · ${a.behavior}` + (guard.moving ? ' → ' + xz(guard.goal) : '') + (a.note ? ' · ' + a.note : '');
+        ui.memory.textContent = `heard ${xz(a.heard && a.heard.position)} · seen ${xz(a.seen && a.seen.position)} · ${a.confirmed ? 'CONFIRMED' : 'not confirmed'}`;
       }
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
       ui.fps.textContent = fps.toFixed(0) + ' · ' + renderer.info.render.calls + ' draws';

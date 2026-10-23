@@ -41,6 +41,7 @@
     return {
       points() { bones.forEach((b, i) => b.getWorldPosition(pts[i])); return pts; },
       centre(out) { return (visual.bones.chest || visual.bones.hips).getWorldPosition(out); },
+      get position() { return motor.position; },   // where she stands (for collision and "last seen")
       get stance() { return motor.stance; },
       get speed() { return Math.abs(motor.speed); },
     };
@@ -55,7 +56,8 @@
     this.acc = Infinity;       // look on the first update
     // last look: zone id (or null), distance, visible share of the body, fill rate,
     // and why not, when not seen: 'range', 'cone' or 'blocked'
-    this.seen = { zone: null, distance: Infinity, exposure: 0, rate: 0, blocked: false, why: 'range', rays: [] };
+    // position: where she stood at that look, if he saw her (what he actually observed)
+    this.seen = { zone: null, distance: Infinity, exposure: 0, rate: 0, blocked: false, why: 'range', rays: [], position: null };
   };
 
   mv.GuardVision.prototype.range = function () { return this.cfg.profiles[this.profile].range; };
@@ -71,7 +73,7 @@
     const c = this.cfg, g = this.guard, eye = g.eye(_e), centre = target.centre(_c), fwd = g.forward(_f);
     const dx = centre.x - eye.x, dz = centre.z - eye.z, dist = Math.hypot(dx, dz);
     const off = dist > 1e-6 ? Math.acos(Math.max(-1, Math.min(1, (dx * fwd.x + dz * fwd.z) / dist))) * 57.2958 : 0;
-    const s = this.seen; s.distance = dist; s.off = off; s.zone = null; s.rate = 0; s.blocked = false; s.exposure = 0; s.rays.length = 0;
+    const s = this.seen; s.distance = dist; s.off = off; s.zone = null; s.rate = 0; s.blocked = false; s.exposure = 0; s.rays.length = 0; s.position = null;
     if (dist > this.range()) { s.why = 'range'; return s; }
     const zone = this.zoneAt(off);
     if (!zone) { s.why = 'cone'; return s; }
@@ -82,6 +84,7 @@
     s.exposure = pts.length ? clear / pts.length : 0;
     if (s.exposure < c.coverBlock) { s.blocked = true; s.why = 'blocked'; return s; }
     s.why = null;
+    if (target.position) { s.position = target.position.clone(); s.position.y = 0; }
     if (dist <= c.closeRange) { s.rate = c.closeRate; return s; }
     const far = smooth(c.fullRateDistance, this.range(), dist), distF = 1 - (1 - c.farRateScale) * far;
     const m = c.movement, sp = target.speed;

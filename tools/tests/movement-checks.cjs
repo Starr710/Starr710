@@ -458,9 +458,11 @@ const CHECKS = {
     return { pass: ok, detail: gaits.map(gt => `${gt} grass/concrete/metal ${R['grass ' + gt].toFixed(1)}/${R['concrete ' + gt].toFixed(1)}/${R['metal ' + gt].toFixed(1)} m`).join(', ') + `; heard inside / ignored outside each: ${r.edgesOk}; idle: ${r.idleSteps} steps, ${r.idleHeard} heard` };
   },
 
-  // he turns (not snaps) toward where the sound was made, after a short beat, looks,
-  // then returns to his post; he faces the sound's origin, not the player; his vision
-  // cone turns with him; hearing alone never fills the vision meter
+  // he turns (not snaps) toward where the sound was made, after a short beat, and keeps
+  // looking there while suspicious: the old 3-second look timer must not send him back
+  // (Step 5 fix); only once his suspicion fades does he face his post again. He faces
+  // the sound's origin, not the player; his vision cone turns with him; hearing alone
+  // never fills the vision meter
   async hearingTurn() {
     const page = await simPage();
     const r = await page.evaluate(() => {
@@ -478,14 +480,16 @@ const CHECKS = {
       motor.teleport(soundAt.x + 1.5, soundAt.z, Math.PI); for (let f = 0; f < 120; f++) step(0, 'stand');
       const seenAfterTurn = Object.assign({}, v.look(T));
       motor.teleport(-12, -18, 0); for (let f = 0; f < 60; f++) step(0, 'stand');
-      // after the look he returns to his post facing
-      let back = null; for (let f = 0; f < 600 && back == null; f++) { step(0, 'stand'); g.update(dt, T); if (h.lookYaw == null && wrapD(g.yaw - g.postYaw) < 3) back = f * dt; }
-      return { startT, faceT, maxStep, facingSound, facingPlayer, meterMax, zoneAfter: seenAfterTurn.zone, rateAfter: seenAfterTurn.rate, back, react: h.cfg.reactDelay, maxRate: g.cfg.turn.maxRate };
+      // he stays turned to the sound (no 3-second snap back); only when suspicion has
+      // faded does he return to his post facing
+      const a = g.awareness; let back = null, earlyBack = false;
+      for (let f = 0; f < 30 * 60 && back == null; f++) { step(0, 'stand'); g.update(dt, T); const tt = 3 + f * dt; if (wrapD(g.yaw - g.postYaw) < 3) { if (a.state === 'NORMAL') back = tt; if (tt < 3.35 + 0.5) earlyBack = true; } }
+      return { startT, faceT, maxStep, facingSound, facingPlayer, meterMax, zoneAfter: seenAfterTurn.zone, rateAfter: seenAfterTurn.rate, back, earlyBack, react: a.cfg.reactDelay, maxRate: g.cfg.turn.maxRate };
     });
     const perFrame = r.maxRate / 60 * 57.3 + 0.05;
     const ok = r.startT >= r.react - 0.02 && r.startT < r.react + 0.2 && r.faceT != null && r.faceT < 2.5 && r.maxStep <= perFrame && r.facingSound < 3 && r.facingPlayer > 30
-      && r.meterMax === 0 && r.zoneAfter === 'fastest' && r.rateAfter > 0 && r.back != null;
-    return { pass: ok, detail: `starts turning after ${r.startT.toFixed(2)} s, faces the sound in ${r.faceT == null ? 'never' : r.faceT.toFixed(2) + ' s'}, max ${r.maxStep.toFixed(2)}°/frame (limit ${perFrame.toFixed(2)}); facing sound ±${r.facingSound.toFixed(1)}°, player ${r.facingPlayer.toFixed(0)}° away; meter while only heard ${r.meterMax}; after the turn the player there is in ${r.zoneAfter} (${r.rateAfter.toFixed(2)}/s); back at post ${r.back == null ? 'never' : 'after ' + r.back.toFixed(1) + ' s'}` };
+      && r.meterMax === 0 && r.zoneAfter === 'fastest' && r.rateAfter > 0 && r.back != null && !r.earlyBack;
+    return { pass: ok, detail: `starts turning after ${r.startT.toFixed(2)} s, faces the sound in ${r.faceT == null ? 'never' : r.faceT.toFixed(2) + ' s'}, max ${r.maxStep.toFixed(2)}°/frame (limit ${perFrame.toFixed(2)}); facing sound ±${r.facingSound.toFixed(1)}°, player ${r.facingPlayer.toFixed(0)}° away; meter while only heard ${r.meterMax}; after the turn the player there is in ${r.zoneAfter} (${r.rateAfter.toFixed(2)}/s); ${r.earlyBack ? 'RETURNED EARLY (old 3 s timer); ' : 'still turned to the sound after the old 3 s timer; '}back to his post facing once calm ${r.back == null ? 'never' : 'after ' + r.back.toFixed(1) + ' s'}` };
   },
 
   // a run of real footsteps circling behind him: redirects are spaced out, the turn
@@ -496,24 +500,198 @@ const CHECKS = {
       const { motor, noise } = MV, g = MV.guard, h = g.hearing, fs = MV.footsteps, T = MV.seeTarget, dt = 1 / 60, B = g.bones;
       const names = ['spine1', 'chest', 'neck', 'head', 'leftArm', 'rightArm', 'leftForeArm', 'rightForeArm', 'leftUpLeg', 'rightUpLeg', 'leftLeg', 'rightLeg'];
       const prevQ = {}, lastA = {}; let pops = 0, worst = 0, redirects = 0, maxDav = 0, flips = 0, prevAv = 0, lastFlip = -9;
-      let lr = h.lastRedirect;
+      const aw = g.awareness; let lr = aw.lastRedirect;
       motor.teleport(g.position.x - 4, g.position.z - 3, 0); for (let f = 0; f < 60; f++) step(0, 'stand');
       for (let f = 0; f < 600; f++) {
         // jog on a 4 m circle around a point behind him
         const a = f * dt * 1.1, x = Math.cos(a), z = -Math.sin(a);
         step(1, 'stand', x, z); fs.update(dt); noise.update(dt); g.update(dt, T);
-        if (h.lastRedirect !== lr) { redirects++; lr = h.lastRedirect; }
+        if (aw.lastRedirect !== lr) { redirects++; lr = aw.lastRedirect; }
         const av = g.body.angularVelocity; maxDav = Math.max(maxDav, Math.abs(av - prevAv));
         if (Math.sign(av) !== Math.sign(prevAv) && Math.abs(av) > 0.3 && Math.abs(prevAv) > 0.3) { if (f * dt - lastFlip < 0.5) flips++; lastFlip = f * dt; }
         prevAv = av;
         const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert();
         for (const nm of names) { const q = ri.clone().multiply(B[nm].getWorldQuaternion(new THREE.Quaternion())); if (prevQ[nm] && f > 30) { const ang = 2 * Math.acos(Math.min(1, Math.abs(q.dot(prevQ[nm])))) * 57.3, leg = nm.endsWith('Leg'); const spike = leg ? (ang > 12 && ang > 2 * (lastA[nm] || 0)) : ang > 9; lastA[nm] = ang; if (spike) { pops++; worst = Math.max(worst, ang); } } prevQ[nm] = q; }
       }
-      return { heard: h.heardCount, redirects, maxDav, flips, pops, worst, gap: h.cfg.retargetGap };
+      return { heard: h.heardCount, redirects, maxDav, flips, pops, worst, gap: aw.cfg.retargetGap };
     });
     const maxRedirects = Math.floor(10 / r.gap) + 1;
     const ok = r.heard > 5 && r.redirects <= maxRedirects && r.maxDav < 0.75 && r.flips === 0 && r.pops === 0;
     return { pass: ok, detail: `${r.heard} footsteps heard in 10 s, ${r.redirects} look redirects (max ${maxRedirects}), largest turn-rate change ${r.maxDav.toFixed(2)} rad/s per frame, rapid reversals ${r.flips}, guard joint pops ${r.pops}${r.worst ? ' (worst ' + r.worst.toFixed(1) + '°)' : ''}` };
+  },
+
+  // ---- guard awareness (Step 5). In every scenario the player stands silent and out
+  // of his view unless the scenario says otherwise; sounds come through the noise system.
+  // sim(n) runs n frames of the whole loop: player (still), footsteps, noise, guard.
+
+  // 1–3: a single minor sound makes him suspicious but not investigate, and fades;
+  // a faint one barely registers; repeated sounds near one spot build suspicion
+  // step by step (without resetting his animation) until he investigates
+  async aiSuspicion() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, B = g.bones, out = {};
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      const emit = (lv, x, z, surf) => noise.emit(lv, 'footstep', new THREE.Vector3(g.position.x + x, 0, g.position.z + z), surf || 'concrete', 'player');
+      motor.teleport(-14, -20, 0); sim(60);
+      // a faint grass sneak step 0.8 m away: noted, barely suspicious
+      emit(1, 0.6, -0.5, 'grass'); sim(2); out.faint = { susp: a.suspicion, state: a.state };
+      g.reset(); sim(30);
+      // one sneaking step on concrete 2 m behind him
+      emit(1, 1.4, -1.4); let maxS = 0, investigated = false, back = null;
+      for (let f = 0; f < 40 * 60; f++) { sim(1); maxS = Math.max(maxS, a.suspicion); if (a.state === 'INVESTIGATING') investigated = true; if (back == null && f > 60 && a.state === 'NORMAL' && Math.abs(Math.atan2(Math.sin(g.yaw - g.postYaw), Math.cos(g.yaw - g.postYaw))) < 0.05) back = f * dt; }
+      out.minor = { maxS, investigated, back, endState: a.state, endS: a.suspicion };
+      // repeated stealth-walk steps around one spot 5 m behind him, every 0.5 s
+      g.reset(); sim(30);
+      const steps = [], prevQ = {}, lastA = {}; let pops = 0, flips = 0, prevAv = 0, lastFlip = -9, t = 0;
+      for (let k = 0; k < 10; k++) {
+        emit(2, -1.5 + (k % 2) * 0.6, -4.8 + k * 0.15); steps.push({ susp: a.suspicion, state: a.state });
+        for (let f = 0; f < 30; f++) {
+          sim(1); t += dt; const av = g.motor.angularVelocity;
+          if (Math.sign(av) !== Math.sign(prevAv) && Math.abs(av) > 0.3 && Math.abs(prevAv) > 0.3) { if (t - lastFlip < 0.5) flips++; lastFlip = t; } prevAv = av;
+          const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert();
+          for (const nm of ['spine1', 'chest', 'head', 'leftArm', 'rightArm', 'leftUpLeg', 'rightUpLeg', 'leftLeg', 'rightLeg']) { const q = ri.clone().multiply(B[nm].getWorldQuaternion(new THREE.Quaternion())); if (prevQ[nm]) { const ang = 2 * Math.acos(Math.min(1, Math.abs(q.dot(prevQ[nm])))) * 57.3, leg = nm.endsWith('Leg'); if (leg ? (ang > 12 && ang > 2 * (lastA[nm] || 0)) : ang > 9) pops++; lastA[nm] = ang; } prevQ[nm] = q; }
+        }
+      }
+      out.repeat = { steps, pops, flips, redirects: a.redirects, state: a.state };
+      return out;
+    });
+    const c = { suspiciousAt: 0.08, investigateAt: 0.6 };
+    const s = r.repeat.steps.map(x => x.susp);
+    const builds = s.slice(1, 4).every((v, i) => v > s[i]);   // the first few repeats each add more
+    const reached = r.repeat.state === 'INVESTIGATING' || r.repeat.steps.some(x => x.state === 'INVESTIGATING');
+    const ok = r.faint.susp < c.suspiciousAt && r.faint.state === 'NORMAL'
+      && r.minor.maxS >= c.suspiciousAt && r.minor.maxS < c.investigateAt && !r.minor.investigated && r.minor.back != null && r.minor.endState === 'NORMAL'
+      && builds && reached && r.repeat.pops === 0 && r.repeat.flips === 0;
+    return { pass: ok, detail: `faint grass step ${Math.round(r.faint.susp * 100)}% ${r.faint.state}; one sneak step: peak ${Math.round(r.minor.maxS * 100)}% (suspicious, no investigation: ${!r.minor.investigated}), calm and facing post again after ${r.minor.back == null ? 'never' : r.minor.back.toFixed(1) + ' s'}; repeated steps: ${s.slice(0, 5).map(v => Math.round(v * 100) + '%').join(' → ')}… ${reached ? 'INVESTIGATING' : 'never investigated'}, ${r.repeat.redirects} redirects, joint pops ${r.repeat.pops}, rapid turn reversals ${r.repeat.flips}` };
+  },
+
+  // 4, 5, 7, 8, 14: a significant sound sends him to its origin, even while the player
+  // moves elsewhere unseen; he stops short of it and searches; then he walks back to
+  // his post and is NORMAL again: the whole episode ends (no endless loop)
+  async aiInvestigate() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      motor.teleport(-14, -20, 0); sim(60);
+      const S = new THREE.Vector3(g.position.x + 5, 0, g.position.z - 3);
+      noise.emit(3, 'footstep', S, 'concrete', 'player'); sim(30); noise.emit(3, 'footstep', S, 'concrete', 'player');
+      const states = [], goals = []; let minToS = Infinity, stopAt = null, searchYaw = [], searchMaxSpeed = 0, end = null, moved = false;
+      for (let f = 0; f < 70 * 60 && end == null; f++) {
+        if (f === 90) { motor.teleport(-14, -8, 0); }          // she slips away, silently, out of his sight
+        sim(1);
+        const k = a.state + ':' + a.behavior; if (states[states.length - 1] !== k) states.push(k);
+        if (g.moving && g.goal && a.behavior === 'approach') goals.push(Math.hypot(g.goal.x - S.x, g.goal.z - S.z));
+        if (g.motor.speed > 0.3) moved = true;
+        // once he has come to rest at the spot: where he stopped, then the look-around (standing still)
+        if (a.behavior === 'search' && (stopAt != null || g.isStill())) { if (stopAt == null) stopAt = Math.hypot(g.position.x - S.x, g.position.z - S.z); searchYaw.push(g.yaw); searchMaxSpeed = Math.max(searchMaxSpeed, Math.abs(g.motor.speed)); }
+        if (a.behavior === 'approach') minToS = Math.min(minToS, Math.hypot(g.position.x - S.x, g.position.z - S.z));
+        if (moved && a.state === 'NORMAL' && g.atPost() && g.isStill()) end = f * dt;
+      }
+      // the full sweep of directions he looked in while searching (relative to his first)
+      const rel = searchYaw.map(y => Math.atan2(Math.sin(y - searchYaw[0]), Math.cos(y - searchYaw[0])) * 57.3);
+      const span = rel.length ? Math.max(...rel) - Math.min(...rel) : 0;
+      return { states, goalOff: goals.length ? Math.max(...goals) : 9, stopAt, searchSpan: span, searchMaxSpeed, end, postDist: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), confirmed: a.confirmed, seen: !!a.seen };
+    });
+    const seq = r.states.join(' → ');
+    const order = ['INVESTIGATING:approach', 'INVESTIGATING:search', 'INVESTIGATING:return', 'NORMAL:idle'].every(k => r.states.includes(k))
+      && r.states.indexOf('INVESTIGATING:approach') < r.states.indexOf('INVESTIGATING:search') && r.states.indexOf('INVESTIGATING:search') < r.states.indexOf('INVESTIGATING:return');
+    const ok = order && r.goalOff < 0.01 && r.stopAt != null && r.stopAt < 1.8 && r.stopAt > 0.3 && r.searchSpan > 60 && r.searchMaxSpeed < 0.05 && r.end != null && r.end < 60 && r.postDist < 0.6 && !r.confirmed && !r.seen;
+    return { pass: ok, detail: `${seq}; his target stayed the sound's origin (max ${r.goalOff.toFixed(2)} m off) while she moved unseen; stopped ${r.stopAt == null ? '?' : r.stopAt.toFixed(2)} m from it, searched ${r.searchSpan.toFixed(0)}° standing still; back at post and NORMAL after ${r.end == null ? 'never' : r.end.toFixed(1) + ' s'}` };
+  },
+
+  // 6, 14: he walks around a crate to reach a spot behind it (never through it); a
+  // spot he can't reach (outside the perimeter wall) makes him stop safely, search
+  // from where he is, and settle back instead of walking into the wall forever
+  async aiNavigation() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, world } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, R = g.cfg.radius;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      const intrusion = () => { let worst = 0; for (const b of world.boxes) { const dx = Math.max(b.minX - g.position.x, 0, g.position.x - b.maxX), dz = Math.max(b.minZ - g.position.z, 0, g.position.z - b.maxZ); worst = Math.max(worst, R - Math.hypot(dx, dz)); } for (const c of world.cylinders) if (!c.noSight) worst = Math.max(worst, c.r + R - Math.hypot(g.position.x - c.x, g.position.z - c.z)); return worst; };
+      const out = {};
+      // behind the tall crate at (-2, -8), straight line from his post blocked
+      motor.teleport(-14, -21, 0); sim(60);
+      const S = new THREE.Vector3(-2, 0, -6);
+      noise.emit(3, 'footstep', S, 'concrete', 'player'); sim(30); noise.emit(3, 'footstep', S, 'concrete', 'player');
+      const straightBlocked = !g.nav.clear(g.post, S);
+      let worst = 0, walked = 0, prev = g.position.clone(), reached = Infinity, done = null;
+      for (let f = 0; f < 70 * 60 && done == null; f++) { sim(1); worst = Math.max(worst, intrusion()); walked += g.position.distanceTo(prev); prev.copy(g.position); if (a.behavior === 'search') reached = Math.min(reached, Math.hypot(g.position.x - S.x, g.position.z - S.z)); if (f > 120 && a.state === 'NORMAL' && g.atPost() && g.isStill()) done = f * dt; }
+      out.detour = { straightBlocked, worst, walked, straight: g.post.distanceTo(S), reached, done };
+      // outside the perimeter wall (z = -22): unreachable
+      g.reset(); sim(30);
+      const U = new THREE.Vector3(2, 0, -23.5);
+      noise.emit(3, 'footstep', U, 'concrete', 'player'); sim(30); noise.emit(3, 'footstep', U, 'concrete', 'player');
+      let maxMove = 0, pushing = 0, end = null, note = '';
+      for (let f = 0; f < 60 * 60 && end == null; f++) { sim(1); maxMove = Math.max(maxMove, Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z)); if (g.motor.blocked && Math.abs(g.motor.targetSpeed) > 0) pushing++; if (a.note) note = a.note; if (f > 120 && a.state === 'NORMAL' && g.isStill()) end = f * dt; }
+      out.unreachable = { maxMove, pushing, end, note, state: a.state };
+      return out;
+    });
+    const d = r.detour, u = r.unreachable;
+    const ok = d.straightBlocked && d.worst < 0.02 && d.reached < 1.8 && d.walked > d.straight && d.done != null
+      && u.maxMove < 0.5 && u.pushing === 0 && u.end != null && /unreachable/.test(u.note);
+    return { pass: ok, detail: `spot behind the tall crate (straight line blocked: ${d.straightBlocked}): reached ${d.reached.toFixed(2)} m from it by a detour, deepest overlap with any obstacle ${(Math.max(0, d.worst) * 100).toFixed(1)} cm, back at post after ${d.done == null ? 'never' : d.done.toFixed(1) + ' s'}; spot outside the perimeter: "${u.note}", moved ${u.maxMove.toFixed(2)} m, frames pushing into a wall ${u.pushing}, settled after ${u.end == null ? 'never' : u.end.toFixed(1) + ' s'}` };
+  },
+
+  // 9: while he walks and turns his vision cone is his actual facing: his body and his
+  // direction of travel line up with it, and the zones classify around it
+  async aiVisionAlign() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, v = g.vision, dt = 1 / 60, B = g.bones;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      motor.teleport(-14, -21, 0); sim(60);
+      const S = new THREE.Vector3(-2, 0, -6);     // the detour walk: straight runs and turns
+      noise.emit(3, 'footstep', S, 'concrete', 'player'); sim(30); noise.emit(3, 'footstep', S, 'concrete', 'player');
+      let bodyWorst = 0, travelWorst = 0, n = 0, conesOk = true, checked = 0;
+      for (let f = 0; f < 12 * 60; f++) {
+        sim(1);
+        if (a.behavior !== 'approach' || g.motor.speed < 0.8) continue;
+        const fw = g.forward(), l = B.leftUpLeg.getWorldPosition(new THREE.Vector3()), rr = B.rightUpLeg.getWorldPosition(new THREE.Vector3());
+        const d = l.sub(rr), face = new THREE.Vector3(-d.z, 0, d.x).normalize(); if (face.dot(fw) < 0) face.negate();
+        bodyWorst = Math.max(bodyWorst, Math.acos(Math.min(1, face.dot(fw))) * 57.3);
+        if (Math.abs(g.motor.angularVelocity) < 0.3) { const vel = g.motor.velocity, sp = Math.hypot(vel.x, vel.z); if (sp > 0.5) travelWorst = Math.max(travelWorst, Math.acos(Math.min(1, (vel.x * fw.x + vel.z * fw.z) / sp)) * 57.3); }
+        n++;
+        if (f % 90 === 0) {
+          // stand her (briefly, for one look) dead ahead of him, then square to his side
+          const save = motor.position.clone(), ahead = g.position.clone().addScaledVector(fw, 6), side = g.position.clone().add(new THREE.Vector3(fw.z, 0, -fw.x).multiplyScalar(6));
+          motor.position.copy(ahead); MV.visual.place(motor.position, motor.yaw); MV.visual.root.updateMatrixWorld(true); const z1 = v.zoneAt(v.look(T).off);
+          motor.position.copy(side); MV.visual.place(motor.position, motor.yaw); MV.visual.root.updateMatrixWorld(true); const z2 = v.zoneAt(v.look(T).off);
+          motor.position.copy(save); MV.visual.place(motor.position, motor.yaw); MV.visual.root.updateMatrixWorld(true); v.look(T);
+          conesOk = conesOk && z1 && z1.id === 'fastest' && !z2; checked++;
+        }
+      }
+      return { bodyWorst, travelWorst, n, conesOk, checked };
+    });
+    const ok = r.n > 60 && r.bodyWorst < 30 && r.travelWorst < 15 && r.conesOk && r.checked >= 2;
+    return { pass: ok, detail: `${r.n} walking frames: hips within ${r.bodyWorst.toFixed(0)}° of his vision facing, travel within ${r.travelWorst.toFixed(0)}° when walking straight; ${r.checked} spot checks: dead ahead = fastest zone, square to his side = outside the cone: ${r.conesOk}` };
+  },
+
+  // 10–13: seeing her to 100% confirms the threat, and it sticks: she goes silent and
+  // vanishes out of his view, sounds come from elsewhere, time passes; he stays
+  // CONFIRMED facing the last place he actually saw her (not where she went, not his
+  // post, not the sounds), and that remembered position doesn't follow her
+  async aiConfirmed() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, v = g.vision, dt = 1 / 60;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      motor.teleport(5, -10.8, Math.PI); sim(30);      // standing 30° to his right, 6 m away, in plain view
+      let t = 0; while (!a.confirmed && t < 15) { sim(1); t += dt; }
+      const confirmT = t, seenAt = a.seen ? a.seen.position.clone() : null;
+      motor.teleport(-14, -20, 0); sim(2);              // gone: silent, behind him and out of range
+      const toSeen = () => Math.abs(Math.atan2(Math.sin(g.yaw - Math.atan2(seenAt.x - g.position.x, seenAt.z - g.position.z)), Math.cos(g.yaw - Math.atan2(seenAt.x - g.position.x, seenAt.z - g.position.z)))) * 57.3;
+      let worstFace = 0, leftState = false, seenMoved = 0, heardCount = g.hearing.heardCount, yawPost = 0, meterEnd = 0;
+      for (let k = 0; k < 8; k++) {
+        noise.emit(3, 'footstep', new THREE.Vector3(g.position.x + 6, 0, g.position.z - 1), 'concrete', 'player');   // sounds off to his right
+        for (let f = 0; f < 150; f++) { sim(1); if (a.state !== 'CONFIRMED') leftState = true; if (f > 60 || k) worstFace = Math.max(worstFace, toSeen()); seenMoved = Math.max(seenMoved, a.seen.position.distanceTo(seenAt)); }
+      }
+      yawPost = Math.abs(Math.atan2(Math.sin(g.yaw - g.postYaw), Math.cos(g.yaw - g.postYaw))) * 57.3; meterEnd = v.meter;
+      return { confirmT, seenAt: seenAt && [seenAt.x, seenAt.z], worstFace, leftState, seenMoved, heardNew: g.hearing.heardCount - heardCount, heardPos: a.heard && [a.heard.position.x, a.heard.position.z], yawPost, meterEnd, moved: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), state: a.state };
+    });
+    const ok = r.confirmT < 15 && r.seenAt && !r.leftState && r.state === 'CONFIRMED' && r.worstFace < 10 && r.seenMoved < 1e-6 && r.heardNew >= 8 && r.heardPos && r.yawPost > 15 && r.meterEnd < 0.05 && r.moved < 1.5;
+    return { pass: ok, detail: `confirmed after ${r.confirmT.toFixed(1)} s in view; then 20 s silent and out of sight with 8 sounds to his right: still ${r.state} (never left: ${!r.leftState}), facing the last place he saw her within ${r.worstFace.toFixed(1)}° (not his post: ${r.yawPost.toFixed(0)}° from it), last-seen position moved ${r.seenMoved.toFixed(2)} m, ${r.heardNew} sounds heard and remembered separately, vision meter faded to ${Math.round(r.meterEnd * 100)}% but the confirmation stayed` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
