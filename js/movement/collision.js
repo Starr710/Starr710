@@ -12,6 +12,21 @@ SC.mv = SC.mv || {};
     this.boxes = [];      // {minX,maxX,minZ,maxZ,top}
     this.cylinders = [];  // {x,z,r,top}
     this.meshes = [];     // meshes the camera must not pass through
+    this.surfaces = [];   // {minX,maxX,minZ,maxZ,type}: ground patches (noise, footstep sounds)
+    this.defaultSurface = 'concrete';
+  };
+
+  // a rectangular ground patch of a surface type ('metal', 'grass', …)
+  mv.CollisionWorld.prototype.addSurface = function (cx, cz, w, d, type) {
+    this.surfaces.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, type });
+  };
+  // surface type at a ground point (the last patch added wins where patches overlap)
+  mv.CollisionWorld.prototype.surfaceAt = function (x, z) {
+    for (let i = this.surfaces.length - 1; i >= 0; i--) {
+      const s = this.surfaces[i];
+      if (x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ) return s.type;
+    }
+    return this.defaultSurface;
   };
 
   mv.CollisionWorld.prototype.addBox = function (cx, cz, w, d, top, mesh) {

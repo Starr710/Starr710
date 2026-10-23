@@ -4,6 +4,7 @@
 // - crates and pillars to collide with
 // - a long wall and a narrow L-shaped corridor to test wall sliding and camera pull-in
 // - a perimeter wall
+// - three surface test strips just ahead of the start: concrete, metal, grass
 (function (mv) {
   'use strict';
 
@@ -20,6 +21,46 @@
     g.strokeStyle = 'rgba(25,26,22,0.8)'; g.lineWidth = 4; g.strokeRect(0, 0, S, S);
     const t = new THREE.CanvasTexture(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.encoding = THREE.sRGBEncoding;
+    t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return t;
+  }
+
+  // one canvas texture per surface strip (w × d metres), labelled at the edge
+  // nearest the start so it reads the right way up from there
+  function surfaceTexture(renderer, type, w, d) {
+    const PX = 96, c = document.createElement('canvas');
+    c.width = w * PX; c.height = d * PX;
+    const g = c.getContext('2d'), W = c.width, H = c.height;
+    let seed = type.length * 7 + 1; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    if (type === 'metal') {
+      // diamond (tread) plate
+      g.fillStyle = '#4e545a'; g.fillRect(0, 0, W, H);
+      for (let y = 0; y < H; y += 24) for (let x = (y / 24) % 2 ? 12 : 0; x < W; x += 24) {
+        g.save(); g.translate(x, y); g.rotate(((x + y) / 24) % 2 ? 0.6 : -0.6);
+        g.fillStyle = '#6c737a'; g.fillRect(-7, -2, 14, 4); g.fillStyle = '#2f3337'; g.fillRect(-7, 2, 14, 1.5); g.restore();
+      }
+      g.strokeStyle = '#2a2e32'; g.lineWidth = 6; g.strokeRect(3, 3, W - 6, H - 6);
+      g.fillStyle = '#1f2326'; for (const [x, y] of [[14, 14], [W - 14, 14], [14, H - 14], [W - 14, H - 14]]) { g.beginPath(); g.arc(x, y, 5, 0, 7); g.fill(); }
+    } else if (type === 'grass') {
+      g.fillStyle = '#3f5a2a'; g.fillRect(0, 0, W, H);
+      for (let i = 0; i < 9000; i++) {
+        const x = rnd() * W, y = rnd() * H, l = 5 + rnd() * 9, v = rnd();
+        g.strokeStyle = v < 0.33 ? '#56783a' : v < 0.66 ? '#30481f' : '#6b8c45'; g.lineWidth = 1.5;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + (rnd() - 0.5) * 5, y - l); g.stroke();
+      }
+    } else {
+      // a poured slab, a little lighter than the yard
+      g.fillStyle = '#7a7b74'; g.fillRect(0, 0, W, H);
+      for (let i = 0; i < 2500; i++) { const v = 100 + rnd() * 40 | 0; g.fillStyle = `rgba(${v},${v},${v - 4},0.3)`; g.fillRect(rnd() * W, rnd() * H, 2 + rnd() * 4, 2 + rnd() * 4); }
+      g.strokeStyle = 'rgba(40,40,36,0.7)'; g.lineWidth = 3; g.strokeRect(2, 2, W - 4, H - 4);
+      g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke();
+    }
+    // label near the start edge (canvas top maps to the near, -Z end), turned to face the start
+    g.save(); g.translate(W / 2, 30); g.rotate(Math.PI);
+    g.font = 'bold 30px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = 'rgba(232,224,180,0.9)'; g.fillText(type.toUpperCase(), 0, 0); g.restore();
+    const t = new THREE.CanvasTexture(c);
     t.encoding = THREE.sRGBEncoding;
     t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     return t;
@@ -88,6 +129,14 @@
     box(17.1, -10, 2.15, 0.35, 2.8, mats.wall);
     box(12.5, 2, 7.3, 0.35, 2.8, mats.wall);
     box(14.2, 3.6, 3.8, 0.35, 2.8, mats.wall);
+
+    // surface test strips, 3 × 5 m, side by side from 4 m ahead of the start
+    for (const [type, x] of [['concrete', -3.3], ['metal', 0], ['grass', 3.3]]) {
+      const w = 3, d = 5, z = 6.5;
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: surfaceTexture(renderer, type, w, d) }));
+      strip.position.set(x, 0.004, z); strip.receiveShadow = true; scene.add(strip);
+      world.addSurface(x, z, w, d, type);
+    }
 
     // start pad
     const pad = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.65, 32).rotateX(-Math.PI / 2), mats.paint);

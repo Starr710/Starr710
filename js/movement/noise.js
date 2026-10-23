@@ -1,18 +1,25 @@
 // SHADOW CELL — movement: noise events (docs/GAME_DESIGN.md §2).
 // Anything that makes a sound emits one event: intensity level 1–5, a type, a
 // world position and the surface it happened on. The event's reach grows
-// steeply with level (a gunshot carries far further than jogging) and is
-// scaled by the surface. Listeners (guards, later) subscribe with on(); this
-// stage only emits the player's footsteps and draws each event's reach as a
-// fading ring on the ground for testing.
+// steeply with level (a gunshot carries far further than jogging). The surface
+// shifts the effective intensity and scales the reach (metal is louder, grass
+// softer) without changing the level itself. Listeners (footstep audio now,
+// guards later) subscribe with on(); this stage emits the player's footsteps
+// and draws each event's reach as a fading ring on the ground for testing.
 (function (mv) {
   'use strict';
 
   mv.NoiseDefaults = {
     // reach in metres of each level on standard ground (index = level)
     radius: [0, 2.5, 6, 14, 30, 80],
-    // loudness multiplier on the reach, per surface (more surfaces in step 2)
-    surfaces: { concrete: 1 },
+    // per surface: intensity is added to the level (fractions allowed; the reach
+    // is read between levels), range then scales the reach. The level itself
+    // (1 sneak, 2 stealth walk, 3 jog) never changes with the surface.
+    surfaces: {
+      concrete: { intensity: 0, range: 1 },        // standard: sneak 2.5 m, stealth walk 6 m, jog 14 m
+      metal: { intensity: 0.5, range: 1.15 },      // louder: ≈4.9 / 11.5 / 25 m
+      grass: { intensity: -0.5, range: 0.85 },     // softer: ≈1.1 / 3.6 / 8.5 m
+    },
     // footstep noise level per gait id (motor.gait.id); steps taken while
     // turning on the spot or settling after a stop count as the quietest
     footstepLevel: { idle: 1, sneak: 1, walk: 2, jog: 3, crouch: 1, crouchslow: 1, crouchfast: 2 },
@@ -36,14 +43,23 @@
     this._next = 0;
   };
 
+  // reach (m) of an effective intensity, read between the levels of the radius table
+  mv.NoiseSystem.prototype.reachOf = function (intensity) {
+    const r = this.cfg.radius, i = Math.max(0, Math.min(r.length - 1, intensity)), k = Math.min(r.length - 2, Math.floor(i));
+    return r[k] + (r[k + 1] - r[k]) * (i - k);
+  };
+
   mv.NoiseSystem.prototype.on = function (fn) { this.listeners.push(fn); return () => { this.listeners = this.listeners.filter(f => f !== fn); }; };
 
   // level 1–5, type ('footstep', …), position (Vector3), surface, source (who made it)
   mv.NoiseSystem.prototype.emit = function (level, type, position, surface, source) {
     const c = this.cfg, lv = Math.max(1, Math.min(5, Math.round(level)));
     surface = surface || 'concrete';
-    const ev = { level: lv, type, position: position.clone(), surface, source: source || null,
-      radius: c.radius[lv] * (c.surfaces[surface] != null ? c.surfaces[surface] : 1), time: performance.now() / 1000 };
+    const mod = c.surfaces[surface] || c.surfaces.concrete || { intensity: 0, range: 1 };
+    // level: the action's loudness (unchanged by the surface); intensity: what the surface makes of it
+    const intensity = Math.max(0, Math.min(5, lv + (mod.intensity || 0)));
+    const ev = { level: lv, intensity, type, position: position.clone(), surface, source: source || null,
+      radius: this.reachOf(intensity) * (mod.range != null ? mod.range : 1), time: performance.now() / 1000 };
     this.last = ev;
     for (const fn of this.listeners) fn(ev);
     if (c.debug && this.scene) this._ring(ev);
@@ -86,7 +102,7 @@
   mv.FootstepEmitter = function (noise, visual, motor, source) {
     this.noise = noise; this.visual = visual; this.motor = motor; this.source = source || 'player';
     this.feet = ['left', 'right'].map(side => ({ side, down: true, at: null, prev: null }));
-    this.surface = 'concrete';   // step 2 looks this up from the ground under each foot
+    this.surface = 'concrete';   // surface under the last landing (from the world's surface map)
     this.count = 0;
   };
 
@@ -108,6 +124,8 @@
         const p = (toe && _t.y < _v.y ? _t : _v).clone(); p.y = g;
         if (!f.at || Math.hypot(p.x - f.at.x, p.z - f.at.z) >= c.footTravel) {
           const gait = this.motor.gait ? this.motor.gait.id : 'walk';
+          const world = this.motor.world;
+          this.surface = world && world.surfaceAt ? world.surfaceAt(p.x, p.z) : 'concrete';
           this.noise.emit(c.footstepLevel[gait] != null ? c.footstepLevel[gait] : 1, 'footstep', p, this.surface, this.source);
           this.count++;
         }

@@ -63,6 +63,9 @@
   const cam = new mv.ThirdPersonCamera(camera, world);
   const actions = new mv.ActionSystem();
   const noise = new mv.NoiseSystem(scene);
+  const footAudio = new mv.FootstepAudio(noise);
+  // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
+  document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
   let footsteps = null;
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
@@ -95,6 +98,7 @@
     ui.loader.classList.add('done');
     setTimeout(() => { ui.loader.hidden = true; }, 350);
     input.enabled = true;
+    footAudio.unlock();
     document.body.classList.add('playing');
   });
   ui.reset.addEventListener('click', spawn);
@@ -140,16 +144,16 @@
       ui.gait.textContent = motor.gait.label;
       ui.speed.textContent = motor.speed.toFixed(2) + ' m/s';
       const n = noise.last;
-      ui.noise.textContent = n && performance.now() / 1000 - n.time < 1.2 ? `L${n.level} ${n.type} · ${n.radius.toFixed(1)} m` : '–';
+      ui.noise.textContent = n && performance.now() / 1000 - n.time < 1.2 ? `L${n.level} ${n.surface} · ${n.radius.toFixed(1)} m` : '–';
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
       ui.fps.textContent = fps.toFixed(0) + ' · ' + renderer.info.render.calls + ' draws';
     }
   }
   renderer.setAnimationLoop(frame);
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { renderer.setAnimationLoop(null); input.clear(); }
+    if (document.hidden) { renderer.setAnimationLoop(null); input.clear(); footAudio.suspend(); }
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { motor, cam, input, world, noise, get footsteps() { return footsteps; }, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { motor, cam, input, world, noise, footAudio, get footsteps() { return footsteps; }, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

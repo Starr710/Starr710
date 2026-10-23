@@ -251,6 +251,66 @@ const CHECKS = {
     return { pass: ok, detail: r.out.map(o => `${o.name} ${o.n}/${o.expect.toFixed(1)} L${o.level}${o.alt ? '' : ' NOT alternating'}${o.levelOk ? '' : ' WRONG LEVEL'}`).join(', ') + `; still: ${r.still.join('/')} steps` };
   },
 
+  // surface strips: the map reports the right surface, footsteps on each strip
+  // carry it, the gait level and movement speed don't change, and the reach is
+  // grass < concrete < metal at every gait
+  async surfaces() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, world } = MV, fs = MV.footsteps, evs = [];
+      noise.on(e => evs.push(e));
+      const mapOk = world.surfaceAt(-3.3, 6.5) === 'concrete' && world.surfaceAt(0, 6.5) === 'metal' && world.surfaceAt(3.3, 6.5) === 'grass' && world.surfaceAt(0, 0) === 'concrete';
+      const go = (m, st) => { step(m, st); fs.update(1 / 60); noise.update(1 / 60); };
+      const rows = [];
+      for (const [gait, m, st, level] of [['sneak', 0.3, 'stand', 1], ['stealth walk', 0.78, 'stand', 2], ['jog', 1, 'stand', 3], ['slow crouch', 0.3, 'crouch', 1], ['fast crouch', 1, 'crouch', 2]]) {
+        const row = { gait, level };
+        for (const [x, surf] of [[-3.3, 'concrete'], [0, 'metal'], [3.3, 'grass']]) {
+          motor.teleport(x, 0.5, 0); for (let f = 0; f < 400 && motor.position.z < 4.6; f++) go(m, st);
+          evs.length = 0; let top = 0;
+          for (let f = 0; f < 400 && motor.position.z < 8.4; f++) { go(m, st); top = Math.max(top, motor.speed); }
+          const on = evs.filter(e => e.position.z > 4.05 && e.position.z < 8.95);
+          row[surf] = { n: on.length, surfOk: on.length > 0 && on.every(e => e.surface === surf), levelOk: on.every(e => e.level === level), reach: on.length ? on[0].radius : 0, speed: top };
+        }
+        rows.push(row);
+      }
+      return { mapOk, rows };
+    });
+    let ok = r.mapOk;
+    const detail = r.rows.map(row => {
+      const c = row.concrete, m = row.metal, g = row.grass;
+      const good = [c, m, g].every(x => x.surfOk && x.levelOk) && g.reach < c.reach && c.reach < m.reach && Math.abs(m.speed - c.speed) < 0.02 && Math.abs(g.speed - c.speed) < 0.02;
+      ok = ok && good;
+      return `${row.gait} L${row.level} reach ${g.reach.toFixed(1)}/${c.reach.toFixed(1)}/${m.reach.toFixed(1)} m${good ? '' : ' WRONG'}`;
+    }).join(', ');
+    return { pass: ok, detail: (r.mapOk ? '' : 'surface map WRONG; ') + 'grass/concrete/metal: ' + detail };
+  },
+
+  // footstep sounds: each surface event plays that surface's own voice, and the
+  // voices (rendered offline at a stealth-walk step) differ the way they should:
+  // metal loudest with a ringing tail, grass quietest and brightest, concrete dry
+  async footstepAudio() {
+    const page = await simPage();
+    const r = await page.evaluate(async () => {
+      const fa = MV.footAudio, out = {};
+      for (const surf of ['concrete', 'metal', 'grass']) {
+        const ev = MV.noise.emit(2, 'footstep', new THREE.Vector3(0, 0, 0), surf, 'player');
+        const played = fa.last && fa.last.surface === surf && fa.last.voice === fa.cfg.surfaces[surf].voice;
+        const SR = 44100, ctx = new OfflineAudioContext(1, SR * 0.9, SR);
+        let seed = 5; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+        SC.mv.FOOTSTEP_VOICES[fa.cfg.surfaces[surf].voice](ctx, ctx.destination, 0.01, fa.gainFor(ev), rnd);
+        const d = (await ctx.startRendering()).getChannelData(0);
+        let e = 0, tail = 0, zc = 0;
+        for (let i = 1; i < d.length; i++) { e += d[i] * d[i]; if (i > SR * 0.13) tail += d[i] * d[i]; if ((d[i] > 0) !== (d[i - 1] > 0)) zc++; }
+        out[surf] = { played, rms: Math.sqrt(e / (SR * 0.3)), tail: tail / e, bright: zc / 0.9 / 2 };
+      }
+      return out;
+    });
+    const c = r.concrete, m = r.metal, g = r.grass;
+    const ok = c.played && m.played && g.played && m.rms > c.rms * 1.2 && c.rms > g.rms * 1.2 && m.tail > 0.02 && c.tail < 0.01 && g.bright > c.bright * 3;
+    const f = x => `rms ${x.rms.toFixed(3)}, tail ${(x.tail * 100).toFixed(1)}%, ~${Math.round(x.bright)} Hz`;
+    return { pass: ok, detail: `concrete ${f(c)}; metal ${f(m)}; grass ${f(g)}` + (c.played && m.played && g.played ? '' : '; WRONG voice played') };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();
