@@ -37,13 +37,13 @@
     hipDrop: [[0, 0.015], [0.7, 0.035], [1.3, 0.032], [1.9, 0.026], [2.6, 0.018], [3.4, 0.01], [5.0, 0]],
     levelHips: [[0, 0], [0.6, 0.75], [1.8, 0.65], [2.6, 0.3], [3.4, 0]],   // share of hip bob removed
     ankleLock: 0.7,
-    // tactical crouch (MGS3-style): hinge forward from the hips, upper back rounded,
-    // head up looking ahead, hands hanging low and forward by the knees
+    // tactical crouch (MGS-style): hinge forward from the hips, upper back rounded,
+    // head following the spine with the eyes ahead, arms hanging loose and swinging
     crouchHinge: 0.48,                // rad pelvis tips forward (the lean comes from the hips)
     crouchChestUp: 0.08,               // rad the spine is straightened against the clip's rounding
-    crouchNeckLift: 0.9,
+    crouchNeckLift: 0.4,
     crouchHunch: 0.5,                  // rad the upper back rounds forward (the neck lifts by as much)
-    crouchArms: { keep: 0.4, bend: 0.75, forward: 0.5, inward: 0.12 },
+    crouchArms: { keep: 0.8, bend: 0.35, forward: 0.35, inward: 0.12, swing: 1.05 },   // swing: rad per metre the opposite foot is ahead
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.7, 0.15], [1.7, 0.13], [2.6, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
@@ -51,6 +51,8 @@
     twistDamp: 0.7,                   // 0 = clip twist, 1 = chest locked to travel direction
     headSteady: 0.65,
     headPitch: 0.04,                  // eyes slightly down the line of travel
+    crouchHeadSteady: 0.6,            // crouched: how firmly the head is held to the gaze below
+    crouchHeadPitch: 0.3,             // crouched: rad the gaze tips down (head follows the spine more)
     weaponStiffness: 55,              // carbine follow spring (higher = less lag)
     gripCurl: [0.95, 1.05, 0.75],
     supportCurl: [0.7, 0.8, 0.6],
@@ -293,9 +295,9 @@
     if (b.neck && this.st < 1) rotateWorld(b.neck, new THREE.Quaternion().setFromAxisAngle(left, -(c.crouchNeckLift + c.crouchHunch) * (1 - this.st)), t);
     // 3. steady head: blend toward level, looking slightly down the line of travel
     const hf = this.headFwd.clone().applyQuaternion(b.head.getWorldQuaternion(Q()));
-    const want = fwd.clone().applyAxisAngle(left, c.headPitch);
+    const want = fwd.clone().applyAxisAngle(left, lerp(c.crouchHeadPitch, c.headPitch, this.st));
     const hq = new THREE.Quaternion().setFromUnitVectors(hf.normalize(), want.normalize());
-    rotateWorld(b.head, new THREE.Quaternion().slerp(hq, lerp(0.95, c.headSteady, this.st)), t);
+    rotateWorld(b.head, new THREE.Quaternion().slerp(hq, lerp(c.crouchHeadSteady, c.headSteady, this.st)), t);
 
     const walkF = smooth(0.1, 1.0, s), sprintF = smooth(4.4, 5.4, s);
     if (this.carry === 'unarmed') this._unarmed(dt, s, walkF, sprintF, fwd, left, up);
@@ -419,6 +421,17 @@
       // draw the arm in toward the body's midline (crouched)
       const inward = ca.inward * (1 - st);
       if (inward) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(fwd, side === 'left' ? -inward : inward), t);
+      // crouched: the crouch clip barely moves its arms, so swing each arm with the
+      // opposite leg (arm forward as the other foot steps ahead), faded in with speed
+      if (st < 1 && ca.swing && b.leftFoot && b.rightFoot) {
+        const ahead = wpos(b[side === 'left' ? 'rightFoot' : 'leftFoot'], V()).sub(wpos(b[side + 'Foot'], V())).dot(fwd);
+        // smoothed, so the arm swings evenly (and trails a touch) instead of copying
+        // the quick foot motion of each step
+        this.armSwing = this.armSwing || {};
+        const prev = this.armSwing[side] || 0;
+        const sw = this.armSwing[side] = prev + (ca.swing * ahead * walkF * (1 - st) - prev) * (1 - Math.exp(-7 * dt));
+        rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(left, -sw), t);
+      }
       // 3. extra elbow bend about the elbow's own hinge (always flexing forward)
       if (bend) {
         const sh = wpos(upper, V()), el = wpos(lower, V()), wr = wpos(hand, V());
