@@ -37,8 +37,12 @@
     hipDrop: [[0, 0.015], [0.7, 0.035], [1.3, 0.032], [1.9, 0.026], [2.6, 0.018], [3.4, 0.01], [5.0, 0]],
     levelHips: [[0, 0], [0.6, 0.75], [1.8, 0.65], [2.6, 0.3], [3.4, 0]],   // share of hip bob removed
     ankleLock: 0.7,
-    crouchChestUp: 0.32,               // rad the crouch clip's hunch is straightened
-    crouchArms: { keep: 0.2, bend: 0.75, forward: 0.32 },   // tucked, ready arms while crouched
+    // tactical crouch: hinge forward from the hips with a flatter back, head up,
+    // elbows tight and hands drawn in front of the chest
+    crouchHinge: 0.36,                // rad pelvis tips forward (the lean comes from the hips)
+    crouchChestUp: 0.18,               // rad the spine is straightened against the clip's rounding
+    crouchNeckLift: 0.35,
+    crouchArms: { keep: 0.12, bend: 1.25, forward: 0.28, inward: 0.12 },
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.7, 0.15], [1.7, 0.13], [2.6, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
@@ -273,11 +277,13 @@
     rotateWorld(b.spine1 || b.spine, fix, t);
     rotateWorld(b.chest, fix, t);
 
+    // crouched: lift the neck so the head comes up and looks ahead
+    if (b.neck && this.st < 1) rotateWorld(b.neck, new THREE.Quaternion().setFromAxisAngle(left, -c.crouchNeckLift * (1 - this.st)), t);
     // 3. steady head: blend toward level, looking slightly down the line of travel
     const hf = this.headFwd.clone().applyQuaternion(b.head.getWorldQuaternion(Q()));
     const want = fwd.clone().applyAxisAngle(left, c.headPitch);
     const hq = new THREE.Quaternion().setFromUnitVectors(hf.normalize(), want.normalize());
-    rotateWorld(b.head, new THREE.Quaternion().slerp(hq, lerp(0.85, c.headSteady, this.st)), t);
+    rotateWorld(b.head, new THREE.Quaternion().slerp(hq, lerp(0.95, c.headSteady, this.st)), t);
 
     const walkF = smooth(0.1, 1.0, s), sprintF = smooth(4.4, 5.4, s);
     if (this.carry === 'unarmed') this._unarmed(dt, s, walkF, sprintF, fwd, left, up);
@@ -328,7 +334,7 @@
     H.addScaledVector(up, -this.drop).addScaledVector(fwd, -this.drop * this.cfg.hipsBack);
     hips.position.copy(hips.parent.worldToLocal(H));
     hips.updateMatrixWorld(true);
-    rotateWorld(hips, new THREE.Quaternion().setFromAxisAngle(left, mv.table(this.cfg.pelvisTilt, s) * st), t);
+    rotateWorld(hips, new THREE.Quaternion().setFromAxisAngle(left, mv.table(this.cfg.pelvisTilt, s) * st + this.cfg.crouchHinge * (1 - st)), t);
     for (const f of feet) {
       const out = f.side === 'left' ? left.clone() : left.clone().negate();
       const pole = fwd.clone().add(out.multiplyScalar(0.15));
@@ -384,6 +390,9 @@
       }
       // 2. carry the upper arm slightly forward
       if (forward) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(left, -forward), t);
+      // draw the arm in toward the body's midline (crouched)
+      const inward = ca.inward * (1 - st);
+      if (inward) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(fwd, side === 'left' ? -inward : inward), t);
       // 3. extra elbow bend about the elbow's own hinge (always flexing forward)
       if (bend) {
         const sh = wpos(upper, V()), el = wpos(lower, V()), wr = wpos(hand, V());
