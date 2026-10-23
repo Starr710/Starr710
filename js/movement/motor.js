@@ -27,7 +27,7 @@
     radius: 0.32,
     // stick magnitude → target speed, piecewise linear
     // wide, separate zones: sneak up to ~60% push, stealth walk ~68–88%, jog past ~94%
-    speedCurve: [[0.12, 0.75], [0.6, 1.0], [0.68, 1.75], [0.88, 1.85], [0.94, 3.2], [1.0, 3.2]],
+    speedCurve: [[0.12, 1.0], [0.6, 1.25], [0.68, 1.9], [0.88, 2.0], [0.94, 3.2], [1.0, 3.2]],
     sprintSpeed: 5.6,
     // crouch-walk: light push creeps, full push is a steady crouch-walk
     crouchSpeedCurve: [[0.12, 0.5], [0.55, 0.7], [0.8, 1.05], [1.0, 1.1]],

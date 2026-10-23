@@ -36,7 +36,7 @@ Swapping the character never touches `motor.js`, `camera-rig.js`, `input.js` or 
 
 ## Tuning (all in one place)
 - **Speeds and feel:** `SC.mv.MotorDefaults` in `motor.js`.
-  - Stick-to-speed curve: separate zones: sneak 0.75–1.0 m/s up to about 60% push, stealth walk about 1.8 at 68–88%, jog 3.2 from about 94%. Sprint is 5.6.
+  - Stick-to-speed curve: sneak 1.0–1.25 m/s (up to about 60% push), stealth walk 1.9–2.0 (about 68–88%), jog 3.2 (from about 94%). Sprint (RUN) is 5.6.
   - Accel 3.4 m/s² (2.6 above jog), decel 5.2, brake 9.
   - Stops never last more than `maxStopTime` (0.9 s).
   - `settleTime` (0.45 s) in the animator sets the idle settle.
