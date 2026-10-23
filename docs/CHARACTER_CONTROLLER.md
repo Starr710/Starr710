@@ -105,7 +105,7 @@ from a local server; the output is in `window.RESULT`.
 - **Direction-aware camera recentering** (`camera-rig.js`): the camera only drifts behind her when she's travelling away from or across the view. Walking toward the camera never swings it around. Manual look still cancels recentering for 1.4 s.
 
 ## Stances
-- **Motor:** `motor.stance` is `'stand'` or `'crouch'`, with a separate `crouchSpeedCurve` (creep about 0.6–1.0 m/s, crouch-walk up to 2.0 m/s). Above the clip's natural 0.8 m/s, the crouch strides lengthen (`crouchStrideScale`, up to 1.3×) and playback speeds up (`crouchMaxPlayRate` 2.1). Sprint is unavailable while crouched; pressing RUN stands her up.
+- **Motor:** `motor.stance` is `'stand'` or `'crouch'`, with a separate `crouchSpeedCurve` and two crouch speeds: slow crouch 0.8–1.0 m/s (up to about 60% push) and fast crouch 1.85–2.0 m/s (from about 68% push). Above the clip's natural 0.8 m/s, the crouch strides lengthen (`crouchStrideScale`, up to 1.3×) and playback speeds up (`crouchMaxPlayRate` 2.1). Sprint is unavailable while crouched; pressing RUN stands her up.
 - **Animator:** crouch idle and crouch walk are their own blend layer. The layer fades over about 0.3 s and shares the gait phase, with an offset measured so the same foot leads. Stops land on the crouch walk's passing pose.
-- **Posture:** stealth shaping fades out while crouched, because the crouch clips carry their own posture.
+- **Posture:** stealth shaping fades out while crouched, because the crouch clips carry their own posture. On top, a tactical shaping: hip hinge, chest up, a slight upper-back hunch (`crouchHunch`, with the neck lifted to match so the head stays looking ahead) and arms tucked in.
 - **Camera:** drops 0.45 m when crouched.

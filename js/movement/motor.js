@@ -21,7 +21,7 @@
     { id: 'sprint', label: 'SPRINT', max: Infinity },
   ];
 
-  mv.CROUCH_GAITS = [{ id: 'crouch', label: 'CROUCH' }, { id: 'crouchwalk', label: 'CROUCH WALK' }];
+  mv.CROUCH_GAITS = [{ id: 'crouch', label: 'CROUCH' }, { id: 'crouchslow', label: 'SLOW CROUCH' }, { id: 'crouchfast', label: 'FAST CROUCH' }];
 
   mv.MotorDefaults = {
     radius: 0.32,
@@ -30,7 +30,8 @@
     speedCurve: [[0.12, 1.0], [0.6, 1.25], [0.68, 1.9], [0.88, 2.0], [0.94, 3.2], [1.0, 3.2]],
     sprintSpeed: 5.6,
     // crouch-walk: light push creeps, full push is a steady crouch-walk
-    crouchSpeedCurve: [[0.12, 0.6], [0.55, 1.0], [0.8, 1.8], [1.0, 2.0]],
+    // two crouch speeds, zoned like standing: slow crouch to ~60% push, fast crouch from ~68%
+    crouchSpeedCurve: [[0.12, 0.8], [0.6, 1.0], [0.68, 1.85], [0.88, 2.0], [1.0, 2.0]],
     accel: 3.4,            // m/s² when speeding up at walking pace…
     accelFast: 2.6,        // …and when pushing past jog into a sprint (it takes effort)
     decel: 5.2,            // m/s² when easing off
@@ -141,6 +142,6 @@
 
     // ---- gait label (for animation + HUD)
     const s = this.speed;
-    this.gait = crouched ? (s < 0.05 ? mv.CROUCH_GAITS[0] : mv.CROUCH_GAITS[1]) : mv.GAITS.find(g => s <= g.max);
+    this.gait = crouched ? mv.CROUCH_GAITS[s < 0.05 ? 0 : s <= 1.4 ? 1 : 2] : mv.GAITS.find(g => s <= g.max);
   };
 })(SC.mv);

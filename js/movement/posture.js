@@ -42,6 +42,7 @@
     crouchHinge: 0.36,                // rad pelvis tips forward (the lean comes from the hips)
     crouchChestUp: 0.18,               // rad the spine is straightened against the clip's rounding
     crouchNeckLift: 0.35,
+    crouchHunch: 0.3,                  // rad the upper back rounds forward (the neck lifts by as much)
     crouchArms: { keep: 0.12, bend: 1.25, forward: 0.28, inward: 0.12 },
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.7, 0.15], [1.7, 0.13], [2.6, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
@@ -278,7 +279,9 @@
     rotateWorld(b.chest, fix, t);
 
     // crouched: lift the neck so the head comes up and looks ahead
-    if (b.neck && this.st < 1) rotateWorld(b.neck, new THREE.Quaternion().setFromAxisAngle(left, -c.crouchNeckLift * (1 - this.st)), t);
+    // a slight hunch: round the upper back forward, lift the neck to match
+    if (b.chest && this.st < 1) rotateWorld(b.chest, new THREE.Quaternion().setFromAxisAngle(left, c.crouchHunch * (1 - this.st)), t);
+    if (b.neck && this.st < 1) rotateWorld(b.neck, new THREE.Quaternion().setFromAxisAngle(left, -(c.crouchNeckLift + c.crouchHunch) * (1 - this.st)), t);
     // 3. steady head: blend toward level, looking slightly down the line of travel
     const hf = this.headFwd.clone().applyQuaternion(b.head.getWorldQuaternion(Q()));
     const want = fwd.clone().applyAxisAngle(left, c.headPitch);
