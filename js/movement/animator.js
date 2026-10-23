@@ -28,8 +28,8 @@
     crouchSettleTime: 0.75,    // crouch idle stands further from the walk pose: two unhurried steps
     stanceSpring: 11,
     // fast crouch-walk: longer, quicker strides than the clip's own (it is authored slow)
-    crouchStrideScale: [[0, 1], [1.0, 1.0], [2.0, 1.3]],
-    crouchMaxPlayRate: 2.1,          // stand↔crouch blend spring (higher = quicker)
+    crouchStrideScale: [[0, 0.8], [1.0, 0.8], [2.0, 1.1]],   // shorter, quicker crouch steps
+    crouchMaxPlayRate: 2.6,          // stand↔crouch blend spring (higher = quicker)
     turnStep: [1.0, 3.5],      // rad/s range over which turning in place blends in stepping
     turnStepRate: 0.32,        // gait cycles per radian turned (≈ one step per 90°)
     turnStride: 0.22,          // stride scale for those steps (feet stay near the body)          // s from stopping to a full idle stance

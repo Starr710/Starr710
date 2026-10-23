@@ -43,7 +43,7 @@
     crouchChestUp: 0.08,               // rad the spine is straightened against the clip's rounding
     crouchNeckLift: 0.9,
     crouchHunch: 0.5,                  // rad the upper back rounds forward (the neck lifts by as much)
-    crouchArms: { keep: 0.12, bend: 0.75, forward: 0.5, inward: 0.12 },
+    crouchArms: { keep: 0.4, bend: 0.75, forward: 0.5, inward: 0.12 },
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.7, 0.15], [1.7, 0.13], [2.6, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
