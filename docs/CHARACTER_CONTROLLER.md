@@ -109,7 +109,7 @@ from a local server; the output is in `window.RESULT`.
 - **Animator:** crouch idle and crouch walk are their own blend layer. The layer fades over about 0.3 s and shares the gait phase, with an offset measured so the same foot leads. Stops land on the crouch walk's passing pose.
 - **Posture:** stealth shaping fades out while crouched, because the crouch clips carry their own posture. On top, an MGSV-style shaping: hip hinge, a fairly flat back with a slight rounding (`crouchHunch`, with the neck lifted so the head stays looking ahead) and arms held forward with the elbows bent about 90° and the hands out in front of the knees. The crouch clip barely moves its arms, so each arm swings with the opposite leg (`crouchArms.swing`). The head follows the spine (`crouchHeadSteady`, `crouchHeadPitch`) rather than being cranked level. Hinging much past 0.48 folds the head under, so extra lean should come from the hunch.
 - **Crouch idle** (`crouchIdle` in `PostureDefaults`), layered on the crouch idle clip, which barely moves on its own:
-  - **Kneel:** the hips sink (`drop`, 18 cm) so the back knee comes down to about 13 cm off the ground. Both feet stay planted; the clip already has the back foot on its toes.
+  - **Kneel:** a kneel with the back knee about 29 cm off the ground and the back foot on its toes, from the clip. `drop` can sink the hips further, but past about 5 cm the front thigh pushes into the body.
   - **Hands:** the right hand (kneeling side) hangs down to the ground in front, the left arm rests over the front knee (`reach`, `idleBend`, `idleInward`).
   - **Life:** slow breathing (`breathe`), side-to-side weight shifts (`sway`), and the head slowly scanning left and right with pauses (`scan`).
 - **Camera:** drops 0.45 m when crouched.
