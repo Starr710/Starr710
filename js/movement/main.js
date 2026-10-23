@@ -78,7 +78,8 @@
     if (ev.lengthComputable) { ui.loadBar.style.width = (ev.loaded / ev.total * 100).toFixed(0) + '%'; ui.loadText.textContent = (ev.loaded / 1048576).toFixed(1) + ' / ' + (ev.total / 1048576).toFixed(1) + ' MB'; }
   }).then(() => {
     animator = new mv.AnimationController(visual);
-    posture = new mv.TacticalPosture(visual);
+    // unarmed by default; '#rifle' previews the rifle carry kept for later stages
+    posture = new mv.TacticalPosture(visual, { carry: location.hash === '#rifle' ? 'rifle' : 'unarmed' });
     const s = animator.stride;
     ui.calib.textContent = `walk ${s.walk.speed.toFixed(2)} · run ${s.run.speed.toFixed(2)} m/s`;
     visual.place(motor.position, motor.yaw);

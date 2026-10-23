@@ -5,11 +5,12 @@
 //   1. torso leans forward with speed (more at a jog, most in a sprint)
 //   2. the clip's shoulder twist is damped so the chest stays square to travel
 //   3. the head is steadied, level and looking ahead
-//   4. a carbine is carried at LOW READY while walking/jogging and moves to a
-//      PORT-ARMS carry (diagonal across the chest) when sprinting; it lags the
-//      chest slightly on a spring so it has weight
-//   5. both arms reach the weapon with two-bone IK; hands orient to the grip and
-//      handguard and the fingers close around them
+//   4. arms follow the active CARRY profile:
+//      - unarmed (default): compact, bent-elbow arms close to the body with a
+//        reduced version of the clip's own arm swing, hands loosely closed
+//      - rifle: a carbine at LOW READY, PORT ARMS when sprinting, on a lag
+//        spring; two-bone IK puts the hands on grip and handguard
+//      Pistol, knife and other carries are added as further profiles.
 // Everything is computed from canonical bones, so any humanoid rig works.
 (function (mv) {
   'use strict';
@@ -79,6 +80,16 @@
     return mesh;
   }
 
+  // Unarmed arm targets (wrist position in the yaw frame, relative to the chest),
+  // by gait, and how much of the clip's own arm swing survives.
+  const UNARMED = {
+    idle: { r: [-0.21, -0.42, 0.1], l: [0.21, -0.42, 0.1], keep: 0.55 },
+    walk: { r: [-0.22, -0.36, 0.13], l: [0.22, -0.36, 0.13], keep: 0.45 },
+    jog: { r: [-0.21, -0.26, 0.15], l: [0.21, -0.26, 0.15], keep: 0.4 },
+    sprint: { r: [-0.22, -0.24, 0.1], l: [0.22, -0.24, 0.1], keep: 0.75 },
+  };
+  mv.CARRY_MODES = ['unarmed', 'rifle'];
+
   mv.TacticalPosture = function (visual, opts) {
     this.v = visual;
     this.cfg = Object.assign({}, mv.PostureDefaults, opts || {});
@@ -87,9 +98,16 @@
     for (const k of need) if (!b[k]) throw new Error('Tactical posture needs a "' + k + '" bone');
     this.weapon = buildCarbine();
     visual.root.add(this.weapon);
+    this.setCarry(this.cfg.carry || 'unarmed');
     this.wPos = null; this.wVel = V(); this.wQuat = Q();
     this.t = { a: V(), b: V(), c: V(), d: V(), e: V(), q: Q(), q2: Q(), m: new THREE.Matrix4(), m2: new THREE.Matrix4() };
     this._calibrated = false;
+  };
+
+  mv.TacticalPosture.prototype.setCarry = function (mode) {
+    this.carry = mv.CARRY_MODES.indexOf(mode) >= 0 ? mode : 'unarmed';
+    this.weapon.visible = this.carry === 'rifle';
+    this.wPos = null;
   };
 
   // ---------------------------------------------------------------- helpers
@@ -206,8 +224,36 @@
     const hq = new THREE.Quaternion().setFromUnitVectors(hf.normalize(), want.normalize());
     rotateWorld(b.head, new THREE.Quaternion().slerp(hq, c.headSteady), t);
 
-    // 4. weapon carry pose in the yaw frame, anchored to the chest, on a spring
     const walkF = smooth(0.1, 1.0, s), sprintF = smooth(4.4, 5.4, s);
+    if (this.carry === 'unarmed') this._unarmed(dt, s, walkF, sprintF, fwd, left, up);
+    else this._rifle(dt, walkF, sprintF, fwd, left, up);
+  };
+
+  mv.TacticalPosture.prototype._unarmed = function (dt, s, walkF, sprintF, fwd, left, up) {
+    const v = this.v, b = v.bones, root = v.root, t = this.t;
+    const jogF = smooth(1.8, 3.0, s);
+    const U = UNARMED;
+    const mixArr = side => U.idle[side].map((x, i) => lerp(lerp(lerp(x, U.walk[side][i], walkF), U.jog[side][i], jogF), U.sprint[side][i], sprintF));
+    const keep = lerp(lerp(lerp(U.idle.keep, U.walk.keep, walkF), U.jog.keep, jogF), U.sprint.keep, sprintF);
+    const chestL = root.worldToLocal(wpos(b.chest, V()));
+    const right = left.clone().negate();
+    const rPole = right.clone().multiplyScalar(0.5).add(up.clone().multiplyScalar(-0.6)).add(fwd.clone().multiplyScalar(-1));
+    const lPole = left.clone().multiplyScalar(0.5).add(up.clone().multiplyScalar(-0.6)).add(fwd.clone().multiplyScalar(-1));
+    for (const [side, pole] of [['right', rPole], ['left', lPole]]) {
+      const hand = b[side + 'Hand'];
+      // where the clip put the wrist, in the yaw frame relative to the chest
+      const clipRel = root.worldToLocal(wpos(hand, V())).sub(chestL);
+      const goal = new THREE.Vector3().fromArray(mixArr(side === 'right' ? 'r' : 'l'));
+      const rel = goal.lerp(clipRel, keep);
+      const target = root.localToWorld(chestL.clone().add(rel));
+      twoBoneIK(b[side + 'Arm'], b[side + 'ForeArm'], hand, target, pole, t);
+      curlFingers(hand, this.hands[side], [0.45, 0.55, 0.4], t);
+    }
+  };
+
+  mv.TacticalPosture.prototype._rifle = function (dt, walkF, sprintF, fwd, left, up) {
+    const v = this.v, b = v.bones, root = v.root, c = this.cfg, t = this.t;
+    // 4. weapon carry pose in the yaw frame, anchored to the chest, on a spring
     const chestL = root.worldToLocal(wpos(b.chest, V()));
     const P = POSES, mix = (k) => P.idle[k].map((x, i) => lerp(lerp(x, P.lowReady[k][i], walkF), P.port[k][i], sprintF));
     const target = chestL.clone().add(new THREE.Vector3().fromArray(mix('grip')));

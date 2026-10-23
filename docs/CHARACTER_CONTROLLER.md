@@ -11,7 +11,7 @@ Playable test: `movement.html`. The code is in `js/movement/`.
 | `collision.js` | Static world: boxes and cylinders, with a circle-vs-world resolver. Holds the obstacle meshes that the camera avoids. | — |
 | `character-visual.js` | Loads a GLB through a **profile**. Exposes `root`, `mixer`, `clips.{idle,walk,run,sprint?}` and canonical `bones`. Strips root motion. | Input, movement rules |
 | `animator.js` | Animation state machine. Stage 1 has a single `grounded` state with a speed blend space (idle ↔ walk ↔ run[/sprint]). One shared gait phase keeps the feet in step. Playback rate is matched to ground speed using stride speeds measured from the clips. A procedural whole-body lean sits on top. | Input, collision |
-| `posture.js` | Tactical upper-body layer, run after the mixer. Forward lean grows with speed, shoulder twist is damped, the head is steadied, and the carbine is carried at low ready (port arms in a sprint) on a lag spring. Two-bone arm IK puts the hands on the grip and handguard, and the fingers close around them. Legs, hips and gait rhythm stay 100% mocap. | Input, collision |
+| `posture.js` | Tactical upper-body layer, run after the mixer. Forward lean grows with speed, shoulder twist is damped, the head is steadied, Arms follow a **carry profile**. `unarmed` is the default: compact bent-elbow arms with a reduced clip swing and loosely closed hands, all driven by two-bone IK. `rifle` is kept for a later stage: a carbine at low ready, port arms in a sprint, on a lag spring, with the hands on grip and handguard. Preview it with `movement.html#rifle`. Pistol, knife and other carries become further profiles. Legs, hips and gait rhythm stay 100% mocap. | Input, collision |
 | `camera-rig.js` | Third-person orbit: a spring-damped follow point, a shoulder offset, re-centring behind the character after 1.4 s without camera input, pull-in on obstacles, and a small sprint FOV kick. | The character mesh |
 | `actions.js` | Context-action framework: register / available / start / update / end. **No actions are registered in Stage 1.** | — |
 | `test-area.js` | The test yard. | — |
@@ -27,7 +27,8 @@ Swapping the character never touches `motor.js`, `camera-rig.js`, `input.js` or 
 - **Blend thresholds, clip-rate limits and lean:** `SC.mv.AnimatorDefaults` in `animator.js`.
 - **Tactical posture:**
   - `SC.mv.PostureDefaults` holds lean by speed, twist damping, head steadiness, weapon lag and finger curl.
-  - The `POSES` table in `posture.js` holds the idle, low-ready and port carry positions.
+  - The `UNARMED` table holds wrist targets per gait plus how much clip swing is kept.
+  - The `POSES` table holds the rifle's idle, low-ready and port positions.
 - **Camera:** `SC.mv.CameraDefaults` in `camera-rig.js`.
 
 ## Replacing the character
