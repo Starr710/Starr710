@@ -36,6 +36,13 @@
       srcYaw: 0, dstYaw: Math.PI,          // turn both to face +Z
     },
   };
+  // fingers: DEF-f_index01L → mixamorigLeftHandIndex1, DEF-thumb01L → mixamorigLeftHandThumb1
+  for (const side of [['L', 'Left'], ['R', 'Right']]) for (const f of ['index', 'middle', 'ring', 'pinky', 'thumb']) for (const n of [1, 2, 3]) {
+    const srcName = 'DEF-' + (f === 'thumb' ? '' : 'f_') + f + '0' + n + side[0];
+    MAPS.ual2mixamo.bones[srcName] = 'mixamorig' + side[1] + 'Hand' + f[0].toUpperCase() + f.slice(1) + n;
+  }
+  const _unused = {
+  };
   const M = MAPS[q.get('map') || 'ual2mixamo'];
   const fps = +(q.get('fps') || 30);
   const load = url => new Promise((res, rej) => { const l = new THREE.GLTFLoader(); l.setMeshoptDecoder(window.MeshoptDecoder); l.load(url, res, null, rej); });
@@ -89,6 +96,13 @@
       hipsPos.push(...dHips.position.toArray());
     }
     const tracks = pairs.map((p, k) => new THREE.QuaternionKeyframeTrack(p.dn + '.quaternion', times, quats[k]));
+    // every other bone the target's own clips animate gets a constant track at its
+    // reference pose, so no bone is ever left without an animated value
+    const mapped = new Set(pairs.map(p => p.dn));
+    const animated = new Set();
+    dst.clips.forEach(c => c.tracks.forEach(tr => { const [n, prop] = tr.name.split('.'); if (prop === 'quaternion') animated.add(n); }));
+    pose(dst, clipBy(dst, M.dstRef), 0);
+    animated.forEach(n => { if (!mapped.has(n) && dst.bones[n]) tracks.push(new THREE.QuaternionKeyframeTrack(n + '.quaternion', [0, clip.duration], [...dst.bones[n].quaternion.toArray(), ...dst.bones[n].quaternion.toArray()])); });
     tracks.push(new THREE.VectorKeyframeTrack(dHips.name + '.position', times, hipsPos));
     const res = new THREE.AnimationClip(name, clip.duration, tracks);
     out.push(THREE.AnimationClip.toJSON(res));

@@ -37,6 +37,8 @@
     hipDrop: [[0, 0.015], [0.7, 0.035], [1.3, 0.032], [1.9, 0.026], [2.6, 0.018], [3.4, 0.01], [5.0, 0]],
     levelHips: [[0, 0], [0.6, 0.75], [1.8, 0.65], [2.6, 0.3], [3.4, 0]],   // share of hip bob removed
     ankleLock: 0.7,
+    crouchChestUp: 0.32,               // rad the crouch clip's hunch is straightened
+    crouchArms: { keep: 0.2, bend: 0.75, forward: 0.32 },   // tucked, ready arms while crouched
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.7, 0.15], [1.7, 0.13], [2.6, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
@@ -259,7 +261,8 @@
     // 1. forward lean
     let lean = c.lean[c.lean.length - 1][1];
     for (let i = 1; i < c.lean.length; i++) if (s <= c.lean[i][0]) { const a = c.lean[i - 1], bb = c.lean[i]; lean = lerp(a[1], bb[1], (s - a[0]) / (bb[0] - a[0])); break; }
-    lean *= st;
+    // crouched: tactical, not hunched: chest lifted, back straighter
+    lean = lean * st - c.crouchChestUp * (1 - st);
     [b.spine, b.spine1, b.chest].forEach((bone, i) => { if (bone) rotateWorld(bone, new THREE.Quaternion().setFromAxisAngle(left, lean * c.leanShare[i]), t); });
 
     // 2. damp shoulder twist: turn the chest back toward the travel direction
@@ -274,7 +277,7 @@
     const hf = this.headFwd.clone().applyQuaternion(b.head.getWorldQuaternion(Q()));
     const want = fwd.clone().applyAxisAngle(left, c.headPitch);
     const hq = new THREE.Quaternion().setFromUnitVectors(hf.normalize(), want.normalize());
-    rotateWorld(b.head, new THREE.Quaternion().slerp(hq, c.headSteady), t);
+    rotateWorld(b.head, new THREE.Quaternion().slerp(hq, lerp(0.85, c.headSteady, this.st)), t);
 
     const walkF = smooth(0.1, 1.0, s), sprintF = smooth(4.4, 5.4, s);
     if (this.carry === 'unarmed') this._unarmed(dt, s, walkF, sprintF, fwd, left, up);
@@ -367,8 +370,8 @@
 
   mv.TacticalPosture.prototype._unarmed = function (dt, s, walkF, sprintF, fwd, left, up) {
     const b = this.v.bones, t = this.t;
-    const st = this.st == null ? 1 : this.st;
-    const keep = lerp(1, armGait(s, 1), st), bend = armGait(s, 2) * st, forward = armGait(s, 3) * st;
+    const st = this.st == null ? 1 : this.st, ca = this.cfg.crouchArms;
+    const keep = lerp(ca.keep, armGait(s, 1), st), bend = lerp(ca.bend, armGait(s, 2), st), forward = lerp(ca.forward, armGait(s, 3), st);
     const k = 1 - Math.exp(-2.5 * dt);
     this.armMean = this.armMean || {};
     for (const side of ['left', 'right']) {
