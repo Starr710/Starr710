@@ -33,12 +33,12 @@
 
   mv.PostureDefaults = {
     // forward lean (rad) by ground speed (m/s)
-    lean: [[0, 0.08], [0.6, 0.3], [1.3, 0.25], [2.2, 0.19], [3.2, 0.2], [5.6, 0.3]],
-    hipDrop: [[0, 0.015], [0.5, 0.035], [1.0, 0.032], [1.5, 0.026], [2.4, 0.018], [3.4, 0.01], [5.0, 0]],
-    levelHips: [[0, 0], [0.4, 0.75], [1.4, 0.65], [2.4, 0.3], [3.4, 0]],   // share of hip bob removed
+    lean: [[0, 0.08], [0.8, 0.3], [1.7, 0.25], [2.5, 0.19], [3.2, 0.2], [5.6, 0.3]],
+    hipDrop: [[0, 0.015], [0.7, 0.035], [1.3, 0.032], [1.9, 0.026], [2.6, 0.018], [3.4, 0.01], [5.0, 0]],
+    levelHips: [[0, 0], [0.6, 0.75], [1.8, 0.65], [2.6, 0.3], [3.4, 0]],   // share of hip bob removed
     ankleLock: 0.7,
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
-    pelvisTilt: [[0, 0.04], [0.5, 0.15], [1.3, 0.13], [2.4, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
+    pelvisTilt: [[0, 0.04], [0.7, 0.15], [1.7, 0.13], [2.6, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
     leanShare: [0.4, 0.3, 0.3],       // spine, spine1, chest
     twistDamp: 0.7,                   // 0 = clip twist, 1 = chest locked to travel direction
@@ -352,18 +352,26 @@
     const mixArr = side => U.idle[side].map((x, i) => lerp(lerp(lerp(x, U.walk[side][i], walkF), U.jog[side][i], jogF), U.sprint[side][i], sprintF));
     const keep = lerp(lerp(lerp(U.idle.keep, U.walk.keep, walkF), U.jog.keep, jogF), U.sprint.keep, sprintF);
     const chestL = root.worldToLocal(wpos(b.chest, V()));
-    const right = left.clone().negate();
-    const rPole = right.clone().multiplyScalar(0.5).add(up.clone().multiplyScalar(-0.6)).add(fwd.clone().multiplyScalar(-1));
-    const lPole = left.clone().multiplyScalar(0.5).add(up.clone().multiplyScalar(-0.6)).add(fwd.clone().multiplyScalar(-1));
-    for (const [side, pole] of [['right', rPole], ['left', lPole]]) {
-      const hand = b[side + 'Hand'];
-      // where the clip put the wrist, in the yaw frame relative to the chest
+    const k = 1 - Math.exp(-3 * dt);
+    this.swingMean = this.swingMean || {};
+    for (const side of ['right', 'left']) {
+      const hand = b[side + 'Hand'], out = side === 'right' ? left.clone().negate() : left.clone();
+      // the clip's wrist swing, measured around its own running average and kept
+      // only fore-aft and up-down, so the arms swing in a clean arc instead of
+      // flapping sideways across the body
       const clipRel = root.worldToLocal(wpos(hand, V())).sub(chestL);
-      const goal = new THREE.Vector3().fromArray(mixArr(side === 'right' ? 'r' : 'l'));
-      const rel = goal.lerp(clipRel, keep);
-      const target = root.localToWorld(chestL.clone().add(rel));
-      twoBoneIK(b[side + 'Arm'], b[side + 'ForeArm'], hand, target, pole, t, 0.6);
-      curlFingers(hand, this.hands[side], [0.45, 0.55, 0.4], t);
+      const m = this.swingMean[side] = this.swingMean[side] ? this.swingMean[side].lerp(clipRel, k) : clipRel.clone();
+      const swing = clipRel.clone().sub(m); swing.x = 0;
+      const goal = new THREE.Vector3().fromArray(mixArr(side === 'right' ? 'r' : 'l')).addScaledVector(swing, keep);
+      const target = root.localToWorld(chestL.clone().add(goal));
+      // fixed pole: elbow points back and slightly out, never flips
+      const pole = out.clone().multiplyScalar(0.35).addScaledVector(up, -0.4).addScaledVector(fwd, -1);
+      twoBoneIK(b[side + 'Arm'], b[side + 'ForeArm'], hand, target, pole, t, 1);
+      // straight wrist: the hand continues the forearm, palm facing the body
+      const elbow = wpos(b[side + 'ForeArm'], V()), wrist = wpos(hand, V());
+      const Fw = wrist.sub(elbow).normalize();
+      orientHand(hand, this.hands[side], Fw, out.clone().negate().addScaledVector(fwd, -0.15).normalize(), t);
+      curlFingers(hand, this.hands[side], [0.5, 0.6, 0.45], t);
     }
   };
 

@@ -27,7 +27,7 @@
     settleTime: 0.45,          // s from stopping to a full idle stance
     // stealth gait shaping: stride length multiplier by speed (m/s). Shorter
     // steps at sneaking pace; the posture layer pulls the feet in to match.
-    strideScale: [[0, 0.58], [0.4, 0.58], [0.9, 0.64], [1.4, 0.78], [2.2, 0.95], [3.0, 1]],
+    strideScale: [[0, 0.6], [0.5, 0.6], [1.1, 0.66], [1.8, 0.84], [2.5, 0.96], [3.2, 1]],
   };
   mv.table = (pts, x) => {
     if (x <= pts[0][0]) return pts[0][1];

@@ -15,8 +15,8 @@
   // Gait speeds (m/s). The stick picks a speed continuously; RUN overrides to sprint.
   mv.GAITS = [
     { id: 'idle', label: 'IDLE', max: 0.05 },
-    { id: 'sneak', label: 'SNEAK', max: 0.95 },
-    { id: 'walk', label: 'STEALTH WALK', max: 2.0 },
+    { id: 'sneak', label: 'SNEAK', max: 1.3 },
+    { id: 'walk', label: 'STEALTH WALK', max: 2.3 },
     { id: 'jog', label: 'JOG', max: 4.3 },
     { id: 'sprint', label: 'SPRINT', max: Infinity },
   ];
@@ -24,7 +24,7 @@
   mv.MotorDefaults = {
     radius: 0.32,
     // stick magnitude → target speed, piecewise linear
-    speedCurve: [[0.12, 0.45], [0.45, 0.8], [0.72, 1.3], [0.86, 2.5], [1.0, 3.2]],
+    speedCurve: [[0.12, 0.75], [0.5, 1.05], [0.72, 1.8], [0.86, 2.6], [1.0, 3.2]],
     sprintSpeed: 5.6,
     accel: 3.4,            // m/s² when speeding up at walking pace…
     accelFast: 2.6,        // …and when pushing past jog into a sprint (it takes effort)
