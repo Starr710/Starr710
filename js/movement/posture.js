@@ -37,13 +37,13 @@
     hipDrop: [[0, 0.015], [0.7, 0.035], [1.3, 0.032], [1.9, 0.026], [2.6, 0.018], [3.4, 0.01], [5.0, 0]],
     levelHips: [[0, 0], [0.6, 0.75], [1.8, 0.65], [2.6, 0.3], [3.4, 0]],   // share of hip bob removed
     ankleLock: 0.7,
-    // tactical crouch: hinge forward from the hips with a flatter back, head up,
-    // elbows tight and hands drawn in front of the chest
-    crouchHinge: 0.36,                // rad pelvis tips forward (the lean comes from the hips)
-    crouchChestUp: 0.18,               // rad the spine is straightened against the clip's rounding
-    crouchNeckLift: 0.35,
-    crouchHunch: 0.3,                  // rad the upper back rounds forward (the neck lifts by as much)
-    crouchArms: { keep: 0.12, bend: 1.25, forward: 0.28, inward: 0.12 },
+    // tactical crouch (MGS3-style): hinge forward from the hips, upper back rounded,
+    // head up looking ahead, hands hanging low and forward by the knees
+    crouchHinge: 0.48,                // rad pelvis tips forward (the lean comes from the hips)
+    crouchChestUp: 0.08,               // rad the spine is straightened against the clip's rounding
+    crouchNeckLift: 0.9,
+    crouchHunch: 0.5,                  // rad the upper back rounds forward (the neck lifts by as much)
+    crouchArms: { keep: 0.12, bend: 0.75, forward: 0.5, inward: 0.12 },
     idleSquare: 1,                     // 0 = keep the idle clip's turned stance, 1 = face forward                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.7, 0.15], [1.7, 0.13], [2.6, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
@@ -266,7 +266,7 @@
     // 1. forward lean
     let lean = c.lean[c.lean.length - 1][1];
     for (let i = 1; i < c.lean.length; i++) if (s <= c.lean[i][0]) { const a = c.lean[i - 1], bb = c.lean[i]; lean = lerp(a[1], bb[1], (s - a[0]) / (bb[0] - a[0])); break; }
-    // crouched: tactical, not hunched: chest lifted, back straighter
+    // crouched: only a little straightening; the hunch below rounds the upper back
     lean = lean * st - c.crouchChestUp * (1 - st);
     [b.spine, b.spine1, b.chest].forEach((bone, i) => { if (bone) rotateWorld(bone, new THREE.Quaternion().setFromAxisAngle(left, lean * c.leanShare[i]), t); });
 
