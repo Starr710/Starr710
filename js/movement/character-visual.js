@@ -75,7 +75,9 @@
     testSoldier: {
       url: 'assets/characters/test-soldier.glb',
       forwardYaw: Math.PI,          // this file faces -Z; the controller's forward is +Z
-      clips: { idle: 'idle', walk: 'walk', run: 'run' },
+      clips: { idle: 'idle', walk: 'walk', run: 'run', crouchIdle: 'Crouch_Idle_Loop', crouchWalk: 'Crouch_Fwd_Loop' },
+      // crouch clips retargeted from the CC0 Quaternius library (tools/retarget.html)
+      extraClips: 'assets/characters/test-soldier-crouch.json',
       inPlace: true,                // strip any horizontal hips drift from clips
       materialFix: { roughness: 0.8 },
     },
@@ -102,7 +104,15 @@
     return new Promise((resolve, reject) => {
       const loader = new THREE.GLTFLoader();
       if (window.MeshoptDecoder) loader.setMeshoptDecoder(window.MeshoptDecoder);
-      const done = gltf => { try { this._setup(gltf); resolve(this); } catch (e) { reject(e); } };
+      const setup = gltf => { try { this._setup(gltf); resolve(this); } catch (e) { reject(e); } };
+      const done = gltf => {
+        const extra = window.SC_EXTRA_CLIPS_URL || p.extraClips;
+        if (!extra) return setup(gltf);
+        new THREE.FileLoader().load(extra, text => {
+          try { JSON.parse(text).forEach(j => gltf.animations.push(THREE.AnimationClip.parse(j))); } catch (e) { return reject(e); }
+          setup(gltf);
+        }, null, reject);
+      };
       const url = window.SC_CHARACTER_URL || p.url;
       if (/\.b64\.txt$/.test(url)) {
         // text-only hosts get the GLB as base64

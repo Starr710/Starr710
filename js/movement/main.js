@@ -62,7 +62,7 @@
   const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), sprint: $('mv-sprint'), crouch: $('mv-crouch') });
   const cam = new mv.ThirdPersonCamera(camera, world);
   const actions = new mv.ActionSystem();
-  const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'mannequin'];
+  const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
   scene.add(visual.root);

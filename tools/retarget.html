@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shadow Cell Retarget Tool</title>
+<style>body { margin: 0; background: #222; color: #ddd; font: 12px monospace; } canvas { display: block; }</style>
+</head>
+<body>
+<!--
+  Offline animation retargeting (run from a local server at the repo root):
+    tools/retarget.html?src=<source.glb>&dst=<target.glb>&map=ual2mixamo&clips=Crouch_Idle_Loop,Crouch_Fwd_Loop
+  Both characters are posed in their T-pose reference clip; each mapped bone then
+  gets the source bone's world-space rotation change relative to that reference:
+      Qdst = Qsrc · Qsrc_ref⁻¹ · Qdst_ref
+  Hips translation is scaled by the ratio of hip heights. window.RESULT holds the
+  retargeted clips as THREE.AnimationClip JSON once done.
+-->
+<script src="../lib/three.min.js"></script>
+<script src="../lib/GLTFLoader.js"></script>
+<script src="../lib/meshopt_decoder.js"></script>
+<script>
+(async function () {
+  const q = new URLSearchParams(location.search);
+  const MAPS = {
+    // Quaternius UAL (Rigify DEF-*, dots stripped by three.js) → Mixamo
+    ual2mixamo: {
+      srcRef: 'A_TPose', dstRef: 'bindpose',
+      bones: {
+        'DEF-hips': 'mixamorigHips', 'DEF-spine001': 'mixamorigSpine', 'DEF-spine002': 'mixamorigSpine1', 'DEF-spine003': 'mixamorigSpine2',
+        'DEF-neck': 'mixamorigNeck', 'DEF-head': 'mixamorigHead',
+        'DEF-shoulderL': 'mixamorigLeftShoulder', 'DEF-upper_armL': 'mixamorigLeftArm', 'DEF-forearmL': 'mixamorigLeftForeArm', 'DEF-handL': 'mixamorigLeftHand',
+        'DEF-shoulderR': 'mixamorigRightShoulder', 'DEF-upper_armR': 'mixamorigRightArm', 'DEF-forearmR': 'mixamorigRightForeArm', 'DEF-handR': 'mixamorigRightHand',
+        'DEF-thighL': 'mixamorigLeftUpLeg', 'DEF-shinL': 'mixamorigLeftLeg', 'DEF-footL': 'mixamorigLeftFoot', 'DEF-toeL': 'mixamorigLeftToeBase',
+        'DEF-thighR': 'mixamorigRightUpLeg', 'DEF-shinR': 'mixamorigRightLeg', 'DEF-footR': 'mixamorigRightFoot', 'DEF-toeR': 'mixamorigRightToeBase',
+      },
+      srcYaw: 0, dstYaw: Math.PI,          // turn both to face +Z
+    },
+  };
+  const M = MAPS[q.get('map') || 'ual2mixamo'];
+  const fps = +(q.get('fps') || 30);
+  const load = url => new Promise((res, rej) => { const l = new THREE.GLTFLoader(); l.setMeshoptDecoder(window.MeshoptDecoder); l.load(url, res, null, rej); });
+  const [S, D] = await Promise.all([load(q.get('src')), load(q.get('dst'))]);
+  const rig = (gltf, yaw) => {
+    const holder = new THREE.Group(); holder.rotation.y = yaw; holder.add(gltf.scene); holder.updateMatrixWorld(true);
+    const bones = {}; gltf.scene.traverse(o => { if (o.isBone) bones[o.name] = o; });
+    return { holder, bones, mixer: new THREE.AnimationMixer(gltf.scene), clips: gltf.animations };
+  };
+  const src = rig(S, M.srcYaw), dst = rig(D, M.dstYaw);
+  const pose = (r, clip, t) => { r.mixer.stopAllAction(); const a = r.mixer.clipAction(clip); a.reset().play(); a.time = t; r.mixer.update(0); r.holder.updateMatrixWorld(true); };
+  const clipBy = (r, name) => r.clips.find(c => c.name === name);
+  const wq = b => b.getWorldQuaternion(new THREE.Quaternion());
+  const wp = b => b.getWorldPosition(new THREE.Vector3());
+
+  // reference poses
+  pose(src, clipBy(src, M.srcRef), 0);
+  pose(dst, clipBy(dst, M.dstRef), 0);
+  const pairs = Object.entries(M.bones).map(([s, d]) => ({ s: src.bones[s], d: dst.bones[d], sn: s, dn: d }))
+    .filter(p => { if (!p.s || !p.d) console.warn('missing', p.sn, p.dn); return p.s && p.d; });
+  // parents first so local rotations can be solved down the chain
+  const depth = b => { let n = 0; while (b.parent) { b = b.parent; n++; } return n; };
+  pairs.sort((a, b) => depth(a.d) - depth(b.d));
+  for (const p of pairs) { p.sRef = wq(p.s); p.dRef = wq(p.d); p.dRefLocal = p.d.quaternion.clone(); }
+  const sHips = src.bones['DEF-hips'], dHips = dst.bones[M.bones['DEF-hips']];
+  const ratio = wp(dHips).y / wp(sHips).y;
+  const dRefLocalPos = dHips.position.clone();
+
+  const out = [];
+  for (const name of (q.get('clips') || '').split(',').filter(Boolean)) {
+    const clip = clipBy(src, name);
+    if (!clip) { console.warn('no clip', name); continue; }
+    const N = Math.max(2, Math.round(clip.duration * fps));
+    const times = [], quats = pairs.map(() => []), hipsPos = [];
+    for (let i = 0; i <= N; i++) {
+      const t = clip.duration * i / N;
+      times.push(t);
+      pose(src, clip, t);
+      pose(dst, clipBy(dst, M.dstRef), 0);
+      // hips position: source hips (in its facing frame) scaled to the target
+      const sp = wp(sHips).multiplyScalar(ratio);
+      const parentInv = dHips.parent.matrixWorld.clone().invert();
+      dHips.position.copy(sp.applyMatrix4(parentInv));
+      pairs.forEach((p, k) => {
+        const want = wq(p.s).multiply(p.sRef.clone().invert()).multiply(p.dRef);
+        const parentQ = wq(p.d.parent);
+        p.d.quaternion.copy(parentQ.invert().multiply(want));
+        p.d.updateMatrixWorld(true);
+        quats[k].push(...p.d.quaternion.toArray());
+      });
+      hipsPos.push(...dHips.position.toArray());
+    }
+    const tracks = pairs.map((p, k) => new THREE.QuaternionKeyframeTrack(p.dn + '.quaternion', times, quats[k]));
+    tracks.push(new THREE.VectorKeyframeTrack(dHips.name + '.position', times, hipsPos));
+    const res = new THREE.AnimationClip(name, clip.duration, tracks);
+    out.push(THREE.AnimationClip.toJSON(res));
+  }
+  window.RESULT = { ratio, clips: out };
+  document.body.textContent = 'done: ' + out.map(c => c.name).join(', ') + ' (hip ratio ' + ratio.toFixed(3) + ')';
+})().catch(e => { window.RESULT = { error: String(e && e.stack || e) }; document.body.textContent = 'error: ' + e; });
+</script>
+</body>
+</html>

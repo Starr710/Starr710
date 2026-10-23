@@ -91,12 +91,13 @@ Then load `movement.html` with `window.SC_CHARACTER = 'operative'` set before `m
 Gait clips must loop cleanly and start with the **left foot planted**, or at least share a consistent phase convention. The walk and run phases are synced by normalized time.
 
 ## Current temporary character
-`assets/characters/ual-mannequin.glb` is the mannequin from Quaternius's **Universal Animation Library (Standard)**, licensed **CC0** (public domain; see `ual-mannequin.LICENSE.txt`). It's a 53-bone Rigify `DEF-*` skeleton, mapped in the `mannequin` profile.
-- **Clips used:** `Idle_Loop`, `Walk_Loop`, `Jog_Fwd_Loop` (jog, and sprint at full stride), `Crouch_Idle_Loop`, `Crouch_Fwd_Loop`.
-- **Kept for later stages:** Roll, PickUp_Table, Interact and the Pistol set.
-- **Build:** `tools/optimize-ual.mjs` trims the clips and meshopt-compresses the file to 2.7 MB.
-- **Clip speeds:** fitted by a foot-slip sweep through the full controller (`strideSpeeds` and `strideScale` in the profile).
-- **Previous stand-in:** the Mixamo soldier (`test-soldier.glb`) is still available as the `testSoldier` profile.
+`assets/characters/test-soldier.glb` is the Mixamo "Vanguard" from the three.js examples, used under Mixamo terms. Its idle, walk and run clips are motion-captured.
+- **Crouch idle and crouch walk:** these come from Quaternius's **Universal Animation Library** (CC0). They were retargeted onto this skeleton by `tools/retarget.html`, which uses world-space rotation deltas against each rig's T-pose and scales hip height by the hips ratio. The result is in `test-soldier-crouch.json`, loaded through the profile's `extraClips`.
+- **Mannequin profile:** the UAL mannequin itself (`ual-mannequin.glb`) is still available as the `mannequin` profile. Its stylized jog didn't suit this game.
+
+Retargeting more clips, e.g. for later stages, is done with:
+`tools/retarget.html?src=<UAL glb>&dst=assets/characters/test-soldier.glb&clips=Roll,PickUp_Table`
+from a local server; the output is in `window.RESULT`.
 
 ## Stances
 - **Motor:** `motor.stance` is `'stand'` or `'crouch'`, with a separate `crouchSpeedCurve` (creep about 0.5–0.7 m/s, crouch-walk up to 1.1 m/s). Sprint is unavailable while crouched; pressing RUN stands her up.
