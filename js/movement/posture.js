@@ -53,7 +53,7 @@
     headPitch: 0.04,                  // eyes slightly down the line of travel
     // crouch idle (MGSV-style): low kneeling crouch with the back knee near the ground,
     // one hand down to the ground; slow breathing, weight shifts, head scans
-    crouchIdle: { drop: 0, reach: [-0.1, -0.35], idleBend: [0.35, -0.8], idleInward: 0.08, breathe: 0.03, sway: 0.018, scan: 0.45 },
+    crouchIdle: { drop: 0, reach: [0.25, -0.35], idleBend: [0.05, -0.8], idleInward: -0.2, breathe: 0.03, sway: 0.018, scan: 0.45 },
     crouchHeadSteady: 0.8,            // crouched: how firmly the head is held to the gaze below
     crouchHeadPitch: 0.1,             // crouched: rad the gaze tips down (head follows the spine more)
     weaponStiffness: 55,              // carbine follow spring (higher = less lag)
