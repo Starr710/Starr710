@@ -33,9 +33,10 @@
 
   mv.PostureDefaults = {
     // forward lean (rad) by ground speed (m/s)
-    lean: [[0, 0.08], [0.6, 0.26], [1.3, 0.22], [2.2, 0.18], [3.2, 0.2], [5.6, 0.3]],
-    hipDrop: [[0, 0.02], [0.5, 0.07], [1.0, 0.065], [1.5, 0.05], [2.4, 0.035], [3.4, 0.02], [5.0, 0]],
-    pelvisTilt: [[0, 0.04], [0.5, 0.18], [1.3, 0.15], [2.4, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
+    lean: [[0, 0.08], [0.6, 0.3], [1.3, 0.25], [2.2, 0.19], [3.2, 0.2], [5.6, 0.3]],
+    hipDrop: [[0, 0.015], [0.5, 0.035], [1.0, 0.032], [1.5, 0.026], [2.4, 0.018], [3.4, 0.01], [5.0, 0]],
+    ankleLock: 0.7,                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
+    pelvisTilt: [[0, 0.04], [0.5, 0.15], [1.3, 0.13], [2.4, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
     leanShare: [0.4, 0.3, 0.3],       // spine, spine1, chest
     twistDamp: 0.7,                   // 0 = clip twist, 1 = chest locked to travel direction
@@ -154,22 +155,34 @@
     this._calibrated = true;
   };
 
-  function twoBoneIK(upper, lower, end, target, pole, t) {
-    const a = wpos(upper, t.a), bp = wpos(lower, t.b), c = wpos(end, t.c);
+  // Two-bone IK with a true hinge: the middle joint (knee/elbow) only bends about
+  // its own hinge axis, so the limb never twists along its length; the upper
+  // bone then aims the chain at the target and swivels the joint toward the pole.
+  function twoBoneIK(upper, lower, end, target, pole, t, swivel) {
+    const a = wpos(upper, V()), bp = wpos(lower, V()), c = wpos(end, V());
     const l1 = bp.distanceTo(a), l2 = c.distanceTo(bp);
-    const dv = t.d.copy(target).sub(a);
-    const dist = Math.min(Math.max(dv.length(), 1e-4), (l1 + l2) * 0.999);
-    const dir = dv.normalize();
-    const cosA = Math.min(1, Math.max(-1, (l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist)));
-    const sinA = Math.sqrt(1 - cosA * cosA);
-    const perp = t.e.copy(pole).sub(dir.clone().multiplyScalar(pole.dot(dir)));
-    if (perp.lengthSq() < 1e-8) perp.set(0, -1, 0);
-    perp.normalize();
-    const elbow = a.clone().add(dir.clone().multiplyScalar(l1 * cosA)).add(perp.multiplyScalar(l1 * sinA));
-    rotateWorld(upper, new THREE.Quaternion().setFromUnitVectors(bp.clone().sub(a).normalize(), elbow.sub(a).normalize()), t);
-    const b2 = wpos(lower, V()), c2 = wpos(end, V());
-    const goal = a.clone().add(dir.multiplyScalar(dist));
-    rotateWorld(lower, new THREE.Quaternion().setFromUnitVectors(c2.sub(b2).normalize(), goal.sub(b2).normalize()), t);
+    const dist = Math.min(Math.max(target.distanceTo(a), Math.abs(l1 - l2) + 1e-3), (l1 + l2) * 0.999);
+    // 1. bend: set the interior angle at the hinge from the law of cosines
+    const ba = a.clone().sub(bp), bc = c.clone().sub(bp);
+    const cur = ba.angleTo(bc);
+    const want = Math.acos(Math.min(1, Math.max(-1, (l1 * l1 + l2 * l2 - dist * dist) / (2 * l1 * l2))));
+    let n = bp.clone().sub(a).cross(bc);
+    if (n.lengthSq() < 1e-10) n = bp.clone().sub(a).cross(pole);
+    if (n.lengthSq() > 1e-10) rotateWorld(lower, new THREE.Quaternion().setFromAxisAngle(n.normalize(), cur - want), t);
+    // 2. aim the whole chain at the target
+    const c2 = wpos(end, V());
+    rotateWorld(upper, new THREE.Quaternion().setFromUnitVectors(c2.sub(a).normalize(), target.clone().sub(a).normalize()), t);
+    // 3. swivel about the shoulder/hip → target line so the joint points toward the pole
+    if (swivel > 0) {
+      const axis = target.clone().sub(a).normalize();
+      const k = wpos(lower, V()).sub(a); k.sub(axis.clone().multiplyScalar(k.dot(axis)));
+      const pp = pole.clone().sub(axis.clone().multiplyScalar(pole.dot(axis)));
+      if (k.lengthSq() > 1e-8 && pp.lengthSq() > 1e-8) {
+        let ang = k.angleTo(pp);
+        if (k.clone().cross(pp).dot(axis) < 0) ang = -ang;
+        rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(axis, ang * swivel), t);
+      }
+    }
   }
 
   // orient a hand so its finger axis points along Fw and its palm faces Nw
@@ -258,8 +271,11 @@
     for (const f of feet) {
       const out = f.side === 'left' ? left.clone() : left.clone().negate();
       const pole = fwd.clone().add(out.multiplyScalar(0.15));
-      twoBoneIK(b[f.side + 'UpLeg'], b[f.side + 'Leg'], f.foot, f.p, pole, t);
-      setWorldQuat(f.foot, f.q, t);          // keep the clip's foot angle (flat contact)
+      twoBoneIK(b[f.side + 'UpLeg'], b[f.side + 'Leg'], f.foot, f.p, pole, t, 0.25);
+      // mostly keep the clip's foot angle (flat contact) but let the ankle follow
+      // the shin a little, so the joint never folds sharply
+      const kept = f.foot.getWorldQuaternion(Q()).slerp(f.q, this.cfg.ankleLock);
+      setWorldQuat(f.foot, kept, t);
     }
   };
 
@@ -280,7 +296,7 @@
       const goal = new THREE.Vector3().fromArray(mixArr(side === 'right' ? 'r' : 'l'));
       const rel = goal.lerp(clipRel, keep);
       const target = root.localToWorld(chestL.clone().add(rel));
-      twoBoneIK(b[side + 'Arm'], b[side + 'ForeArm'], hand, target, pole, t);
+      twoBoneIK(b[side + 'Arm'], b[side + 'ForeArm'], hand, target, pole, t, 0.6);
       curlFingers(hand, this.hands[side], [0.45, 0.55, 0.4], t);
     }
   };
@@ -309,8 +325,8 @@
     const right = left.clone().negate();
     const rPole = right.clone().multiplyScalar(0.6).add(up.clone().multiplyScalar(-1)).add(fwd.clone().multiplyScalar(-0.35));
     const lPole = left.clone().multiplyScalar(0.35).add(up.clone().multiplyScalar(-1)).add(fwd.clone().multiplyScalar(-0.1));
-    twoBoneIK(b.rightArm, b.rightForeArm, b.rightHand, rWrist, rPole, t);
-    twoBoneIK(b.leftArm, b.leftForeArm, b.leftHand, lWrist, lPole, t);
+    twoBoneIK(b.rightArm, b.rightForeArm, b.rightHand, rWrist, rPole, t, 1);
+    twoBoneIK(b.leftArm, b.leftForeArm, b.leftHand, lWrist, lPole, t, 1);
     const H = this.hands;
     orientHand(b.rightHand, H.right, wy.clone().multiplyScalar(-0.85).add(wz.clone().multiplyScalar(0.45)).normalize(), wx.clone(), t);
     orientHand(b.leftHand, H.left, wx.clone().multiplyScalar(-0.85).add(wz.clone().multiplyScalar(0.3)).add(wy.clone().multiplyScalar(0.15)).normalize(), wy.clone(), t);

@@ -26,7 +26,7 @@
     leanSmoothing: 7,
     // stealth gait shaping: stride length multiplier by speed (m/s). Shorter
     // steps at sneaking pace; the posture layer pulls the feet in to match.
-    strideScale: [[0, 1], [0.4, 0.6], [0.9, 0.66], [1.4, 0.8], [2.2, 0.95], [3.0, 1]],
+    strideScale: [[0, 1], [0.4, 0.58], [0.9, 0.64], [1.4, 0.78], [2.2, 0.95], [3.0, 1]],
   };
   mv.table = (pts, x) => {
     if (x <= pts[0][0]) return pts[0][1];
