@@ -47,7 +47,7 @@ body { position: fixed; inset: 0; }
 
 /* floating stick */
 #mv-joy-base, #mv-joy-knob { position: absolute; border-radius: 50%; pointer-events: none; opacity: 0; transition: opacity .1s; }
-#mv-joy-base { width: 124px; height: 124px; margin: -62px 0 0 -62px; border: 2px solid var(--line); background: rgba(0, 0, 0, .16); }
+#mv-joy-base { width: 140px; height: 140px; margin: -70px 0 0 -70px; border: 2px solid var(--line); background: rgba(0, 0, 0, .16); }
 #mv-joy-knob { width: 54px; height: 54px; margin: -27px 0 0 -27px; background: rgba(216, 207, 168, .28); border: 1px solid var(--text); }
 #mv-joy-hint {
   position: absolute; pointer-events: none; width: 104px; height: 104px; border-radius: 50%; border: 1px dashed var(--line);

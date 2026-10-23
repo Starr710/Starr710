@@ -14,7 +14,7 @@
     this.mouse = false;          // last look came from a mouse
     this.enabled = false;
     this.els = els;
-    this.R = 56;                 // stick travel radius (px)
+    this.R = 64;                 // stick travel radius (px)
     this.joy = null; this.lookT = null; this.btn = new Map(); this.keys = new Set();
     this._bind();
   };
@@ -80,14 +80,11 @@
     for (const t of e.changedTouches) {
       if (this.joy && t.identifier === this.joy.id) {
         const j = this.joy, R = this.R;
+        // the base stays where the thumb first landed, so the push amount (and
+        // with it sneak / stealth walk / jog) only changes when the thumb does
         let dx = t.clientX - j.ox, dy = t.clientY - j.oy;
         const d = Math.hypot(dx, dy);
-        if (d > R) {
-          // the base follows the thumb so you never run off the edge of the stick
-          j.ox += dx / d * (d - R); j.oy += dy / d * (d - R);
-          this._placeBase(j.ox, j.oy);
-          dx = t.clientX - j.ox; dy = t.clientY - j.oy;
-        }
+        if (d > R) { dx *= R / d; dy *= R / d; }
         this._knob(dx, dy);
         this.move.x = dx / R; this.move.y = -dy / R;
       } else if (this.lookT && t.identifier === this.lookT.id) {
