@@ -273,6 +273,15 @@
     // 2. damp shoulder twist: turn the chest back toward the travel direction
     const cf = this.chestFwd.clone().applyQuaternion(b.chest.getWorldQuaternion(Q()));
     let twist = Math.atan2(fwd.x, fwd.z) - Math.atan2(cf.x, cf.z);
+    // a chest pitched far forward (deep crouch) has no reliable forward heading:
+    // read the twist off the shoulder line instead, which stays level
+    const sw = smooth(0.35, 0.7, Math.hypot(cf.x, cf.z) / cf.length());
+    if (sw < 1 && b.leftArm && b.rightArm) {
+      const sl = wpos(b.leftArm, V()).sub(wpos(b.rightArm, V()));
+      if (sl.dot(left) < 0) sl.negate();
+      const t2 = Math.atan2(left.x, left.z) - Math.atan2(sl.x, sl.z);
+      twist = Math.atan2(Math.sin(twist), Math.cos(twist)) * sw + Math.atan2(Math.sin(t2), Math.cos(t2)) * (1 - sw);
+    }
     twist = Math.atan2(Math.sin(twist), Math.cos(twist));
     const fix = new THREE.Quaternion().setFromAxisAngle(up, twist * c.twistDamp * 0.5);
     rotateWorld(b.spine1 || b.spine, fix, t);
@@ -316,6 +325,7 @@
     // feet sliding while the pose blends
     const settling = animator && animator.state === 'stopped' && animator.settle < 1;
     if (settling) {
+      if (this.lock && this.lock.from) this.lock = null;   // stopped again mid-release
       if (!this.lock && this.lastFeet) {
         const along = this.lastFeet.map(p => Math.abs(p.clone().sub(H).dot(fwd)));
         this.lock = { pos: this.lastFeet.map(p => p.clone()), mover: along[0] > along[1] ? 0 : 1 };
@@ -335,7 +345,15 @@
           }
         });
       }
-    } else this.lock = null;
+    } else if (this.lock) {
+      // moving off before the settle finished: ease the feet back to the clip over
+      // a few frames rather than snapping them
+      if (!this.lock.from) { this.lock.from = this.lastFeet.map(p => p.clone()); this.lock.release = 0; }
+      this.lock.release += dt / 0.2;
+      const w = smooth(0, 1, this.lock.release);
+      feet.forEach((f, i) => f.p.lerpVectors(this.lock.from[i], f.p, w));
+      if (this.lock.release >= 1) this.lock = null;
+    }
     this.lastFeet = feet.map(f => f.p.clone());
 
     // lower the pelvis (and ease it back) in world space, then tip it forward
@@ -404,9 +422,12 @@
       // 3. extra elbow bend about the elbow's own hinge (always flexing forward)
       if (bend) {
         const sh = wpos(upper, V()), el = wpos(lower, V()), wr = wpos(hand, V());
-        const n = el.clone().sub(sh).cross(wr.clone().sub(el));
+        const ua = el.clone().sub(sh), fa = wr.clone().sub(el);
+        const n = ua.clone().cross(fa);
         const flex = left.clone().negate();
-        if (n.lengthSq() < 1e-6) n.copy(flex); else { n.normalize(); if (n.dot(flex) < 0) n.negate(); }
+        // a nearly straight arm has no reliable hinge axis: ease toward the body's flex axis
+        const sinA = n.length() / (ua.length() * fa.length() + 1e-9);
+        if (n.lengthSq() < 1e-9) n.copy(flex); else { n.normalize(); if (n.dot(flex) < 0) n.negate(); n.lerp(flex, 1 - smooth(0.15, 0.45, sinA)).normalize(); }
         rotateWorld(lower, new THREE.Quaternion().setFromAxisAngle(n, bend), t);
       }
       curlFingers(hand, this.hands[side], [0.35, 0.45, 0.3], t);
