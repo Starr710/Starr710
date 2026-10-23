@@ -114,6 +114,10 @@
     for (const k of ['idle', 'walk', 'run']) if (!this.clips[k]) throw new Error('Character is missing a "' + k + '" animation clip');
 
     if (p.inPlace) for (const k in this.clips) if (this.clips[k]) this._stripRootMotion(this.clips[k]);
+    // mocap at 30 keys/s with linear blending shows kinks at each key, worst when
+    // a gait is slowed down for sneaking; resample on splines and smooth lightly
+    const smoothing = p.clipSmoothing || { fps: 60, sigma: 1.3 };
+    for (const k in this.clips) if (this.clips[k]) mv.smoothLoopClip(this.clips[k], smoothing.fps, smoothing.sigma);
     this.mixer = new THREE.AnimationMixer(model);
   };
 
@@ -130,6 +134,80 @@
       const rest = [v[0], v[1], v[2]];
       for (let i = 0; i < v.length; i += 3) for (let a = 0; a < 3; a++) if (a !== up) v[i + a] = rest[a];
     }
+  };
+
+  // Resample every track of a looping clip at `fps` with Catmull-Rom splines,
+  // then apply a cyclic Gaussian blur of `sigma` frames. Quaternions are kept
+  // on one hemisphere before filtering and renormalized after.
+  mv.smoothLoopClip = function (clip, fps, sigma) {
+    const T = clip.duration;
+    if (!(T > 0)) return clip;
+    const N = Math.max(4, Math.round(T * fps));
+    const times = new Float32Array(N + 1);
+    for (let i = 0; i <= N; i++) times[i] = T * i / N;
+    const R = Math.ceil(sigma * 3), ker = [];
+    let ks = 0;
+    for (let i = -R; i <= R; i++) { const w = Math.exp(-(i * i) / (2 * sigma * sigma)); ker.push(w); ks += w; }
+    for (let i = 0; i < ker.length; i++) ker[i] /= ks;
+    clip.tracks = clip.tracks.map(track => {
+      const src = track.times, vals = track.values, size = vals.length / src.length;
+      if (src.length < 3) return track;
+      const isQuat = size === 4 && /quaternion$/.test(track.name);
+      // keys of one period (the last key repeats the first in a looping export)
+      let K = src.length;
+      if (Math.abs(src[K - 1] - T) < 1e-4 && K > 2) K--;
+      const key = new Float32Array(K * size);
+      for (let i = 0; i < K; i++) for (let c = 0; c < size; c++) key[i * size + c] = vals[i * size + c];
+      if (isQuat) for (let i = 1; i < K; i++) {
+        let d = 0; for (let c = 0; c < 4; c++) d += key[i * 4 + c] * key[(i - 1) * 4 + c];
+        if (d < 0) for (let c = 0; c < 4; c++) key[i * 4 + c] *= -1;
+      }
+      const at = (i, c) => {
+        let w = 0, j = i;
+        while (j < 0) { j += K; w--; }
+        while (j >= K) { j -= K; w++; }
+        let v = key[j * size + c];
+        // keep quaternion signs continuous across the wrap
+        if (isQuat && w !== 0) { let d = 0; for (let q = 0; q < 4; q++) d += key[j * 4 + q] * key[(w > 0 ? K - 1 : 0) * 4 + q]; if (d < 0) v = -v; }
+        return v;
+      };
+      const st = i => (i >= K ? src[i - K] + T : src[i]);
+      const raw = new Float32Array(N * size);
+      let seg = 0;
+      for (let n = 0; n < N; n++) {
+        const t = times[n];
+        while (seg < K - 1 && st(seg + 1) <= t) seg++;
+        const t0 = st(seg), t1 = st(seg + 1), u = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+        const u2 = u * u, u3 = u2 * u;
+        for (let c = 0; c < size; c++) {
+          const p0 = at(seg - 1, c), p1 = at(seg, c), p2 = at(seg + 1, c), p3 = at(seg + 2, c);
+          raw[n * size + c] = 0.5 * ((2 * p1) + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u2 + (-p0 + 3 * p1 - 3 * p2 + p3) * u3);
+        }
+      }
+      if (isQuat) for (let n = 1; n < N; n++) {
+        let d = 0; for (let c = 0; c < 4; c++) d += raw[n * 4 + c] * raw[(n - 1) * 4 + c];
+        if (d < 0) for (let c = 0; c < 4; c++) raw[n * 4 + c] *= -1;
+      }
+      const out = new Float32Array((N + 1) * size);
+      for (let n = 0; n < N; n++) {
+        for (let c = 0; c < size; c++) {
+          let acc = 0;
+          for (let k = -R; k <= R; k++) {
+            const m = ((n + k) % N + N) % N;
+            let v = raw[m * size + c];
+            if (isQuat) { let d = 0; for (let q = 0; q < 4; q++) d += raw[m * 4 + q] * raw[n * 4 + q]; if (d < 0) v = -v; }
+            acc += ker[k + R] * v;
+          }
+          out[n * size + c] = acc;
+        }
+        if (isQuat) { const o = n * 4, l = Math.hypot(out[o], out[o + 1], out[o + 2], out[o + 3]) || 1; for (let c = 0; c < 4; c++) out[o + c] /= l; }
+      }
+      // close the loop: last sample equals the first
+      for (let c = 0; c < size; c++) out[N * size + c] = out[c];
+      const Ctor = track.constructor;
+      return new Ctor(track.name, times, out);
+    });
+    return clip;
   };
 
   mv.CharacterVisual.prototype.place = function (position, yaw) {

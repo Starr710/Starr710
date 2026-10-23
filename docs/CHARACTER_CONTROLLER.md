@@ -9,13 +9,17 @@ Playable test: `movement.html`. The code is in `js/movement/`.
 | `input.js` | Touch stick (left 45% of the screen), camera drag (rest of the screen), RUN toggle, keyboard and mouse. Outputs `move {x,y}`, `look {dx,dy}` and `sprint`. | The character, the camera |
 | `motor.js` | Movement and physics: target speed from stick magnitude, acceleration/deceleration, limited and smoothed turning, braking on reversal, collision sliding, ground height. Outputs `position`, `yaw`, `speed`, `angularVelocity`, `accel` and `gait`. | Meshes, bones, clips |
 | `collision.js` | Static world: boxes and cylinders, with a circle-vs-world resolver. Holds the obstacle meshes that the camera avoids. | — |
-| `character-visual.js` | Loads a GLB through a **profile**. Exposes `root`, `mixer`, `clips.{idle,walk,run,sprint?}` and canonical `bones`. Strips root motion. | Input, movement rules |
+| `character-visual.js` | Loads a GLB through a **profile**. Exposes `root`, `mixer`, `clips.{idle,walk,run,sprint?}` and canonical `bones`. Strips root motion. Conditions each clip: resamples it at 60 fps on Catmull-Rom splines and applies a light cyclic Gaussian smooth (`clipSmoothing` in the profile), so mocap keyframe kinks don't show when a gait is slowed. | Input, movement rules |
 | `animator.js` | Animation state machine. Stage 1 has a single `grounded` state with a speed blend space (idle ↔ walk ↔ run[/sprint]). One shared gait phase keeps the feet in step. Playback rate is matched to ground speed using stride speeds measured from the clips. A procedural whole-body lean sits on top. | Input, collision |
 | `posture.js` | Tactical upper-body layer, run after the mixer. **Stealth legs:**
   - The hips lower slightly and the pelvis tips forward at sneaking pace.
   - Steps shorten, using the animator's `strideScale`, which also slows playback to match so the feet stay planted.
   - Two-bone leg IK holds each foot where the clip put it, keeping the clip's foot angle.
+  - The clip's vertical hip bob is levelled at sneaking pace (`levelHips`), so the body glides.
   - The effect fades out toward a sprint.
+- **Limb IK:**
+  - Hinge-only bend, with a stable axis near full extension.
+  - Soft IK: the limb eases into full reach rather than snapping straight.
 
 Above the legs: forward lean grows with speed, shoulder twist is damped, the head is steadied, Arms follow a **carry profile**. `unarmed` is the default: compact bent-elbow arms with a reduced clip swing and loosely closed hands, all driven by two-bone IK. `rifle` is kept for a later stage: a carbine at low ready, port arms in a sprint, on a lag spring, with the hands on grip and handguard. Preview it with `movement.html#rifle`. Pistol, knife and other carries become further profiles. Legs, hips and gait rhythm stay 100% mocap. | Input, collision |
 | `camera-rig.js` | Third-person orbit: a spring-damped follow point, a shoulder offset, re-centring behind the character after 1.4 s without camera input, pull-in on obstacles, and a small sprint FOV kick. | The character mesh |

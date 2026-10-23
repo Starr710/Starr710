@@ -35,6 +35,7 @@
     // forward lean (rad) by ground speed (m/s)
     lean: [[0, 0.08], [0.6, 0.3], [1.3, 0.25], [2.2, 0.19], [3.2, 0.2], [5.6, 0.3]],
     hipDrop: [[0, 0.015], [0.5, 0.035], [1.0, 0.032], [1.5, 0.026], [2.4, 0.018], [3.4, 0.01], [5.0, 0]],
+    levelHips: [[0, 0], [0.4, 0.75], [1.4, 0.65], [2.4, 0.3], [3.4, 0]],   // share of hip bob removed
     ankleLock: 0.7,                    // 1 = foot keeps the clip's world angle, 0 = follows the shin
     pelvisTilt: [[0, 0.04], [0.5, 0.15], [1.3, 0.13], [2.4, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
     hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
@@ -161,13 +162,27 @@
   function twoBoneIK(upper, lower, end, target, pole, t, swivel) {
     const a = wpos(upper, V()), bp = wpos(lower, V()), c = wpos(end, V());
     const l1 = bp.distanceTo(a), l2 = c.distanceTo(bp);
-    const dist = Math.min(Math.max(target.distanceTo(a), Math.abs(l1 - l2) + 1e-3), (l1 + l2) * 0.999);
+    // soft IK: ease into full extension instead of snapping straight at max reach
+    const L = l1 + l2, soft = 0.05 * L, d0 = L - soft;
+    let dist = Math.max(target.distanceTo(a), Math.abs(l1 - l2) + 1e-3);
+    if (dist > d0) dist = d0 + soft * (1 - Math.exp(-(dist - d0) / soft));
+    dist = Math.min(dist, L * 0.9995);
     // 1. bend: set the interior angle at the hinge from the law of cosines
     const ba = a.clone().sub(bp), bc = c.clone().sub(bp);
     const cur = ba.angleTo(bc);
     const want = Math.acos(Math.min(1, Math.max(-1, (l1 * l1 + l2 * l2 - dist * dist) / (2 * l1 * l2))));
-    let n = bp.clone().sub(a).cross(bc);
-    if (n.lengthSq() < 1e-10) n = bp.clone().sub(a).cross(pole);
+    // hinge axis: from the current bend, but near a straight limb that cross
+    // product is noisy, so blend toward the axis implied by the pole
+    const ab = bp.clone().sub(a);
+    const nBend = ab.clone().cross(bc), nPole = ab.clone().cross(pole);
+    if (nPole.lengthSq() > 1e-10) nPole.normalize();
+    let n;
+    if (nBend.lengthSq() > 1e-10) {
+      nBend.normalize();
+      if (nPole.lengthSq() > 0.5 && nPole.dot(nBend) < 0) nPole.negate();
+      const wb = Math.min(1, Math.max(0, (Math.PI - cur - 0.12) / 0.35));   // 0 when nearly straight
+      n = nPole.lengthSq() > 0.5 ? nPole.multiplyScalar(1 - wb).add(nBend.multiplyScalar(wb)) : nBend;
+    } else n = nPole;
     if (n.lengthSq() > 1e-10) rotateWorld(lower, new THREE.Quaternion().setFromAxisAngle(n.normalize(), cur - want), t);
     // 2. aim the whole chain at the target
     const c2 = wpos(end, V());
@@ -256,6 +271,10 @@
     const want = mv.table(this.cfg.hipDrop, s);
     this.drop = this.drop == null ? want : this.drop + (want - this.drop) * (1 - Math.exp(-6 * dt));
     const hips = b.hips, H = wpos(hips, V());
+    // sneaking keeps the body level: flatten the clip's vertical hip bob toward
+    // its running average (this also removes a knee hitch under the lowered stance)
+    this.hipsMean = this.hipsMean == null ? H.y : this.hipsMean + (H.y - this.hipsMean) * (1 - Math.exp(-2 * dt));
+    H.y += (this.hipsMean - H.y) * mv.table(this.cfg.levelHips, s);
     // where the clip put each foot, pulled toward the hips along travel for shorter steps
     const feet = ['left', 'right'].map(side => {
       const foot = b[side + 'Foot'], p = wpos(foot, V()), q = foot.getWorldQuaternion(Q());
