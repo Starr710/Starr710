@@ -345,33 +345,46 @@
     });
   };
 
+  // Unarmed arms work on the clip's own arm motion instead of replacing it:
+  // each arm bone is pulled toward its running-average pose (less swing, never a
+  // new path), then the elbow gets extra bend about its own hinge. Hands and
+  // wrists inherit naturally, so nothing can flip or twist.
+  const ARM_GAIT = [
+    // speed m/s, swing kept, extra elbow bend (rad), arm forward (rad)
+    [0, 1, 0.12, 0],
+    [0.6, 0.35, 0.65, 0.12],
+    [1.2, 0.35, 0.65, 0.12],
+    [1.6, 0.5, 0.5, 0.1],
+    [2.2, 0.5, 0.45, 0.08],
+    [3.2, 0.65, 0.2, 0.04],
+    [5.6, 0.9, 0, 0],
+  ];
+  function armGait(s, col) { return mv.table(ARM_GAIT.map(r => [r[0], r[col]]), s); }
+
   mv.TacticalPosture.prototype._unarmed = function (dt, s, walkF, sprintF, fwd, left, up) {
-    const v = this.v, b = v.bones, root = v.root, t = this.t;
-    const jogF = smooth(1.8, 3.0, s);
-    const U = UNARMED;
-    const mixArr = side => U.idle[side].map((x, i) => lerp(lerp(lerp(x, U.walk[side][i], walkF), U.jog[side][i], jogF), U.sprint[side][i], sprintF));
-    const keep = lerp(lerp(lerp(U.idle.keep, U.walk.keep, walkF), U.jog.keep, jogF), U.sprint.keep, sprintF);
-    const chestL = root.worldToLocal(wpos(b.chest, V()));
-    const k = 1 - Math.exp(-3 * dt);
-    this.swingMean = this.swingMean || {};
-    for (const side of ['right', 'left']) {
-      const hand = b[side + 'Hand'], out = side === 'right' ? left.clone().negate() : left.clone();
-      // the clip's wrist swing, measured around its own running average and kept
-      // only fore-aft and up-down, so the arms swing in a clean arc instead of
-      // flapping sideways across the body
-      const clipRel = root.worldToLocal(wpos(hand, V())).sub(chestL);
-      const m = this.swingMean[side] = this.swingMean[side] ? this.swingMean[side].lerp(clipRel, k) : clipRel.clone();
-      const swing = clipRel.clone().sub(m); swing.x = 0;
-      const goal = new THREE.Vector3().fromArray(mixArr(side === 'right' ? 'r' : 'l')).addScaledVector(swing, keep);
-      const target = root.localToWorld(chestL.clone().add(goal));
-      // fixed pole: elbow points back and slightly out, never flips
-      const pole = out.clone().multiplyScalar(0.35).addScaledVector(up, -0.4).addScaledVector(fwd, -1);
-      twoBoneIK(b[side + 'Arm'], b[side + 'ForeArm'], hand, target, pole, t, 1);
-      // straight wrist: the hand continues the forearm, palm facing the body
-      const elbow = wpos(b[side + 'ForeArm'], V()), wrist = wpos(hand, V());
-      const Fw = wrist.sub(elbow).normalize();
-      orientHand(hand, this.hands[side], Fw, out.clone().negate().addScaledVector(fwd, -0.15).normalize(), t);
-      curlFingers(hand, this.hands[side], [0.5, 0.6, 0.45], t);
+    const b = this.v.bones, t = this.t;
+    const keep = armGait(s, 1), bend = armGait(s, 2), forward = armGait(s, 3);
+    const k = 1 - Math.exp(-2.5 * dt);
+    this.armMean = this.armMean || {};
+    for (const side of ['left', 'right']) {
+      const upper = b[side + 'Arm'], lower = b[side + 'ForeArm'], hand = b[side + 'Hand'];
+      // 1. damp swing: blend each bone's local rotation toward its running mean
+      for (const bone of [upper, lower]) {
+        const m = this.armMean[bone.uuid] = this.armMean[bone.uuid] ? this.armMean[bone.uuid].slerp(bone.quaternion, k) : bone.quaternion.clone();
+        bone.quaternion.copy(m.clone().slerp(bone.quaternion, keep));
+        bone.updateMatrixWorld(true);
+      }
+      // 2. carry the upper arm slightly forward
+      if (forward) rotateWorld(upper, new THREE.Quaternion().setFromAxisAngle(left, -forward), t);
+      // 3. extra elbow bend about the elbow's own hinge (always flexing forward)
+      if (bend) {
+        const sh = wpos(upper, V()), el = wpos(lower, V()), wr = wpos(hand, V());
+        const n = el.clone().sub(sh).cross(wr.clone().sub(el));
+        const flex = left.clone().negate();
+        if (n.lengthSq() < 1e-6) n.copy(flex); else { n.normalize(); if (n.dot(flex) < 0) n.negate(); }
+        rotateWorld(lower, new THREE.Quaternion().setFromAxisAngle(n, bend), t);
+      }
+      curlFingers(hand, this.hands[side], [0.35, 0.45, 0.3], t);
     }
   };
 

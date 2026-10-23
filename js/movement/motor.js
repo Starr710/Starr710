@@ -24,7 +24,8 @@
   mv.MotorDefaults = {
     radius: 0.32,
     // stick magnitude → target speed, piecewise linear
-    speedCurve: [[0.12, 0.75], [0.5, 1.05], [0.72, 1.8], [0.86, 2.6], [1.0, 3.2]],
+    // wide, separate zones: sneak up to ~60% push, stealth walk ~68–88%, jog past ~94%
+    speedCurve: [[0.12, 0.75], [0.6, 1.0], [0.68, 1.75], [0.88, 1.85], [0.94, 3.2], [1.0, 3.2]],
     sprintSpeed: 5.6,
     accel: 3.4,            // m/s² when speeding up at walking pace…
     accelFast: 2.6,        // …and when pushing past jog into a sprint (it takes effort)

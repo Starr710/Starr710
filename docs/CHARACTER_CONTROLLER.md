@@ -26,7 +26,7 @@ Playable test: `movement.html`. The code is in `js/movement/`.
   - Hinge-only bend, with a stable axis near full extension.
   - Soft IK: the limb eases into full reach rather than snapping straight.
 
-Above the legs: forward lean grows with speed, shoulder twist is damped, the head is steadied, Arms follow a **carry profile**. `unarmed` is the default: compact bent-elbow arms with a reduced clip swing and loosely closed hands, all driven by two-bone IK. `rifle` is kept for a later stage: a carbine at low ready, port arms in a sprint, on a lag spring, with the hands on grip and handguard. Preview it with `movement.html#rifle`. Pistol, knife and other carries become further profiles. Legs, hips and gait rhythm stay 100% mocap. | Input, collision |
+Above the legs: forward lean grows with speed, shoulder twist is damped, the head is steadied, Arms follow a **carry profile**. `unarmed` is the default. It keeps the clip's own arm motion: each arm bone is pulled toward its running-average pose to reduce swing, the elbow gets extra bend about its own hinge, and the hands are loosely closed. Per-gait values are in the `ARM_GAIT` table. No IK is used. `rifle` is kept for a later stage: a carbine at low ready, port arms in a sprint, on a lag spring, with the hands on grip and handguard. Preview it with `movement.html#rifle`. Pistol, knife and other carries become further profiles. Legs, hips and gait rhythm stay 100% mocap. | Input, collision |
 | `camera-rig.js` | Third-person orbit: a spring-damped follow point, a shoulder offset, re-centring behind the character after 1.4 s without camera input, pull-in on obstacles, and a small sprint FOV kick. | The character mesh |
 | `actions.js` | Context-action framework: register / available / start / update / end. **No actions are registered in Stage 1.** | — |
 | `test-area.js` | The test yard. | — |
@@ -36,7 +36,7 @@ Swapping the character never touches `motor.js`, `camera-rig.js`, `input.js` or 
 
 ## Tuning (all in one place)
 - **Speeds and feel:** `SC.mv.MotorDefaults` in `motor.js`.
-  - Stick-to-speed curve: sneak about 0.75–1.05 m/s, stealth walk about 1.8, jog 3.2. Sprint is 5.6.
+  - Stick-to-speed curve: separate zones: sneak 0.75–1.0 m/s up to about 60% push, stealth walk about 1.8 at 68–88%, jog 3.2 from about 94%. Sprint is 5.6.
   - Accel 3.4 m/s² (2.6 above jog), decel 5.2, brake 9.
   - Stops never last more than `maxStopTime` (0.9 s).
   - `settleTime` (0.45 s) in the animator sets the idle settle.
