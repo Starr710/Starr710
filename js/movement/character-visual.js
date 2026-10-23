@@ -25,6 +25,10 @@
     rightArm: /(right_?arm|upper_?arm_?r)$/i,
     leftForeArm: /(left_?fore_?arm|lower_?arm_?l)$/i,
     rightForeArm: /(right_?fore_?arm|lower_?arm_?r)$/i,
+    leftUpLeg: /(left_?up_?leg|thigh_?l)$/i,
+    rightUpLeg: /(right_?up_?leg|thigh_?r)$/i,
+    leftLeg: /(left_?leg|calf_?l|shin_?l)$/i,
+    rightLeg: /(right_?leg|calf_?r|shin_?r)$/i,
     leftHand: /(left_?hand|hand_?l)$/i,
     rightHand: /(right_?hand|hand_?r)$/i,
   };

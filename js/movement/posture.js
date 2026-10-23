@@ -1,7 +1,9 @@
 // SHADOW CELL — movement: tactical upper-body posture layer.
-// Runs after the animation mixer each frame. The mocap clips keep full control
-// of the legs, hips and gait rhythm; this layer reshapes only the upper body
-// into a tactical carry:
+// Runs after the animation mixer each frame. The mocap clips keep the gait
+// rhythm and foot placement; this layer reshapes the body into a stealth carry:
+//   0. stealth legs: hips lowered (knees bent) and steps shortened at sneaking
+//      pace, with two-bone leg IK holding each foot where the clip placed it
+//      (pulled in by the animator's stride scale, so feet stay planted)
 //   1. torso leans forward with speed (more at a jog, most in a sprint)
 //   2. the clip's shoulder twist is damped so the chest stays square to travel
 //   3. the head is steadied, level and looking ahead
@@ -31,11 +33,14 @@
 
   mv.PostureDefaults = {
     // forward lean (rad) by ground speed (m/s)
-    lean: [[0, 0.07], [1.5, 0.13], [3.2, 0.2], [5.6, 0.3]],
+    lean: [[0, 0.08], [0.6, 0.26], [1.3, 0.22], [2.2, 0.18], [3.2, 0.2], [5.6, 0.3]],
+    hipDrop: [[0, 0.02], [0.5, 0.07], [1.0, 0.065], [1.5, 0.05], [2.4, 0.035], [3.4, 0.02], [5.0, 0]],
+    pelvisTilt: [[0, 0.04], [0.5, 0.18], [1.3, 0.15], [2.4, 0.07], [3.4, 0.03], [5.0, 0]],   // rad, chest-forward
+    hipsBack: 0.35,                    // pelvis shifts back by this × drop, keeping weight over the feet
     leanShare: [0.4, 0.3, 0.3],       // spine, spine1, chest
     twistDamp: 0.7,                   // 0 = clip twist, 1 = chest locked to travel direction
     headSteady: 0.65,
-    headPitch: 0.08,                  // eyes slightly down the line of travel
+    headPitch: 0.04,                  // eyes slightly down the line of travel
     weaponStiffness: 55,              // carbine follow spring (higher = less lag)
     gripCurl: [0.95, 1.05, 0.75],
     supportCurl: [0.7, 0.8, 0.6],
@@ -84,7 +89,7 @@
   // by gait, and how much of the clip's own arm swing survives.
   const UNARMED = {
     idle: { r: [-0.21, -0.42, 0.1], l: [0.21, -0.42, 0.1], keep: 0.55 },
-    walk: { r: [-0.22, -0.36, 0.13], l: [0.22, -0.36, 0.13], keep: 0.45 },
+    walk: { r: [-0.2, -0.3, 0.19], l: [0.2, -0.3, 0.19], keep: 0.28 },
     jog: { r: [-0.21, -0.26, 0.15], l: [0.21, -0.26, 0.15], keep: 0.4 },
     sprint: { r: [-0.22, -0.24, 0.1], l: [0.22, -0.24, 0.1], keep: 0.75 },
   };
@@ -195,7 +200,7 @@
   }
 
   // ---------------------------------------------------------------- per frame
-  mv.TacticalPosture.prototype.update = function (dt, motor) {
+  mv.TacticalPosture.prototype.update = function (dt, motor, animator) {
     const v = this.v, b = v.bones, root = v.root, c = this.cfg, t = this.t;
     root.updateMatrixWorld(true);
     if (!this._calibrated) this._calibrate();
@@ -204,6 +209,9 @@
     const up = new THREE.Vector3(0, 1, 0);
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(rootQ);
     const left = new THREE.Vector3(1, 0, 0).applyQuaternion(rootQ);
+
+    // 0. stealth legs
+    this._legs(dt, s, animator ? animator.strideScale : 1, fwd, left, up);
 
     // 1. forward lean
     let lean = c.lean[c.lean.length - 1][1];
@@ -227,6 +235,32 @@
     const walkF = smooth(0.1, 1.0, s), sprintF = smooth(4.4, 5.4, s);
     if (this.carry === 'unarmed') this._unarmed(dt, s, walkF, sprintF, fwd, left, up);
     else this._rifle(dt, walkF, sprintF, fwd, left, up);
+  };
+
+  mv.TacticalPosture.prototype._legs = function (dt, s, stride, fwd, left, up) {
+    const b = this.v.bones, t = this.t;
+    if (!b.leftUpLeg || !b.leftLeg || !b.rightUpLeg || !b.rightLeg) return;
+    const want = mv.table(this.cfg.hipDrop, s);
+    this.drop = this.drop == null ? want : this.drop + (want - this.drop) * (1 - Math.exp(-6 * dt));
+    const hips = b.hips, H = wpos(hips, V());
+    // where the clip put each foot, pulled toward the hips along travel for shorter steps
+    const feet = ['left', 'right'].map(side => {
+      const foot = b[side + 'Foot'], p = wpos(foot, V()), q = foot.getWorldQuaternion(Q());
+      const along = p.clone().sub(H).dot(fwd);
+      p.addScaledVector(fwd, -along * (1 - stride));
+      return { side, foot, p, q };
+    });
+    // lower the pelvis (and ease it back) in world space, then tip it forward
+    H.addScaledVector(up, -this.drop).addScaledVector(fwd, -this.drop * this.cfg.hipsBack);
+    hips.position.copy(hips.parent.worldToLocal(H));
+    hips.updateMatrixWorld(true);
+    rotateWorld(hips, new THREE.Quaternion().setFromAxisAngle(left, mv.table(this.cfg.pelvisTilt, s)), t);
+    for (const f of feet) {
+      const out = f.side === 'left' ? left.clone() : left.clone().negate();
+      const pole = fwd.clone().add(out.multiplyScalar(0.15));
+      twoBoneIK(b[f.side + 'UpLeg'], b[f.side + 'Leg'], f.foot, f.p, pole, t);
+      setWorldQuat(f.foot, f.q, t);          // keep the clip's foot angle (flat contact)
+    }
   };
 
   mv.TacticalPosture.prototype._unarmed = function (dt, s, walkF, sprintF, fwd, left, up) {

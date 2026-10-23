@@ -24,6 +24,14 @@
     leanAccel: 0.012,         // body pitch per m/s²
     leanAccelMax: 0.06,
     leanSmoothing: 7,
+    // stealth gait shaping: stride length multiplier by speed (m/s). Shorter
+    // steps at sneaking pace; the posture layer pulls the feet in to match.
+    strideScale: [[0, 1], [0.4, 0.6], [0.9, 0.66], [1.4, 0.8], [2.2, 0.95], [3.0, 1]],
+  };
+  mv.table = (pts, x) => {
+    if (x <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) if (x <= pts[i][0]) { const a = pts[i - 1], b = pts[i]; return a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); }
+    return pts[pts.length - 1][1];
   };
 
   mv.AnimationController = function (visual, opts) {
@@ -53,6 +61,7 @@
       a.setEffectiveTimeScale(k === 'idle' ? 1 : 0);
     }
     this.weights = { idle: 1, walk: 0, run: 0, sprint: 0 };
+    this.strideScale = 1;
   };
 
   // Measure a looping gait clip's natural ground speed from its planted foot:
@@ -104,7 +113,8 @@
     const wWalk = moveW * (1 - toRun), wRun = moveW * toRun * (1 - toSprint), wSprint = moveW * toRun * toSprint;
 
     // ---- shared gait phase: distance / blended stride length, clamped play rate
-    const blendLen = lerp(lerp(walk.length, run.length, toRun), sprint ? sprint.length : run.length, toSprint);
+    this.strideScale = mv.table(c.strideScale, s);
+    const blendLen = lerp(lerp(walk.length, run.length, toRun), sprint ? sprint.length : run.length, toSprint) * this.strideScale;
     const blendDur = lerp(lerp(walk.duration, run.duration, toRun), sprint ? sprint.duration : run.duration, toSprint);
     let rate = s / blendLen * blendDur;                       // cycles per cycle-duration
     rate = Math.min(c.maxPlayRate, Math.max(s > 0.02 ? c.minPlayRate : 0, rate));

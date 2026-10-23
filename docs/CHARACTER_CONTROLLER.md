@@ -11,7 +11,13 @@ Playable test: `movement.html`. The code is in `js/movement/`.
 | `collision.js` | Static world: boxes and cylinders, with a circle-vs-world resolver. Holds the obstacle meshes that the camera avoids. | — |
 | `character-visual.js` | Loads a GLB through a **profile**. Exposes `root`, `mixer`, `clips.{idle,walk,run,sprint?}` and canonical `bones`. Strips root motion. | Input, movement rules |
 | `animator.js` | Animation state machine. Stage 1 has a single `grounded` state with a speed blend space (idle ↔ walk ↔ run[/sprint]). One shared gait phase keeps the feet in step. Playback rate is matched to ground speed using stride speeds measured from the clips. A procedural whole-body lean sits on top. | Input, collision |
-| `posture.js` | Tactical upper-body layer, run after the mixer. Forward lean grows with speed, shoulder twist is damped, the head is steadied, Arms follow a **carry profile**. `unarmed` is the default: compact bent-elbow arms with a reduced clip swing and loosely closed hands, all driven by two-bone IK. `rifle` is kept for a later stage: a carbine at low ready, port arms in a sprint, on a lag spring, with the hands on grip and handguard. Preview it with `movement.html#rifle`. Pistol, knife and other carries become further profiles. Legs, hips and gait rhythm stay 100% mocap. | Input, collision |
+| `posture.js` | Tactical upper-body layer, run after the mixer. **Stealth legs:**
+  - The hips lower slightly and the pelvis tips forward at sneaking pace.
+  - Steps shorten, using the animator's `strideScale`, which also slows playback to match so the feet stay planted.
+  - Two-bone leg IK holds each foot where the clip put it, keeping the clip's foot angle.
+  - The effect fades out toward a sprint.
+
+Above the legs: forward lean grows with speed, shoulder twist is damped, the head is steadied, Arms follow a **carry profile**. `unarmed` is the default: compact bent-elbow arms with a reduced clip swing and loosely closed hands, all driven by two-bone IK. `rifle` is kept for a later stage: a carbine at low ready, port arms in a sprint, on a lag spring, with the hands on grip and handguard. Preview it with `movement.html#rifle`. Pistol, knife and other carries become further profiles. Legs, hips and gait rhythm stay 100% mocap. | Input, collision |
 | `camera-rig.js` | Third-person orbit: a spring-damped follow point, a shoulder offset, re-centring behind the character after 1.4 s without camera input, pull-in on obstacles, and a small sprint FOV kick. | The character mesh |
 | `actions.js` | Context-action framework: register / available / start / update / end. **No actions are registered in Stage 1.** | — |
 | `test-area.js` | The test yard. | — |
@@ -21,10 +27,13 @@ Swapping the character never touches `motor.js`, `camera-rig.js`, `input.js` or 
 
 ## Tuning (all in one place)
 - **Speeds and feel:** `SC.mv.MotorDefaults` in `motor.js`.
-  - Stick-to-speed curve: slow walk about 0.6–1.0 m/s, walk about 1.5, jog about 3.2. Sprint is 5.6.
+  - Stick-to-speed curve: sneak about 0.45–0.8 m/s, stealth walk about 1.3, jog about 3.2. Sprint is 5.6.
   - Accel 3.4 m/s² (2.6 above jog), decel 5.2, brake 9.
   - Turn rates: 7.5 rad/s standing, 6.5 walking, 2.6 at full sprint.
 - **Blend thresholds, clip-rate limits and lean:** `SC.mv.AnimatorDefaults` in `animator.js`.
+- **Stealth gait:**
+  - `strideScale` lives in `SC.mv.AnimatorDefaults`.
+  - `hipDrop`, `pelvisTilt` and `hipsBack` live in `SC.mv.PostureDefaults`.
 - **Tactical posture:**
   - `SC.mv.PostureDefaults` holds lean by speed, twist damping, head steadiness, weapon lag and finger curl.
   - The `UNARMED` table holds wrist targets per gait plus how much clip swing is kept.
@@ -52,6 +61,7 @@ Then load `movement.html` with `window.SC_CHARACTER = 'operative'` set before `m
   - `Spine`, `Spine2` (chest), `Head`;
   - `LeftArm`/`LeftForeArm`/`LeftHand` and the right-side equivalents;
   - finger chains `<Side>Hand<Thumb|Index|Middle|Ring|Pinky>1-3`. These are optional; without them the hands just won't curl.
+  - `LeftUpLeg`/`LeftLeg` and the right-side equivalents, for the stealth legs.
 - **Recommended:** `LeftToeBase`/`RightToeBase` (used for stride measurement), `Spine`, `Spine2`, `Neck`, `Head`, full arms and fingers. Later stages need hands (pickups, aiming), a `WeaponR` socket and spine/neck (aim offsets, peeking).
 - Mixamo, Unity Humanoid and Unreal-style names work. Our generated operative's 69-bone game rig qualifies.
 - Feet must touch y = 0 in the clips. The animator logs each gait's lowest foot height (`stride.*.footMinY`, about 7–9 mm for the test soldier).

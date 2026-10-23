@@ -117,7 +117,7 @@
       actions.update({ motor, world, visual, input }, dt, false);
       visual.place(motor.position, motor.yaw);
       animator.update(dt, motor);
-      posture.update(dt, motor);
+      posture.update(dt, motor, animator);
     }
     cam.update(dt, motor, input.look, input.mouse);
     sun.position.set(motor.position.x + 6, 14, motor.position.z + 5);
