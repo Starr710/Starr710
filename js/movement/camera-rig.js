@@ -6,6 +6,7 @@
 (function (mv) {
   'use strict';
 
+  const smooth = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
   const wrap = a => { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; };
 
   mv.CameraDefaults = {
@@ -56,7 +57,10 @@
     this.idleLook = looked ? 0 : this.idleLook + dt;
     if (this.idleLook > c.recenterDelay && motor.speed > 0.8) {
       const behind = wrap(motor.yaw + Math.PI);
-      const k = (1 - Math.exp(-c.recenterRate * dt)) * Math.min(1, (motor.speed - 0.8) / 2);
+      // only drift behind when travelling away from or across the view; walking
+      // toward the camera (or along it) never swings the camera around
+      const away = -Math.sin(this.yaw) * Math.sin(motor.yaw) - Math.cos(this.yaw) * Math.cos(motor.yaw);
+      const k = (1 - Math.exp(-c.recenterRate * dt)) * Math.min(1, (motor.speed - 0.8) / 2) * smooth(-0.25, 0.85, away);
       this.yaw = wrap(this.yaw + wrap(behind - this.yaw) * k);
     }
 

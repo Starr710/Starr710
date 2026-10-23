@@ -99,6 +99,11 @@ Retargeting more clips, e.g. for later stages, is done with:
 `tools/retarget.html?src=<UAL glb>&dst=assets/characters/test-soldier.glb&clips=Roll,PickUp_Table`
 from a local server; the output is in `window.RESULT`.
 
+## Locomotion polish (movement-pre-polish → this)
+- **Turn-in-place stepping** (`animator.js`, `turnStep`, `turnStepRate`, `turnStride`): when she turns on the spot, she takes small steps (about one per 90° turned) with short strides, instead of pivoting on planted feet. The effect fades out once she's walking.
+- **Stance spring** (`animator.js`, `stanceSpring`): stand↔crouch blends on a critically damped spring, which eases in as well as out. Peak hip jerk during a stance change while walking dropped from about 82 to about 14 mm/frame².
+- **Direction-aware camera recentering** (`camera-rig.js`): the camera only drifts behind her when she's travelling away from or across the view. Walking toward the camera never swings it around. Manual look still cancels recentering for 1.4 s.
+
 ## Stances
 - **Motor:** `motor.stance` is `'stand'` or `'crouch'`, with a separate `crouchSpeedCurve` (creep about 0.5–0.7 m/s, crouch-walk up to 1.1 m/s). Sprint is unavailable while crouched; pressing RUN stands her up.
 - **Animator:** crouch idle and crouch walk are their own blend layer. The layer fades over about 0.3 s and shares the gait phase, with an offset measured so the same foot leads. Stops land on the crouch walk's passing pose.

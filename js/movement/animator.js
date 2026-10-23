@@ -24,7 +24,11 @@
     leanAccel: 0.012,         // body pitch per m/s²
     leanAccelMax: 0.06,
     leanSmoothing: 7,
-    settleTime: 0.45,          // s from stopping to a full idle stance
+    settleTime: 0.45,
+    stanceSpring: 11,          // stand↔crouch blend spring (higher = quicker)
+    turnStep: [1.0, 3.5],      // rad/s range over which turning in place blends in stepping
+    turnStepRate: 0.32,        // gait cycles per radian turned (≈ one step per 90°)
+    turnStride: 0.22,          // stride scale for those steps (feet stay near the body)          // s from stopping to a full idle stance
     // stealth gait shaping: stride length multiplier by speed (m/s). Shorter
     // steps at sneaking pace; the posture layer pulls the feet in to match.
     strideScale: [[0, 0.6], [0.5, 0.6], [1.1, 0.66], [1.8, 0.84], [2.5, 0.96], [3.2, 1]],
@@ -190,10 +194,15 @@
     const s = Math.max(0, motor.speed);
     const walk = S.walk, run = S.run, sprint = S.sprint;
 
-    // ---- stance: crouch fades in/out over ~0.3 s
+    // ---- stance: crouch blends on a critically damped spring (~0.35 s), which eases
+    // in as well as out, so stance changes never start with a jolt
     const cw = S.crouchWalk && A.crouchIdle ? (motor.stance === 'crouch' ? 1 : 0) : 0;
-    this.crouchW += (cw - this.crouchW) * (1 - Math.exp(-9 * dt));
-    if (Math.abs(this.crouchW - cw) < 1e-3) this.crouchW = cw;
+    {
+      const w = c.stanceSpring, x = this.crouchW - cw, v = this.crouchV || 0, e = Math.exp(-w * dt), tmp = (v + w * x) * dt;
+      this.crouchV = (v - w * tmp) * e;
+      this.crouchW = Math.min(1, Math.max(0, cw + (x + tmp) * e));
+      if (Math.abs(this.crouchW - cw) < 1e-3 && Math.abs(this.crouchV) < 1e-3) { this.crouchW = cw; this.crouchV = 0; }
+    }
     const C = this.crouchW, cwk = S.crouchWalk;
 
     // ---- locomotion state: moving / stopping (finish the step) / stopped
@@ -246,6 +255,10 @@
       idleW = smooth(0, 1, this.settle);
     }
     if (this.state === 'moving') idleW = 1 - smooth(c.idleOut[0], c.idleOut[1], s);
+    // turning on the spot: take small steps instead of pivoting on planted feet
+    const turn = smooth(c.turnStep[0], c.turnStep[1], Math.abs(motor.angularVelocity)) * (1 - smooth(0.3, 0.8, s));
+    this.turnSm = (this.turnSm || 0) + (turn - (this.turnSm || 0)) * (1 - Math.exp(-10 * dt));
+    if (this.turnSm > 1e-3) idleW = Math.min(idleW, 1 - this.turnSm * 0.8);
     // the idle weight glides; state changes can never pop the pose
     this.idleSm = this.idleSm == null ? idleW : this.idleSm + (idleW - this.idleSm) * (1 - Math.exp(-14 * dt));
     idleW = this.idleSm;
@@ -258,7 +271,7 @@
 
     // ---- shared gait phase: distance / blended stride length, clamped play rate
     // (crouch-walk plays at its own stride; stealth stride shaping is standing-only)
-    this.strideScale = lerp(mv.table(c.strideScale, s), 1, C);
+    this.strideScale = lerp(lerp(mv.table(c.strideScale, s), 1, C), c.turnStride, this.turnSm || 0);
     const standLen = lerp(lerp(walk.length, run.length, toRun), sprint ? sprint.length : run.length, toSprint);
     const standDur = lerp(lerp(walk.duration, run.duration, toRun), sprint ? sprint.duration : run.duration, toSprint);
     const blendLen = lerp(standLen * mv.table(c.strideScale, s), cwk ? cwk.length : standLen, C);
@@ -271,6 +284,8 @@
     let dPhase = dt * rate / blendDur;
     if (this.state === 'stopping') { dPhase = Math.min(dPhase, this.stopRemain); this.stopRemain -= dPhase; }
     if (this.state === 'stopped') dPhase = 0;
+    // stepping while turning in place: about one step per 90° of turn
+    if (this.turnSm > 1e-3 && this.state !== 'stopping') dPhase += dt * Math.abs(motor.angularVelocity) * c.turnStepRate * this.turnSm;
     this.phase = (this.phase + dPhase) % 1;
     this._lastLen = blendLen;
 
