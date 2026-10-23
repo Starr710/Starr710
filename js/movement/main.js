@@ -64,7 +64,7 @@
   const actions = new mv.ActionSystem();
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
-  let animator = null;
+  let animator = null, posture = null;
   scene.add(visual.root);
 
   function spawn() {
@@ -78,6 +78,7 @@
     if (ev.lengthComputable) { ui.loadBar.style.width = (ev.loaded / ev.total * 100).toFixed(0) + '%'; ui.loadText.textContent = (ev.loaded / 1048576).toFixed(1) + ' / ' + (ev.total / 1048576).toFixed(1) + ' MB'; }
   }).then(() => {
     animator = new mv.AnimationController(visual);
+    posture = new mv.TacticalPosture(visual);
     const s = animator.stride;
     ui.calib.textContent = `walk ${s.walk.speed.toFixed(2)} · run ${s.run.speed.toFixed(2)} m/s`;
     visual.place(motor.position, motor.yaw);
@@ -115,6 +116,7 @@
       actions.update({ motor, world, visual, input }, dt, false);
       visual.place(motor.position, motor.yaw);
       animator.update(dt, motor);
+      posture.update(dt, motor);
     }
     cam.update(dt, motor, input.look, input.mouse);
     sun.position.set(motor.position.x + 6, 14, motor.position.z + 5);
@@ -139,5 +141,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { motor, cam, input, world, get animator() { return animator; }, visual, renderer, scene };
+  window.MV = { motor, cam, input, world, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

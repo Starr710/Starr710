@@ -18,7 +18,18 @@
     rightFoot: /(right_?foot|foot_?r)$/i,
     leftToe: /(left_?toe_?base|ball_?l|toe_?l)$/i,
     rightToe: /(right_?toe_?base|ball_?r|toe_?r)$/i,
+    spine1: /spine_?0?1$/i,
+    leftShoulder: /(left_?shoulder|clavicle_?l)$/i,
+    rightShoulder: /(right_?shoulder|clavicle_?r)$/i,
+    leftArm: /(left_?arm|upper_?arm_?l)$/i,
+    rightArm: /(right_?arm|upper_?arm_?r)$/i,
+    leftForeArm: /(left_?fore_?arm|lower_?arm_?l)$/i,
+    rightForeArm: /(right_?fore_?arm|lower_?arm_?r)$/i,
+    leftHand: /(left_?hand|hand_?l)$/i,
+    rightHand: /(right_?hand|hand_?r)$/i,
   };
+  // finger chains: <Left|Right>Hand<Thumb|Index|Middle|Ring|Pinky><1..3>
+  const FINGER = /(left|right)_?hand_?(thumb|index|middle|ring|pinky)_?([123])$/i;
 
   mv.CHARACTER_PROFILES = {
     // Temporary playable character: Mixamo "Vanguard" mocap rig from the three.js examples.
@@ -43,6 +54,7 @@
     this.mixer = null;
     this.clips = {};
     this.bones = {};
+    this.fingers = {};
     this.skinned = [];
   };
 
@@ -78,7 +90,11 @@
         const m = o.material;
         if (m && p.materialFix) { if (p.materialFix.roughness != null) m.roughness = Math.max(m.roughness, p.materialFix.roughness); m.metalness = 0; }
       }
-      if (o.isBone) for (const k in BONE_PATTERNS) if (!this.bones[k] && BONE_PATTERNS[k].test(o.name)) this.bones[k] = o;
+      if (o.isBone) {
+        for (const k in BONE_PATTERNS) if (!this.bones[k] && BONE_PATTERNS[k].test(o.name)) this.bones[k] = o;
+        const f = FINGER.exec(o.name);
+        if (f) (this.fingers[f[1].toLowerCase()] = this.fingers[f[1].toLowerCase()] || []).push({ bone: o, finger: f[2].toLowerCase(), seg: +f[3] });
+      }
     });
     for (const k of ['hips', 'leftFoot', 'rightFoot']) if (!this.bones[k]) throw new Error('Character rig is missing a "' + k + '" bone');
     this.pivot.add(model);

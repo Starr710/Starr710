@@ -62,12 +62,11 @@
 
     // critically damped spring toward the character
     const tx = motor.position.x, ty = motor.position.y + c.height, tz = motor.position.z;
-    const w = c.followStiffness, f = this.focus, v = this.focusVel;
+    const w = c.followStiffness, f = this.focus, v = this.focusVel, e = Math.exp(-w * dt);
     for (const [axis, t] of [['x', tx], ['y', ty], ['z', tz]]) {
-      const x = f[axis] - t;
-      const acc = -w * w * x - 2 * w * v[axis];
-      v[axis] += acc * dt;
-      f[axis] += v[axis] * dt;
+      const x = f[axis] - t, tmp = (v[axis] + w * x) * dt;
+      v[axis] = (v[axis] - w * tmp) * e;
+      f[axis] = t + (x + tmp) * e;
     }
 
     // orbit offset + shoulder
