@@ -25,7 +25,10 @@
     leanAccelMax: 0.06,
     leanSmoothing: 7,
     settleTime: 0.45,
-    stanceSpring: 11,          // stand↔crouch blend spring (higher = quicker)
+    stanceSpring: 11,
+    // fast crouch-walk: longer, quicker strides than the clip's own (it is authored slow)
+    crouchStrideScale: [[0, 1], [1.0, 1.0], [2.0, 1.3]],
+    crouchMaxPlayRate: 2.1,          // stand↔crouch blend spring (higher = quicker)
     turnStep: [1.0, 3.5],      // rad/s range over which turning in place blends in stepping
     turnStepRate: 0.32,        // gait cycles per radian turned (≈ one step per 90°)
     turnStride: 0.22,          // stride scale for those steps (feet stay near the body)          // s from stopping to a full idle stance
@@ -271,16 +274,18 @@
 
     // ---- shared gait phase: distance / blended stride length, clamped play rate
     // (crouch-walk plays at its own stride; stealth stride shaping is standing-only)
-    this.strideScale = lerp(lerp(mv.table(c.strideScale, s), 1, C), c.turnStride, this.turnSm || 0);
+    const crouchStride = mv.table(c.crouchStrideScale, s);
+    this.strideScale = lerp(lerp(mv.table(c.strideScale, s), crouchStride, C), c.turnStride, this.turnSm || 0);
     const standLen = lerp(lerp(walk.length, run.length, toRun), sprint ? sprint.length : run.length, toSprint);
     const standDur = lerp(lerp(walk.duration, run.duration, toRun), sprint ? sprint.duration : run.duration, toSprint);
-    const blendLen = lerp(standLen * mv.table(c.strideScale, s), cwk ? cwk.length : standLen, C);
+    const blendLen = lerp(standLen * mv.table(c.strideScale, s), (cwk ? cwk.length : standLen) * crouchStride, C);
     const blendDur = lerp(standDur, cwk ? cwk.duration : standDur, C);
     let rate = s / blendLen * blendDur;                       // cycles per cycle-duration
     // while stopping, the phase follows ground distance exactly (no minimum rate),
     // so the planted foot stays put as the body decelerates into the stop
-    if (this.state === 'moving') rate = Math.min(c.maxPlayRate, Math.max(s > 0.02 ? c.minPlayRate : 0, rate));
-    else rate = Math.min(c.maxPlayRate, rate);
+    const maxRate = lerp(c.maxPlayRate, c.crouchMaxPlayRate, C);
+    if (this.state === 'moving') rate = Math.min(maxRate, Math.max(s > 0.02 ? c.minPlayRate : 0, rate));
+    else rate = Math.min(maxRate, rate);
     let dPhase = dt * rate / blendDur;
     if (this.state === 'stopping') { dPhase = Math.min(dPhase, this.stopRemain); this.stopRemain -= dPhase; }
     if (this.state === 'stopped') dPhase = 0;
