@@ -33,9 +33,39 @@ SC.mv = SC.mv || {};
     this.boxes.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, top });
     if (mesh) this.meshes.push(mesh);
   };
-  mv.CollisionWorld.prototype.addCylinder = function (x, z, r, top, mesh) {
-    this.cylinders.push({ x, z, r, top });
+  // opts.noSight: solid to walk into but never blocks a line of sight (characters)
+  mv.CollisionWorld.prototype.addCylinder = function (x, z, r, top, mesh, opts) {
+    const c = { x, z, r, top, noSight: !!(opts && opts.noSight) };
+    this.cylinders.push(c);
     if (mesh) this.meshes.push(mesh);
+    return c;
+  };
+
+  // Line of sight: does the 3D segment a→b pass through any box (floor to its top)
+  // or any sight-blocking cylinder? Boxes and cylinders are solid all the way up.
+  mv.CollisionWorld.prototype.segmentBlocked = function (a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    for (const o of this.boxes) {
+      // slab test on x, y (0..top) and z
+      let t0 = 0, t1 = 1;
+      const slab = (p, d, lo, hi) => {
+        if (Math.abs(d) < 1e-9) return p >= lo && p <= hi;
+        let u = (lo - p) / d, v = (hi - p) / d; if (u > v) { const w = u; u = v; v = w; }
+        t0 = Math.max(t0, u); t1 = Math.min(t1, v); return t0 <= t1;
+      };
+      if (slab(a.x, dx, o.minX, o.maxX) && slab(a.z, dz, o.minZ, o.maxZ) && slab(a.y, dy, 0, o.top)) return true;
+    }
+    for (const c of this.cylinders) {
+      if (c.noSight) continue;
+      // where the segment is inside the circle on the ground plane…
+      const fx = a.x - c.x, fz = a.z - c.z, A = dx * dx + dz * dz, B = 2 * (fx * dx + fz * dz), C = fx * fx + fz * fz - c.r * c.r;
+      let t0, t1;
+      if (A < 1e-9) { if (C > 0) continue; t0 = 0; t1 = 1; }
+      else { const D = B * B - 4 * A * C; if (D < 0) continue; const q = Math.sqrt(D); t0 = Math.max(0, (-B - q) / (2 * A)); t1 = Math.min(1, (-B + q) / (2 * A)); if (t0 > t1) continue; }
+      // …is it also below the cylinder's top?
+      if (Math.min(a.y + dy * t0, a.y + dy * t1) <= c.top) return true;
+    }
+    return false;
   };
 
   // Push a circle (x,z,r) out of every obstacle it overlaps. Returns the

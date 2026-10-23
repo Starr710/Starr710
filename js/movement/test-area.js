@@ -5,6 +5,8 @@
 // - a long wall and a narrow L-shaped corridor to test wall sliding and camera pull-in
 // - a perimeter wall
 // - three surface test strips just ahead of the start: concrete, metal, grass
+// - a stationary test guard behind the start (placed by main.js at `guard`), looking
+//   toward it, with a low crate, a tall crate and a 1.5 m crate inside his view
 (function (mv) {
   'use strict';
 
@@ -130,6 +132,9 @@
     box(12.5, 2, 7.3, 0.35, 2.8, mats.wall);
     box(14.2, 3.6, 3.8, 0.35, 2.8, mats.wall);
 
+    // tall crate (2 m) in the guard's view, for hiding behind standing up
+    box(-2, -8, 1.2, 1.2, 2.0, mats.crateDark);
+
     // surface test strips, 3 × 5 m, side by side from 4 m ahead of the start
     for (const [type, x] of [['concrete', -3.3], ['metal', 0], ['grass', 3.3]]) {
       const w = 3, d = 5, z = 6.5;
@@ -142,6 +147,6 @@
     const pad = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.65, 32).rotateX(-Math.PI / 2), mats.paint);
     pad.position.set(0, 0.006, 0); scene.add(pad);
 
-    return { spawn: { x: 0, z: 0, yaw: 0 }, size: SIZE };
+    return { spawn: { x: 0, z: 0, yaw: 0 }, size: SIZE, guard: { x: 2, z: -16, yaw: 0 } };
   };
 })(SC.mv);

@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -66,7 +66,7 @@
   const footAudio = new mv.FootstepAudio(noise);
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
-  let footsteps = null;
+  let footsteps = null, guard = null, guardView = null, seeTarget = null;
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
@@ -86,6 +86,10 @@
     // unarmed by default; '#rifle' previews the rifle carry kept for later stages
     posture = new mv.TacticalPosture(visual, { carry: location.hash === '#rifle' ? 'rifle' : 'unarmed' });
     footsteps = new mv.FootstepEmitter(noise, visual, motor, 'player');
+    // one stationary test guard sharing the player's model and clips
+    guard = new mv.Guard(scene, world, visual, Object.assign({ vision: 'regular' }, area.guard));
+    guardView = new mv.GuardDebugView(scene, guard);
+    seeTarget = mv.visionTarget(visual, motor);
     const s = animator.stride;
     ui.calib.textContent = `walk ${s.walk.speed.toFixed(2)} · run ${s.run.speed.toFixed(2)} m/s`;
     visual.place(motor.position, motor.yaw);
@@ -128,6 +132,8 @@
       posture.update(dt, motor, animator);
       visual.root.updateMatrixWorld(true);
       footsteps.update(dt);
+      guard.update(dt, seeTarget);
+      guardView.update(camera, seeTarget);
     }
     noise.update(dt);
     cam.update(dt, motor, input.look, input.mouse);
@@ -145,6 +151,11 @@
       ui.speed.textContent = motor.speed.toFixed(2) + ' m/s';
       const n = noise.last;
       ui.noise.textContent = n && performance.now() / 1000 - n.time < 1.2 ? `L${n.level} ${n.surface} · ${n.radius.toFixed(1)} m` : '–';
+      if (guard) {
+        const s = guard.vision.seen;
+        ui.guard.textContent = (s.zone ? s.zone.toUpperCase() : '—') + ' · ' + (isFinite(s.distance) ? s.distance.toFixed(1) + ' m' : '–') + (s.zone ? ' · ' + Math.round(s.exposure * 100) + '% exposed' : '');
+        ui.detect.textContent = Math.round(guard.vision.meter * 100) + '% ' + guard.vision.state();
+      }
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
       ui.fps.textContent = fps.toFixed(0) + ' · ' + renderer.info.render.calls + ' draws';
     }
@@ -155,5 +166,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { motor, cam, input, world, noise, footAudio, get footsteps() { return footsteps; }, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { motor, cam, input, world, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

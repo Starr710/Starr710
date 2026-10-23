@@ -311,6 +311,94 @@ const CHECKS = {
     return { pass: ok, detail: `concrete ${f(c)}; metal ${f(m)}; grass ${f(g)}` + (c.played && m.played && g.played ? '' : '; WRONG voice played') };
   },
 
+  // ---- guard vision. The test guard stands at (2, -16) facing +Z (Regular, 16 m).
+  // place(x, z, stance) poses the player there, standing still, and returns one look
+
+  // the three nested zones: 30° / 70° / 110° total, faster nearer the centre, adjustable
+  async visionZones() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const g = MV.guard, v = g.vision, T = MV.seeTarget, D = Math.PI / 180;
+      const place = (deg, d, st) => { MV.motor.teleport(2 + d * Math.sin(-deg * D), -16 + d * Math.cos(-deg * D), Math.PI); for (let f = 0; f < 150; f++) step(0, st || 'stand'); g.update(1 / 60); return Object.assign({}, v.look(T)); };
+      const at = [0, 8, 13, 17, 25, 33, 37, 45, 53, 57, 70, -13, -25, -45].map(deg => [deg, place(deg, 6)]);
+      const zones = v.cfg.zones;
+      const saved = zones[0].angle; zones[0].angle = 60; const widened = place(25, 6).zone; zones[0].angle = saved;
+      const savedRate = zones[1].rate; zones[1].rate = savedRate * 2; const fastRate = place(25, 6).rate; zones[1].rate = savedRate; const baseRate = place(25, 6).rate;
+      return { at: at.map(([deg, s]) => [deg, s.zone, s.rate, s.off]), widened, rateScales: fastRate / baseRate };
+    });
+    // the zone must match the angle the guard measured (eye to chest) exactly, and that
+    // angle must be where she was placed, give or take the eye/chest offsets
+    const want = off => off <= 15 ? 'fastest' : off <= 35 ? 'normal' : off <= 55 ? 'slower' : null;
+    const zonesOk = r.at.every(([deg, z, , off]) => z === want(off) && Math.abs(off - Math.abs(deg)) < 2.5) && r.at.some(a => a[1] === 'fastest') && r.at.some(a => a[1] === 'normal') && r.at.some(a => a[1] === 'slower') && r.at.some(a => !a[1]);
+    const rate = z => r.at.find(a => a[1] === z)[2];
+    const orderOk = rate('fastest') > rate('normal') && rate('normal') > rate('slower') && rate('slower') > 0 && r.at.filter(a => !a[1]).every(a => a[2] === 0);
+    const adjOk = r.widened === 'fastest' && Math.abs(r.rateScales - 2) < 0.01;
+    return { pass: zonesOk && orderOk && adjOk, detail: r.at.map(([deg, z, rt, off]) => `${deg}° (${off.toFixed(1)}°) ${z || 'none'} ${rt.toFixed(2)}/s`).join(', ') + `; widen fastest to 60° → 25° is ${r.widened}; doubling a zone rate ×${r.rateScales.toFixed(2)}` };
+  },
+
+  // what changes the fill rate: distance (and the range limit), stance, movement, very close range
+  async visionFactors() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const g = MV.guard, v = g.vision, T = MV.seeTarget, m = MV.motor, D = Math.PI / 180;
+      const place = (d, st, deg) => { deg = deg == null ? -10 : deg; m.teleport(2 + d * Math.sin(-deg * D), -16 + d * Math.cos(-deg * D), Math.PI); for (let f = 0; f < 150; f++) step(0, st || 'stand'); g.update(1 / 60); };
+      const look = () => Object.assign({}, v.look(T));
+      const dist = [3, 8, 13, 17].map(d => { place(d); return look(); });
+      place(6, 'stand'); const stand = look(); place(6, 'crouch'); const crouch = look();
+      place(6, 'stand'); const still = look();
+      const sp = m.speed; m.speed = 1.95; const walking = look(); m.speed = 3.2; const jogging = look(); m.speed = sp;
+      // very close and unobstructed: recognised almost at once
+      place(1.8, 'stand', 0); v.meter = 0; v.acc = Infinity; let t = 0; while (v.meter < 1 && t < 3) { g.update(1 / 60, T); t += 1 / 60; }
+      return { dist: dist.map(s => [s.rate, s.why]), stand: stand.rate, crouch: crouch.rate, still: still.rate, walking: walking.rate, jogging: jogging.rate, closeTime: t };
+    });
+    const d = r.dist;
+    const distOk = d[0][0] > d[1][0] && d[1][0] > d[2][0] && d[2][0] > 0 && d[3][0] === 0 && d[3][1] === 'range';
+    const ok = distOk && r.crouch < r.stand && r.crouch > 0 && r.walking > r.still && r.jogging > r.walking && r.closeTime < 0.4;
+    return { pass: ok, detail: `3/8/13 m ${d[0][0].toFixed(2)}/${d[1][0].toFixed(2)}/${d[2][0].toFixed(2)}/s, 17 m ${d[3][1]}; stand ${r.stand.toFixed(2)} crouch ${r.crouch.toFixed(2)}; still ${r.still.toFixed(2)} walk ${r.walking.toFixed(2)} jog ${r.jogging.toFixed(2)}; 1.8 m recognised in ${r.closeTime.toFixed(2)} s` };
+  },
+
+  // Simple Cover and walls: a tall crate hides her standing; a low crate hides her
+  // only crouched; a solid wall blocks sight entirely (never seen through)
+  async visionCover() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const g = MV.guard, v = g.vision, T = MV.seeTarget, m = MV.motor;
+      const place = (x, z, st) => { m.teleport(x, z, Math.PI); for (let f = 0; f < 150; f++) step(0, st); g.update(1 / 60); };
+      const watch = secs => { v.meter = 0; v.acc = Infinity; for (let f = 0; f < secs * 60; f++) { step(0, m.stance); g.update(1 / 60, T); } return { meter: v.meter, exposure: v.seen.exposure, why: v.seen.why }; };
+      const out = {};
+      place(-2.4, -7.0, 'stand'); out.tallStand = watch(3);
+      place(3.2, -3.8, 'stand'); out.lowStand = watch(3);
+      place(3.2, -3.8, 'crouch'); out.lowCrouch = watch(3);
+      // a 2.8 m wall (the corridor at x = 16) between them, with long range and the guard turned to face her
+      const yaw0 = g.yaw, prof = v.profile; v.profile = 'great';
+      place(17, -8, 'stand'); g.yaw = Math.atan2(17 - 2, -8 + 16); g.place(); out.wall = watch(3);
+      place(15, -8, 'stand'); out.wallFront = watch(3);
+      g.yaw = yaw0; g.place(); v.profile = prof;
+      return out;
+    });
+    const ok = r.tallStand.meter === 0 && r.tallStand.why === 'blocked' && r.lowStand.meter > 0 && r.lowCrouch.meter === 0 && r.lowCrouch.why === 'blocked' && r.wall.meter === 0 && r.wall.exposure === 0 && r.wallFront.meter > 0;
+    const f = x => `${Math.round(x.exposure * 100)}% exposed, meter ${Math.round(x.meter * 100)}%`;
+    return { pass: ok, detail: `tall crate standing ${f(r.tallStand)}; low crate standing ${f(r.lowStand)}, crouched ${f(r.lowCrouch)}; behind wall ${f(r.wall)}, in front of it ${f(r.wallFront)}` };
+  },
+
+  // losing sight: the meter holds briefly, then falls gradually (not at once) to zero
+  async visionDecay() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const g = MV.guard, v = g.vision, T = MV.seeTarget, m = MV.motor;
+      const run = (secs, st) => { const tr = []; for (let f = 0; f < secs * 60; f++) { step(0, st || 'stand'); g.update(1 / 60, T); tr.push(v.meter); } return tr; };
+      m.teleport(2, -10, Math.PI); v.meter = 0; v.acc = Infinity;
+      let t = 0; while (v.meter < 0.6 && t < 10) { step(0, 'stand'); g.update(1 / 60, T); t += 1 / 60; }
+      const peak = v.meter;
+      m.teleport(-2.4, -7.0, Math.PI);   // behind the tall crate
+      const tr = run(5);
+      let rises = 0; for (let i = 1; i < tr.length; i++) if (tr[i] > tr[i - 1] + 1e-9) rises++;
+      return { peak, at05: tr[29], at2: tr[119], at5: tr[tr.length - 1], rises, hold: v.cfg.holdTime, rate: v.cfg.decayRate };
+    });
+    const ok = r.at05 >= r.peak - 0.02 && r.at2 < r.at05 - 0.1 && r.at2 > 0.05 && r.at5 === 0 && r.rises === 0;
+    return { pass: ok, detail: `meter ${Math.round(r.peak * 100)}% → after 0.5 s ${Math.round(r.at05 * 100)}%, 2 s ${Math.round(r.at2 * 100)}%, 5 s ${Math.round(r.at5 * 100)}% (hold ${r.hold} s, then −${r.rate}/s)` };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();

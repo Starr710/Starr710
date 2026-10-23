@@ -18,6 +18,10 @@ Run from the repo root. The script starts its own local server, opens `movement.
 | `footsteps` | Footstep noise events: one per foot landing, alternating feet, in step with the gait cycle; level 1 for sneak and slow crouch, 2 for stealth walk and fast crouch, 3 for jog; none while standing or crouching still |
 | `surfaces` | The surface strips: the map reports concrete, metal and grass where they are (concrete elsewhere). Footsteps on each strip carry that surface, the gait level stays 1 / 2 / 3, movement speed is identical, and the reach is grass < concrete < metal at every gait |
 | `footstepAudio` | Each surface's footstep event plays its own sound. Rendered offline at a stealth-walk step, metal is loudest (> 1.2× concrete) with a ringing tail, concrete is dry, grass is quietest (< concrete / 1.2) and brightest |
+| `visionZones` | The guard's nested zones: at 6 m in clear view, each sample's zone matches the angle he measured (30° / 70° / 110° total) on both sides, the angle matches where she was placed (±2.5°), fill rates fall from fastest to normal to slower, and none outside. Widening a zone or doubling its rate in the settings takes effect |
+| `visionFactors` | Fill rate falls with distance and is zero past the profile's range; crouching is slower than standing; moving faster than still, jogging faster than walking; at 1.8 m in clear view she's recognised in under 0.4 s |
+| `visionCover` | Simple Cover: the 2 m crate hides her standing (meter stays 0); behind the 0.9 m crate she's seen standing but hidden crouched; with long range and the guard facing her, a 2.8 m wall blocks him completely (never seen through), while the same spot in front of it is seen |
+| `visionDecay` | After losing sight the meter holds (within 2% at 0.5 s), then falls gradually (below the hold, above 5% at 2 s) to zero by 5 s, never rising while unseen |
 | `groundContact` | In the crouch idle both feet touch the ground (lowest skinned vertex ≤ 3 cm) |
 | `clearance` | Limbs stay out of the body: hand to shin ≥ 15 cm in the crouch idle (≥ 12 cm during the crouch-walk arm swing), thigh to spine ≥ 15 cm |
 
