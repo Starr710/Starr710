@@ -30,29 +30,30 @@
   <button type="button" class="mv-chip" id="mv-reset">RESET</button>
   <button type="button" class="mv-chip" id="mv-stats-btn" aria-pressed="true">STATS</button>
 </div>
-<div class="mv-panel" id="mv-stats">
-  <div><span>GAIT</span><b id="mv-gait">IDLE</b></div>
-  <div><span>SPEED</span><b id="mv-speed">0.00 m/s</b></div>
+<!-- developer stats: a bar across the top, one flowing line-up of cells, most important first; STATS toggles it -->
+<div class="mv-panel mv-statbar" id="mv-stats">
+  <div><i class="g0">YOU</i><span>GAIT</span><b id="mv-gait">IDLE</b></div>
+  <div><span>SPD</span><b id="mv-speed">0.00 m/s</b></div>
   <div><span>NOISE</span><b id="mv-noise">–</b></div>
-  <div><span>GUARD</span><b id="mv-guard">–</b></div>
-  <div><span>DETECT</span><b id="mv-detect">–</b></div>
-  <div><span>HEARING</span><b id="mv-hear">–</b></div>
+  <div><span>CQC</span><b id="mv-cqcstat">–</b></div>
+  <div><span>THROW</span><b id="mv-throwstat">–</b></div>
+  <div><i class="g1">G1</i><span>SEEN</span><b id="mv-guard">–</b></div>
+  <div><span>DET</span><b id="mv-detect">–</b></div>
   <div><span>AWARE</span><b id="mv-aware">–</b></div>
-  <div><span>MEMORY</span><b id="mv-memory">–</b></div>
-  <div><span>REASON</span><b id="mv-reason">–</b></div>
+  <div><span>KO</span><b id="mv-ko">–</b></div>
+  <div><span>HEAR</span><b id="mv-hear">–</b></div>
+  <div><span>STARTLE</span><b id="mv-startle">–</b></div>
+  <div><i class="g2">G2</i><span>GUARD 2</span><b id="mv-g2">–</b></div>
+  <div><i class="g1">G1</i><span>MEM</span><b id="mv-memory">–</b></div>
+  <div><span>WHY</span><b id="mv-reason">–</b></div>
   <div><span>POST</span><b id="mv-post">–</b></div>
   <div><span>PATROL</span><b id="mv-patrol">–</b></div>
   <div><span>PERSONA</span><b id="mv-persona">–</b></div>
-  <div><span>STARTLE</span><b id="mv-startle">–</b></div>
-  <div><span>CQC</span><b id="mv-cqcstat">–</b></div>
-  <div><span>THROW</span><b id="mv-throwstat">–</b></div>
-  <div><span>KO</span><b id="mv-ko">–</b></div>
-  <div><span>GUARD 2</span><b id="mv-g2">–</b></div>
-  <div><span>VOICE</span><b id="mv-voice">–</b></div>
-  <div><span>CLIP RATE</span><b id="mv-rate">–</b></div>
-  <div><span>FPS</span><b id="mv-fps">–</b></div>
-  <div><span>QUALITY</span><b id="mv-quality">–</b></div>
-  <div><span>STRIDES</span><b id="mv-calib">–</b></div>
+  <div class="minor"><i class="gs">SYS</i><span>FPS</span><b id="mv-fps">–</b></div>
+  <div class="minor"><span>QUAL</span><b id="mv-quality">–</b></div>
+  <div class="minor"><span>CLIP</span><b id="mv-rate">–</b></div>
+  <div class="minor"><span>STRIDE</span><b id="mv-calib">–</b></div>
+  <div class="minor"><span>VOICE</span><b id="mv-voice">–</b></div>
 </div>
 
 <div id="mv-joy-hint">MOVE</div>

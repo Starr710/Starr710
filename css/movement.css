@@ -1,5 +1,5 @@
 /* SHADOW CELL — movement lab
-   Layout: full-bleed 3D view; title and stats in the top corners; floating stick on the left; RUN under the right thumb. */
+   Layout: full-bleed 3D view; title top left, RESET / STATS top right, developer stats in a bar across the top; floating stick on the left; buttons under the right thumb. */
 :root {
   --bg: #2b302b;
   --ink: #141713;
@@ -36,14 +36,24 @@ body { position: fixed; inset: 0; }
 .mv-chip:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .mv-primary { background: var(--accent); color: var(--ink); border-color: var(--accent); font-size: 14px; min-height: 44px; }
 
+/* developer stats: a compact bar across the top, under the title and RESET / STATS, inside
+   the safe area. One flowing line-up of cells, most important first (you + CQC, Guard 1,
+   Guard 2, Guard 1 detail, system), each group opened by a small coloured tag (inside its first cell, so it never sits alone at a line end); cells take
+   their natural width and wrap onto the next line rather than running off the screen. Only
+   a value wider than the whole bar is cut short (ellipsis) */
 .mv-panel {
-  position: absolute; width: 200px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; font-size: 11px;
-  top: calc(52px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
-  background: var(--panel); border: 1px solid var(--line); border-radius: 3px; pointer-events: none;
+  position: absolute; pointer-events: none; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 11px; row-gap: 0; padding: 3px 8px 4px;
+  top: calc(48px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+  max-width: 1100px; margin: 0 auto; font-size: 10.5px; line-height: 14px;
+  background: rgba(16, 19, 15, 0.5); border: 1px solid rgba(216, 207, 168, 0.18); border-radius: 3px;
 }
-.mv-panel div { display: flex; justify-content: space-between; gap: 8px; }
-.mv-panel span { color: var(--muted); letter-spacing: 1px; }
-.mv-panel b { font-weight: normal; font-variant-numeric: tabular-nums; text-align: right; }
+.mv-panel i { font-style: normal; margin-right: 1px; font-size: 8.5px; letter-spacing: 1px; padding: 0 3px; border-radius: 2px; color: var(--ink); background: var(--muted); }
+.mv-panel i.g0 { background: var(--text); } .mv-panel i.g1 { background: var(--accent); } .mv-panel i.g2 { background: var(--warn); } .mv-panel i.gs { background: #6d6f60; }
+.mv-panel > div { display: flex; gap: 5px; min-width: 0; max-width: 100%; overflow: hidden; }
+.mv-panel span { flex: none; color: var(--muted); font-size: 9px; letter-spacing: 0.8px; }
+.mv-panel b { min-width: 0; font-weight: normal; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7); }
+.mv-panel .minor { opacity: 0.8; font-size: 9.5px; }
+@media (max-width: 700px) { .mv-panel { font-size: 9.5px; line-height: 12.5px; column-gap: 9px; top: calc(46px + env(safe-area-inset-top, 0px)); } }
 
 /* floating stick */
 #mv-joy-base, #mv-joy-knob { position: absolute; border-radius: 50%; pointer-events: none; opacity: 0; transition: opacity .1s; }
