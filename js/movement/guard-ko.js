@@ -51,6 +51,11 @@
     this.state = 'THROWN'; this.phase = 'thrown'; this.note = 'being thrown';
     if (g.collider) g.collider.x = 1e6;
   };
+  // Step 15: choked out — limp in her arms while she lowers him (the choke poses him; he's
+  // knocked out properly once he's on the ground)
+  mv.GuardKnockout.prototype.beginLower = function () {
+    this.beginThrow(); this.phase = 'lowered'; this.note = 'choked unconscious: being lowered';
+  };
   // the throw was called off before he landed (RESET): standing where he is
   mv.GuardKnockout.prototype.abortThrow = function () {
     if (this.state !== 'THROWN') return;
@@ -142,7 +147,7 @@
   // short status for the developer view
   mv.GuardKnockout.prototype.status = function () {
     if (this.state === 'CONSCIOUS') return this.knockouts ? `conscious · knocked out ${this.knockouts}×` : 'conscious';
-    if (this.state === 'THROWN') return 'THROWN';
+    if (this.state === 'THROWN') return this.phase === 'lowered' ? 'UNCONSCIOUS · being lowered' : 'THROWN';
     if (this.state === 'UNCONSCIOUS') return `UNCONSCIOUS · ${this.left.toFixed(0)} s${this.left <= 0 && this.note ? ' · ' + this.note : ''}`;
     return `WAKING · ${{ stirring: 'stirring', sittingUp: 'sitting up', rising: 'getting up' }[this.phase] || this.phase}`;
   };

@@ -20,6 +20,10 @@
     this.cqcTapped = false; this.cqcHeld = false; this.cqcHoldTime = 0.45; this._cqcDown = null;
     // THROW button (Step 14, shown only while holding a guard): one request per press (read and cleared by cqc.js)
     this.throwTapped = false;
+    // CHOKE button (Step 15): press and HOLD. chokePresses counts presses (each may start one
+    // choke); choking() is true while it's held: by a touch on it (until that touch ends or is
+    // cancelled), the G key or the mouse. Anything that drops input (blur, hidden page) lets go
+    this.chokePresses = 0; this._chokeTouches = new Set(); this._chokeKey = false; this._chokeMouse = false;
     this._bind();
   };
 
@@ -66,9 +70,17 @@
     this.els.crouch.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail !== 0) this.setCrouch(!this.crouch); });
     if (this.els.cqc) this.els.cqc.addEventListener('click', e => { if (this.enabled && e.pointerType !== 'touch' && e.detail !== 0) this.cqcTapped = true; });
     if (this.els.throw) this.els.throw.addEventListener('click', e => { if (this.enabled && e.pointerType !== 'touch' && e.detail !== 0) this.throwTapped = true; });
+    if (this.els.choke) {
+      this.els.choke.addEventListener('mousedown', e => { if (this.enabled && !this.sourceCapabilitiesTouch(e)) { this._chokeMouse = true; this.chokePresses++; this.els.choke.classList.add('down'); } });
+      window.addEventListener('mouseup', () => { if (this._chokeMouse) { this._chokeMouse = false; this.els.choke.classList.remove('down'); } });
+    }
   };
+  // a mouse event synthesised from a touch (the touch handlers already took it)
+  P.sourceCapabilitiesTouch = function (e) { return !!(e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) || (this._lastTouch && performance.now() - this._lastTouch < 800); };
+  P.choking = function () { return this._chokeTouches.size > 0 || this._chokeKey || this._chokeMouse; };
 
   P._ts = function (e) {
+    this._lastTouch = performance.now();
     if (!this.enabled) return;
     let allow = false;
     for (const t of e.changedTouches) {
@@ -76,6 +88,7 @@
       if (el && el.closest && el.closest('#mv-crouch')) { this.btn.set(t.identifier, 'crouch'); this.setCrouch(!this.crouch); continue; }
       if (el && el.closest && el.closest('#mv-cqc')) { this.btn.set(t.identifier, 'cqc'); this._cqcDown = when(e); this.els.cqc.classList.add('down'); continue; }
       if (el && el.closest && el.closest('#mv-throw')) { this.btn.set(t.identifier, 'throw'); this.throwTapped = true; this.els.throw.classList.add('down'); continue; }
+      if (el && el.closest && el.closest('#mv-choke')) { this.btn.set(t.identifier, 'choke'); this._chokeTouches.add(t.identifier); this.chokePresses++; this.els.choke.classList.add('down'); continue; }
       if (el && el.closest && el.closest('button, .mv-panel')) { allow = true; continue; }
       if (!this.joy && t.clientX < window.innerWidth * 0.45) {
         this.joy = { id: t.identifier, ox: t.clientX, oy: t.clientY };
@@ -116,6 +129,7 @@
       } else if (this.lookT && t.identifier === this.lookT.id) this.lookT = null;
       if (this.btn.get(t.identifier) === 'cqc') this._cqcUp(when(e));
       if (this.btn.get(t.identifier) === 'throw' && this.els.throw) this.els.throw.classList.remove('down');
+      if (this.btn.get(t.identifier) === 'choke') { this._chokeTouches.delete(t.identifier); if (!this._chokeTouches.size && this.els.choke) this.els.choke.classList.remove('down'); }
       this.btn.delete(t.identifier);
     }
     const tgt = e.target;
@@ -129,6 +143,7 @@
     if (k === 'KeyC' && down && !e.repeat) this.setCrouch(!this.crouch);
     if (k === 'KeyF' && !e.repeat) { if (down) this._cqcDown = when(e); else this._cqcUp(when(e)); }
     if (k === 'KeyT' && down && !e.repeat) this.throwTapped = true;   // THROW (Step 14)
+    if (k === 'KeyG' && !e.repeat) { if (down) { this._chokeKey = true; this.chokePresses++; } else this._chokeKey = false; }   // CHOKE, held (Step 15)
     let x = 0, y = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1;
@@ -151,6 +166,7 @@
   P.clear = function () {
     this.move.x = this.move.y = 0; this.look.dx = this.look.dy = 0;
     this.joy = this.lookT = null; this.btn.clear(); this.keys.clear();
+    this._chokeTouches.clear(); this._chokeKey = false; this._chokeMouse = false; if (this.els.choke) this.els.choke.classList.remove('down');
     this.els.root.classList.remove('stick-on');
   };
 })(SC.mv);

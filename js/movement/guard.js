@@ -137,6 +137,7 @@
   // back to his post, calm (the lab's RESET)
   mv.Guard.prototype.reset = function () {
     if (this.ko) this.ko.reset();   // conscious and standing again (Step 14)
+    this.poseHook = null; if (mv.ThrowAnim && mv.ThrowAnim.clearLive) mv.ThrowAnim.clearLive(this);
     this.motor.teleport(this.post.x, this.post.z, this.postYaw);
     this.restraint = null;
     this.wantYaw = this.postYaw; this.path = null; this.moving = false; this.arrived = false; this.navFailed = null;
@@ -309,6 +310,7 @@
     this.root.updateMatrixWorld(true);
     if (this.personality && this.awareness) this.personality.update(dt, this.awareness.state, this.awareness.state === 'NORMAL' && this.isStill());
     this._bodyLanguage(dt);
+    if (this.poseHook) this.poseHook(dt);   // Step 15: an extra pose on top (his struggle in a chokehold, cqc-choke.js)
     if (target) this.vision.update(dt, target);
     if (this.awareness) this.awareness.update(dt, target);
   };

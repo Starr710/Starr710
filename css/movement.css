@@ -148,3 +148,22 @@ body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.pla
 #mv-throw.ready { opacity: 1; border-color: var(--accent); color: var(--accent); }
 #mv-throw.down { transform: scale(0.94); }
 body:not(.playing) #mv-throw { visibility: hidden; }
+/* RELEASE / THROW locked (dim, ignored) while CHOKE is held */
+#mv-cqc.locked, #mv-throw.locked { opacity: 0.3; }
+/* CHOKE (Step 15): press and hold, beside CROUCH on the bottom row (under the right thumb, clear of where the camera is dragged), only while she holds a guard; a ring round it fills as he goes under */
+#mv-choke {
+  position: absolute; width: 60px; height: 60px; border-radius: 50%; padding: 0;
+  right: calc(196px + env(safe-area-inset-right, 0px)); bottom: calc(31px + env(safe-area-inset-bottom, 0px));
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px; color: var(--text);
+  background: var(--panel); border: 1.5px solid var(--line); touch-action: none; opacity: 0.55;
+}
+body.mv-holding .mv-look-hint { visibility: hidden; }   /* its spot is CHOKE's while she holds a guard */
+#mv-choke[hidden] { display: none; }
+#mv-choke.ready { opacity: 1; border-color: var(--warn); color: var(--warn); }
+#mv-choke.down, #mv-choke.active { transform: scale(0.94); background: rgba(224, 168, 60, 0.18); }
+#mv-choke.active { opacity: 1; border-color: var(--warn); color: var(--warn); }
+#mv-choke .mv-ring { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); pointer-events: none; transform: rotate(-90deg); visibility: hidden; }
+#mv-choke.active .mv-ring { visibility: visible; }
+#mv-choke .mv-ring circle { fill: none; stroke: var(--warn); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 182.2; stroke-dashoffset: 182.2; }
+#mv-choke span { pointer-events: none; }
+body:not(.playing) #mv-choke { visibility: hidden; }

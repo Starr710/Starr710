@@ -188,6 +188,64 @@
       this.pose(g, { hips, tilt: Math.PI / 2 * (1 - up), bones: b, neutral: 1 - up, clear: lerp(c.lieClear, F.standClear, up), pin: true });
     },
 
+    // ---------------------------------------------------------------- the chokehold (Step 15)
+    // on top of his live clip pose (he's restrained, not frozen): bones turned about his body
+    // axes, restored each frame before being turned again (nothing accumulates)
+    live(g, bones) {
+      const L = g._live || (g._live = new Map());
+      g.root.updateMatrixWorld(true); g.root.getWorldQuaternion(_bq);
+      for (const k of OVERLAY) {
+        const b = g.bones[k]; if (!b) continue;
+        const kept = L.get(b);
+        if (kept && b.quaternion.equals(kept.written)) b.quaternion.copy(kept.base);   // not re-posed by his clip this frame
+        const a = bones[k];
+        if (!a || (!a[0] && !a[1] && !a[2])) { L.delete(b); continue; }
+        const base = b.quaternion.clone();
+        b.parent.getWorldQuaternion(_pq).invert();
+        if (a[1]) b.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(AX.y).applyQuaternion(_bq).applyQuaternion(_pq), a[1] * D));
+        if (a[0]) b.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(AX.x).applyQuaternion(_bq).applyQuaternion(_pq), a[0] * D));
+        if (a[2]) b.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(AX.z).applyQuaternion(_bq).applyQuaternion(_pq), a[2] * D));
+        b.updateMatrixWorld(true);
+        L.set(b, { base, written: b.quaternion.clone() });
+      }
+    },
+    // the live overlay off again (choke let go, RESET)
+    clearLive(g) {
+      if (!g._live) return;
+      for (const [b, kept] of g._live) if (b.quaternion.equals(kept.written)) b.quaternion.copy(kept.base);
+      g._live.clear(); g.root.updateMatrixWorld(true);
+    },
+    // p: progress 0…1, t: s since the choke began. He fights it (hands up at her arm, trunk
+    // twisting, head pushed back), weakening after `relaxFrom` until he slumps limp
+    chokeStruggle(g, p, t, c) {
+      const w = ease(t / (c.initiate || 0.25)), r = ease((p - c.relaxFrom) / (1 - c.relaxFrom)), s = w * (1 - 0.85 * r);
+      const o1 = Math.sin(Math.PI * 2 * 2.6 * t), o2 = Math.sin(Math.PI * 2 * 1.7 * t + 1);
+      this.live(g, {
+        spine1: [-4 * s + 10 * r, 7 * s * o1, 0], chest: [0, 5 * s * o2, 0],
+        head: [-10 * s * (0.7 + 0.3 * o2) + 22 * r, 0, 6 * s * o1], neck: [6 * r, 0, 0],
+        leftArm: [-(50 + 10 * o1) * s, 0, 8 * s], rightArm: [-(50 + 10 * o2) * s, 0, -8 * s],
+        leftForeArm: [-40 * s, 0, 0], rightForeArm: [-40 * s, 0, 0],
+      });
+    },
+    // he's out: she lowers him. k 0…1: his knees give (sag), then he's laid down onto his back
+    // beside her, ending in exactly the lying pose. ch: { S, L, yaw0, yaw1, hipsOut }
+    chokeLower(g, ch, k) {
+      const c = this.cfg, F = g._frozen; if (!F) return;
+      const dyaw = wrap(ch.yaw1 - ch.yaw0), land = new THREE.Vector3(ch.S.x + ch.L.x * ch.hipsOut, 0, ch.S.z + ch.L.z * ch.hipsOut);
+      const sag = ease(k / 0.4), lay = ease((k - 0.4) / 0.6), bend = sag * (1 - lay);
+      g.yaw = ch.yaw0 + dyaw * lay;
+      const hips = new THREE.Vector3(lerp(F.hipsW.x, land.x, lay), 0, lerp(F.hipsW.z, land.z, lay));
+      const b = { leftUpLeg: [-35 * bend, 0, 0], rightUpLeg: [-32 * bend, 0, 0], leftLeg: [65 * bend, 0, 0], rightLeg: [60 * bend, 0, 0],
+        head: [22 * (1 - lay), c.lyingHead * lay, 0], leftArm: [0, 0, c.lyingArms * lay], rightArm: [0, 0, -c.lyingArms * lay] };
+      this.pose(g, { hips, tilt: (8 * sag + 82 * lay) * D, bones: b, neutral: lay, clear: lerp(F.standClear, c.lieClear, lay), pin: true });
+    },
+    // her side: arms tighten (a little pumping), then she follows him down and lets go
+    chokePlayer(phase, k, t, c) {
+      if (phase === 'hold') { const w = ease(t / (c.initiate || 0.25)); return { shoulder: lerp(48, 62, w) + 2 * Math.sin(Math.PI * 2 * 2.6 * t) * w, elbow: lerp(55, 95, w), twist: 0, crouch: false }; }
+      if (phase === 'lower') return { turn: ease(k), shoulder: lerp(62, 40, ease(k)), elbow: lerp(95, 60, ease(k)), twist: 0, crouch: k > 0.35 };
+      return { turn: 1, shoulder: 40, elbow: 60, twist: 0, crouch: false };
+    },
+
     // ---------------------------------------------------------------- the throw (player)
     // how far through her turn toward the throw (0…1), trunk twist (° toward it), arm angles, crouch
     player(phase, k) {

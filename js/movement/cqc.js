@@ -16,6 +16,8 @@
 // own AI, still alert to her.
 // Step 14: while she holds him, THROW (cqc-throw.js) takes him down and knocks him out
 // (state THROWING, then FREE); a guard who is down can't be grabbed.
+// Step 15: holding CHOKE (cqc-choke.js) is the quiet alternative (state CHOKING; let go
+// early and it's back to GRAPPLING).
 // Future actions hook in here (state GRAPPLING): chokehold, quick takedown, and
 // resistance / breaking free (which may make alert or trained guards harder to hold, but
 // never prevent the initial grab).
@@ -54,6 +56,7 @@
     this.cfg = Object.assign({}, mv.CQCDefaults, opts || {});
     this.motor = player.motor; this.visual = player.visual; this.input = player.input; this.noise = player.noise || null;
     this.tcfg = Object.assign({}, mv.ThrowDefaults || {}, (opts && opts.throw) || {});   // Step 14 throw settings
+    this.kcfg = Object.assign({}, mv.ChokeDefaults || {}, (opts && opts.choke) || {});   // Step 15 choke settings
     this.guards = Array.isArray(guards) ? guards : [guards];
     this.guard = this.guards[0];   // the guard she holds (or last held / last checked)
     this.world = world;
@@ -61,7 +64,9 @@
   };
 
   mv.CQC.prototype.reset = function () {
-    this.state = 'FREE';       // FREE | GRABBING | GRAPPLING | RELEASING | THROWING (Step 14)
+    this.state = 'FREE';       // FREE | GRABBING | GRAPPLING | RELEASING | THROWING (Step 14) | CHOKING (Step 15)
+    if (this.ch) this._chokeCancel();
+    this.ch = null; this.chokes = 0; this.chokeInterrupts = 0; this.chokeDone = 0; this.lastChoke = ''; this.lastLowerSound = null; this._chokeSeen = this.input ? this.input.chokePresses || 0 : 0;
     this.thr = null; this.throwPose = null; this.throws = 0; this.impacts = 0; this.lastThrow = ''; this.lastImpact = null;
     this.t = 0; this.from = null; this.speed = 0; this.grabs = 0; this.releases = 0;
     this.lastTry = ''; this.holdNote = ''; this.armW = 0; this._armBase = new Map();
@@ -125,6 +130,7 @@
 
   // immediate end (RESET): both are left where they are, the guard back to his AI
   mv.CQC.prototype.cancel = function () {
+    if (this.ch) { this._chokeCancel(); this.motor.stance = 'stand'; }
     if (this.thr) { if (!this.thr.impacted && this.thr.guard.ko) this.thr.guard.ko.abortThrow(); this.thr = null; this.throwPose = null; this.motor.stance = 'stand'; }
     if (this.guard) { this.guard.restraint = null; this.guard.stopMoving(); }
     for (const g of this.guards) if (g.restraint && g.restraint.by === this.motor) { g.restraint = null; g.stopMoving(); }
@@ -160,11 +166,14 @@
     if (inp.cqcTapped) { inp.cqcTapped = false; this.tap(); }
     if (inp.cqcHeld) { inp.cqcHeld = false; this.hold(); }
     if (inp.throwTapped) { inp.throwTapped = false; if (this.state === 'GRAPPLING') this.throwTap(); }   // Step 14 (one throw per press; ignored unless holding him)
+    // Step 15: a new press of CHOKE starts a choke (only while holding him); holding it keeps it going
+    if ((inp.chokePresses || 0) !== this._chokeSeen) { this._chokeSeen = inp.chokePresses || 0; if (this.state === 'GRAPPLING' && inp.choking && inp.choking()) this.chokeStart(); }
     const g = this.guard;   // (after the tap: a grab may have just picked a different guard)
-    const holding = this.state === 'GRABBING' || this.state === 'GRAPPLING' || (this.state === 'THROWING' && this.thr.phase !== 'recover');
+    const holding = this.state === 'GRABBING' || this.state === 'GRAPPLING' || (this.state === 'THROWING' && this.thr.phase !== 'recover') || (this.state === 'CHOKING' && this.ch.phase !== 'recover');
     this.armW += ((holding ? 1 : 0) - this.armW) * (1 - Math.exp(-8 * dt));
     if (this.state === 'FREE') return false;
     if (this.state === 'THROWING') return this._throwStep(dt);
+    if (this.state === 'CHOKING') return this._chokeStep(dt, !!(inp.choking && inp.choking()));
     if (this.state === 'GRABBING') {
       this.t += dt; const k = ease(this.t / c.grabTime), f = this.from;
       // she stays about where she was (a small step in), he's drawn back against her and turned with her
@@ -258,11 +267,13 @@
     }
   };
 
+  const PHASES_CH = { hold: 'chokehold', lower: 'lowering him', recover: 'letting go' };
   // short status for the developer view
   mv.CQC.prototype.status = function () {
     const name = g => g && g.cfg.label || 'guard';
     if (this.state === 'FREE') { const why = this.check(); return `FREE · ${why ? 'no grab: ' + why : 'CQC available: ' + name(this.target)}${this.holdNote ? ' · ' + this.holdNote : ''}`; }
     if (this.state === 'THROWING') return `THROWING · ${name(this.guard)} · ${this.throwStatus()}`;
+    if (this.state === 'CHOKING') return `CHOKING · ${name(this.guard)} ${this.ch.phase === 'hold' ? 'RESTRAINED' : 'UNCONSCIOUS'} · ${PHASES_CH[this.ch.phase] || this.ch.phase}`;
     return `${this.state === 'GRAPPLING' ? 'GRAPPLING · ' + name(this.guard) + ' RESTRAINED' : this.state + ' · ' + name(this.guard)}${this.state === 'GRAPPLING' ? ' · ' + this.speed.toFixed(2) + ' m/s' : ''}`;
   };
 })(SC.mv);

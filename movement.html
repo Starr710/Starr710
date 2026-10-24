@@ -29,6 +29,7 @@
   <div><span>NOISE</span><b id="mv-noise">–</b></div>
   <div><span>CQC</span><b id="mv-cqcstat">–</b></div>
   <div><span>THROW</span><b id="mv-throwstat">–</b></div>
+  <div><span>CHOKE</span><b id="mv-chokestat">–</b></div>
   </div>
   <div class="mv-sec">
   <div><i class="g1">G1</i><span>SEEN</span><b id="mv-guard">–</b></div>
@@ -67,6 +68,7 @@
 <button type="button" id="mv-crouch" aria-pressed="false">CROUCH</button>
 <button type="button" id="mv-cqc">CQC</button>
 <button type="button" id="mv-throw" hidden>THROW</button>  <!-- Step 14: only while holding a guard -->
+<button type="button" id="mv-choke" hidden><svg class="mv-ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29"/></svg><span>CHOKE</span></button>  <!-- Step 15: press and hold while holding a guard; the ring fills as he goes under -->
 
 <div class="mv-overlay" id="mv-loader" role="status" aria-live="polite">
   <div class="mv-box">
@@ -115,6 +117,7 @@
 <script src="js/movement/guard-indicator.js"></script>
 <script src="js/movement/cqc.js"></script>
 <script src="js/movement/cqc-throw.js"></script>
+<script src="js/movement/cqc-choke.js"></script>
 <script src="js/movement/throw-anim.js"></script>
 <script src="js/movement/guard-ko.js"></script>
 <script src="js/movement/guard.js"></script>
