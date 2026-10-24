@@ -1981,6 +1981,8 @@ const CHECKS = {
       // exactly one faint step 2 m behind him (a touch tap gives 0–3 steps depending on frame timing)
       await page.evaluate(() => { const g = MV.guard, b = g.position.clone().addScaledVector(g.forward(), -2); MV.motor.teleport(-17, 15, 0); MV.cam.snap(MV.motor); for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; } window.__w.h0 = g.hearing.heardCount; MV.noise.emit(1, 'footstep', b, 'concrete', 'player'); });   // she's out of sight elsewhere
       await page.waitForFunction(() => window.__w.calmT != null || MV.guard.awareness.state === 'INVESTIGATING', null, { timeout: 40000, polling: 100 }).catch(() => {});
+      // the STATS row refreshes a few times a second: give it a moment to show a dismissal
+      if (k === 'C') await page.waitForFunction(() => !!window.__w.stats, null, { timeout: 3000, polling: 100 }).catch(() => {});
       const one = await page.evaluate(() => { const w = window.__w, a = MV.guard.awareness; return { heard: MV.guard.hearing.heardCount - w.h0, reactions: a.reactions, state: a.state, calm: w.calmT == null ? null : w.calmT - w.reactT, dismissed: MV.guard.personality.counts.dismissed, stats: w.stats || document.getElementById('mv-persona').textContent }; });
       // she sneaks back and forth 1.4 m behind him
       await page.evaluate(() => { const g = MV.guard; g.reset(); window.__h1 = g.hearing.heardCount; window.__r1 = g.awareness.reactions; const b = g.position.clone().addScaledVector(g.forward(), -1.4); MV.motor.teleport(b.x - 1.8, b.z, Math.PI / 2); MV.cam.snap(MV.motor); for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; } });
