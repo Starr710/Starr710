@@ -146,10 +146,13 @@
     this.recent.push({ position: p, time: this.clock });
     const close = 1 + c.closeBoost * Math.max(0, 1 - rec.distance / Math.max(0.01, rec.reach));
     const repeat = Math.min(c.repeatMax + pm('repeatMax'), 1 + (c.repeatBoost + pm('repeatBoost')) * repeats);
-    const gain = lerpTab(c.hearGain, rec.intensity) * close * repeat * (1 + pm('hearInterest'));
-    this.lastGain = gain;
+    const base = lerpTab(c.hearGain, rec.intensity) * close * Math.min(c.repeatMax, 1 + c.repeatBoost * repeats);
     if (c.uncertainStates.indexOf(this.state) >= 0) this._estimate(this.heard, rec);
-    if (this.confirmed) { this._alertHeard(this.heard, gain); return; }   // alerted: sounds feed the search
+    // alerted: sounds feed the search, judged without personality (it's on hold in serious states)
+    if (this.confirmed) { this.lastGain = base; this._alertHeard(this.heard, base); return; }
+    let gain = lerpTab(c.hearGain, rec.intensity) * close * repeat * (1 + pm('hearInterest'));
+    if (P) P.judgeSound(gain, repeats, c.redirectStrength);            // Step 11: careless may write off an isolated weak sound (after noticing it)
+    this.lastGain = gain;
     this.suspicion = Math.min(1, this.suspicion + gain);
     this.lastEvidence = this.clock;
     this._consider('heard', p);
@@ -203,7 +206,11 @@
     }
     this._incidentUpdate(v.seen.rate > 0, v.meter);
     if (this.confirmed) { this.suspicion = 1; this._alerted(); return; }
-    if (this.clock - this.lastEvidence > c.holdTime + (this.incident && this.incident.closer || 0)) this.suspicion = Math.max(0, this.suspicion - c.decayRate * dt);
+    const P = g.personality, pm = k => (P ? P.mod(k) : 0);   // Step 11: focused holds and fades slower, careless faster
+    const fade = P && P.enabled ? P.fade() : null;                                // a careless write-off: brief hold, fast fade
+    const hold = fade ? fade.hold : Math.max(0.5, c.holdTime + (this.incident && this.incident.closer || 0) + pm('holdExtra'));
+    if (this.clock - this.lastEvidence > hold) this.suspicion = Math.max(0, this.suspicion - c.decayRate * (1 + pm('decayScale')) * (fade ? fade.scale : 1) * dt);
+    if (this.incident && this.state !== 'NORMAL') this.incident.peak = Math.max(this.incident.peak || 0, this.suspicion);
 
     if (this.state === 'NORMAL') {
       const pat = this._patrolling();
@@ -218,7 +225,7 @@
       this.behavior = reacting ? 'assessing' : 'pausing (heard something)';
       if (this.focus && reacting && g.isStill()) g.faceToward(this.focus.position);
       if (this.suspicion >= c.investigateAt && (!inc || this.clock >= inc.assessUntil)) this._investigate();
-      else if (this.suspicion < c.calmAt) { this.state = 'NORMAL'; this.focus = null; if (!this._patrolling()) g.faceYaw(g.postYaw); }
+      else if (this.suspicion < c.calmAt) { this.state = 'NORMAL'; this.focus = null; if (!this._patrolling()) g.faceYaw(g.postYaw); if (P) P.onCalm(); }
     } else if (this.state === 'INVESTIGATING') this._investigating();
   };
 
@@ -233,6 +240,8 @@
   mv.GuardAwareness.prototype._beginIncident = function (kind, silent) {
     const c = this.cfg, heard = kind === 'heard', delay = heard ? c.reactDelay : c.visualReactDelay;
     this.incident = { start: this.clock, kind, reactAt: this.clock + delay, assessUntil: this.clock + delay + (heard ? c.assessTime : 0), voiced: !!silent };
+    // Step 11: a focused guard assesses a sound a moment longer after his reaction (the reaction itself is unchanged)
+    if (heard && !silent && this.guard.personality) this.incident.assessUntil += Math.max(0, this.guard.personality.mod('assessExtra'));
     // a curious guard sometimes takes a closer look: his suspicion holds a little longer before fading
     if (!silent && this.guard.personality) this.incident.closer = this.guard.personality.onIncident();
     this.incidents++; this.calmSince = null;
@@ -304,12 +313,14 @@
       g.faceYaw(yaw);
       if (Math.abs(wrap(g.yaw - yaw)) < 0.09) s.heldFor += this.clock - (s.last || this.clock);
       s.last = this.clock;
-      if (s.heldFor >= c.lookHold) {
+      const P = this.guard.personality;
+      if (s.heldFor >= Math.max(0.4, c.lookHold + (P ? P.mod('searchLookHold') : 0))) {
         s.heldFor = 0; s.i++;
         if (s.i >= c.lookAround.length) {
           s.i = 0; s.round++;
-          const P = this.guard.personality, extra = P ? P.extraRounds() : 0;   // curious: one more round while still suspicious
-          if (this.suspicion < c.searchRelaxAt || s.round >= c.searchRounds + extra || timedOut) this._return();
+          // personality: curious / focused one more round while still suspicious; careless one fewer on ambiguous evidence
+          const peak = this.incident ? this.incident.peak || this.suspicion : this.suspicion, rounds = P ? P.searchRoundsFor(c.searchRounds, peak) : c.searchRounds;
+          if (this.suspicion < c.searchRelaxAt || s.round >= rounds || timedOut) { if (P && s.round < c.searchRounds && this.suspicion >= c.searchRelaxAt && !timedOut) P.noteEarlyEnd(); this._return(); }
           else if (s.round >= c.searchRounds) P.noteExtraRound();
         }
       }

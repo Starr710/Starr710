@@ -88,8 +88,15 @@
     // here). The spawn is in the yard's west corner, 19 m from the guard (beyond his 16 m
     // sight range) and 84° off his facing (outside his 55° half-cone), in open ground
     // (3.6 m to the nearest pillar, 5 m to the wall), facing east toward the yard.
-    // his two permanent personality traits (Step 10; guard-personality.js)
-    const GUARD = { x: 2, z: -16, yaw: 0, patrol: PATROL, personality: { primary: 'curious', secondary: 'bored' } };
+    // his two permanent personality traits (guard-personality.js). Test profiles (Step 11):
+    // change PROFILE to compare them; all three have the same senses and movement
+    const PROFILES = {
+      A: { primary: 'curious', secondary: 'bored' },    // Step 10
+      B: { primary: 'focused', secondary: 'bored' },    // default
+      C: { primary: 'careless', secondary: 'bored' },   // comparison
+    };
+    const PROFILE = 'B';
+    const GUARD = { x: 2, z: -16, yaw: 0, patrol: PATROL, personality: PROFILES[PROFILE] };
     const SPAWN = { x: -17, z: -14, yaw: Math.PI / 2 };
     const tex = gridTexture(renderer);
     tex.repeat.set(SIZE / 4, SIZE / 4);
@@ -168,6 +175,6 @@
     const pad = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.65, 32).rotateX(-Math.PI / 2), mats.paint);
     pad.position.set(SPAWN.x, 0.006, SPAWN.z); scene.add(pad);
 
-    return { spawn: SPAWN, size: SIZE, guard: GUARD };
+    return { spawn: SPAWN, size: SIZE, guard: GUARD, profiles: PROFILES, profile: PROFILE };
   };
 })(SC.mv);

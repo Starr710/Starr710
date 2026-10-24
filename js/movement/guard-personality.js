@@ -12,7 +12,22 @@
 //     shifts his stance while standing (a small procedural torso/head shift).
 // Hearing and vision capabilities are never touched, and nothing here acts once he's
 // ALERT, searching, in Heightened Security or walking back to his post.
-// Focused, Careless, Talkative and Hungry are recognised but have no behaviour yet.
+//   FOCUSED (Step 11; disciplined, thorough): repeated evidence is dismissed less readily
+//     (suspicion fades more slowly, repeats are remembered longer and add up a little
+//     faster), he assesses a sound a moment longer after his reaction, and he searches
+//     an investigation spot more thoroughly (longer looks, one more round while still
+//     suspicious). On patrol he often adds a deliberate sweep and a little more time at
+//     each observation point. A single weak sound still doesn't send him investigating.
+//   CARELESS (Step 11; trained, but sometimes overlooks small things): he notices and
+//     reacts to a faint sound like anyone (same "huh"), but an isolated weak one (nothing
+//     else heard nearby) is often written off afterwards: his suspicion then fades fast.
+//     Any further sound in the area cancels the write-off and counts in full, so several
+//     steps still convince him. His suspicion also holds and fades a little faster. Investigating ambiguous evidence, he
+//     looks a little less long and may stop a round early and conclude it was nothing.
+//     On patrol he sometimes cuts an observation short. Strong evidence and anything he
+//     recognises are never discounted.
+// When two traits push one patrol stop in opposite directions, the primary decides.
+// Talkative and Hungry are recognised but have no behaviour yet.
 // Randomness is seeded (repeatable); traits are frozen once assigned.
 (function (mv) {
   'use strict';
@@ -41,9 +56,33 @@
       shiftTorso: 6,           // …turning his torso up to this many degrees…
       shiftHead: 10,           // …and his head up to this many
     },
-    focused: {}, careless: {}, talkative: {}, hungry: {},   // recognised; behaviours come later
+    focused: {
+      repeatBoost: 0.1,        // + to repeatBoost: repeated suspicious activity adds up a little faster…
+      repeatWindow: 3,         // …and is remembered this much longer (s)
+      decayScale: -0.35,       // × (1 + this) the rate his suspicion fades: he doesn't dismiss it readily
+      holdExtra: 1,            // + s his suspicion holds before it starts to fade
+      assessExtra: 0.4,        // + s he assesses a sound after his reaction before he may walk off
+      searchLookHold: 0.35,    // + s each look-around at an investigation spot
+      searchRounds: 1,         // + rounds there while still suspicious (still capped by maxInvestigate)
+      sweep: 0.75,             // chance per patrol observation stop of a deliberate extra sweep…
+      sweepAngle: 70,          // …this far (°) to the side he hasn't covered…
+      sweepTime: [0.6, 1.4],   // …and this much longer at the point (s)
+    },
+    careless: {
+      writeOff: 0.7,           // chance an isolated weak sound (no repeat nearby, below redirectStrength) is written off…
+      writeOffFade: 2.5,       // …after which his suspicion fades × (1 + this) faster, holding only…
+      writeOffHold: 1.6,       // …this long (s) after the sound (time for his reaction and a glance)
+      decayScale: 0.3,         // × (1 + this) the rate his suspicion fades
+      holdExtra: -1,           // + s (shorter) his suspicion holds before it fades
+      searchLookHold: -0.3,    // + s (shorter) each look-around at an investigation spot
+      searchRoundsWeak: -1,    // + rounds when the evidence was ambiguous (peak suspicion below weakEvidence)…
+      weakEvidence: 0.85,      // …this peak; never fewer than one round
+      shortStop: 0.45,         // chance per patrol observation stop that he cuts it short…
+      shortScale: 0.6,         // …to this share of the time, skipping his last look
+    },
+    talkative: {}, hungry: {},   // recognised; behaviours come later
   };
-  mv.IMPLEMENTED_TRAITS = ['curious', 'bored'];
+  mv.IMPLEMENTED_TRAITS = ['curious', 'bored', 'focused', 'careless'];
 
   mv.PersonalityDefaults = {
     enabled: true,           // influence on (tests of the core AI switch it off; traits stay)
@@ -81,9 +120,9 @@
   mv.GuardPersonality.prototype.reset = function () {
     // one seeded stream per kind of choice, so each repeats exactly whatever the frame timing
     const sd = this.cfg.seed; this.rngs = { incident: mulberry(sd), stop: mulberry(sd + 1), shift: mulberry(sd + 2) };
-    this.clock = 0; this.current = null; this.overridden = ''; this.log = [];
+    this.clock = 0; this.current = null; this.overridden = ''; this.log = []; this.writtenOff = null;
     this.shift = { yaw: 0, head: 0, want: 0, wantHead: 0, until: 0, next: null };
-    this.counts = { lingers: 0, casualLooks: 0, shifts: 0, closerLooks: 0, extraRounds: 0 };
+    this.counts = { lingers: 0, casualLooks: 0, shifts: 0, closerLooks: 0, extraRounds: 0, sweeps: 0, shortStops: 0, dismissed: 0, discounted: 0, earlyEnds: 0 };
   };
 
   // how strongly a trait acts on this guard: its weight as primary / secondary, else 0
@@ -113,17 +152,62 @@
   };
   // an investigation search round finished while he's still suspicious: another round?
   mv.GuardPersonality.prototype.extraRounds = function () { return Math.round(this.mod('searchRounds')); };
-  mv.GuardPersonality.prototype.noteExtraRound = function () { this.counts.extraRounds++; this._note('curious', 'searching a little longer', 4); };
+  mv.GuardPersonality.prototype.noteExtraRound = function () { this.counts.extraRounds++; const t = this._lead('searchRounds'); this._note(t, t === 'focused' ? 'checking the area thoroughly (+1 round)' : 'searching a little longer', 4); };
+  // the trait contributing most to a modifier (for the developer note)
+  mv.GuardPersonality.prototype._lead = function (key) {
+    let best = null, v = 0; for (const t of [this.traits.primary, this.traits.secondary]) { const x = Math.abs(this.effect(t, key) * this.weight(t)); if (x > v) { v = x; best = t; } }
+    return best;
+  };
+
+  // ---------------------------------------------------------------- FOCUSED / CARELESS hooks (awareness)
+  // a heard sound, judged (it always counts in full for noticing it): a careless guard may
+  // write off an isolated weak one; any further sound nearby cancels that
+  mv.GuardPersonality.prototype.judgeSound = function (gain, repeats, strong) {
+    if (repeats > 0 || gain >= strong) { if (this.writtenOff) { this.writtenOff = null; this._note('careless', 'another sound: taking it seriously', 3); } return; }
+    if (this.chance('careless', 'writeOff', 'incident')) { this.writtenOff = { at: this.clock }; this.counts.discounted++; }
+  };
+  // how his suspicion fades right now: [extra hold (s), fade multiplier]
+  mv.GuardPersonality.prototype.fade = function (sinceEvidence) {
+    if (this.writtenOff) { const e = mv.TraitEffects.careless, w = this.weight('careless'); return { hold: e.writeOffHold, scale: 1 + e.writeOffFade * w }; }
+    return null;
+  };
+  // he calmed down without investigating
+  mv.GuardPersonality.prototype.onCalm = function () {
+    if (this.writtenOff) { this.counts.dismissed++; this._note('careless', 'dismissed weak evidence', 3.5); }
+    this.writtenOff = null;
+  };
+  // rounds at an investigation spot: + thorough (focused, curious), − for ambiguous evidence (careless); at least one
+  mv.GuardPersonality.prototype.searchRoundsFor = function (base, peak) {
+    const weak = peak < (this.effect('careless', 'weakEvidence') || 0.85);
+    return Math.max(1, base + Math.round(this.mod('searchRounds')) + (weak ? Math.round(this.mod('searchRoundsWeak')) : 0));
+  };
+  mv.GuardPersonality.prototype.noteEarlyEnd = function () { this.counts.earlyEnds++; this._note('careless', 'decided it was nothing (search cut short)', 4); };
 
   // ---------------------------------------------------------------- BORED hooks (patrol)
   // at a patrol observation stop: extra seconds and an extra casual look (or none)
-  mv.GuardPersonality.prototype.observeExtras = function (face) {
-    const out = { pause: 0, looks: [], scale: 1 }, w = this.weight('bored');
-    if (!w) return out;
-    const e = mv.TraitEffects.bored, r = this.rngs.stop;
-    out.scale = 1 + (r() * 2 - 1) * e.pauseJitter * w;
-    if (this.chance('bored', 'linger', 'stop')) { out.pause = lerp(e.lingerTime, r()); this.counts.lingers++; this._note('bored', `lingering (+${out.pause.toFixed(1)} s)`, out.pause + 1.5); }
-    if (this.chance('bored', 'casualLook', 'stop')) { out.looks.push((r() * 2 - 1) * e.casualLookAngle); this.counts.casualLooks++; this._note('bored', 'a casual look around', 3); }
+  // looks: the stop's own look offsets (°), so a focused sweep covers the side they don't
+  mv.GuardPersonality.prototype.observeExtras = function (face, looks) {
+    const out = { pause: 0, looks: [], scale: 1, dropLast: false }, w = this.weight('bored');
+    const r = this.rngs.stop;
+    if (w) {
+      const e = mv.TraitEffects.bored;
+      out.scale = 1 + (r() * 2 - 1) * e.pauseJitter * w;
+      if (this.chance('bored', 'linger', 'stop')) { out.pause = lerp(e.lingerTime, r()); out.longer = 'bored'; this.counts.lingers++; this._note('bored', `lingering (+${out.pause.toFixed(1)} s)`, out.pause + 1.5); }
+      if (this.chance('bored', 'casualLook', 'stop')) { out.looks.push((r() * 2 - 1) * e.casualLookAngle); this.counts.casualLooks++; this._note('bored', 'a casual look around', 3); }
+    }
+    // Step 11: focused sweeps (longer, more thorough) and careless short stops; if both come up
+    // on one stop they'd contradict each other, so only the primary trait's choice is kept
+    const sweep = this.chance('focused', 'sweep', 'stop'), short = this.chance('careless', 'shortStop', 'stop');
+    const keepSweep = sweep && !(short && this.traits.primary === 'careless'), keepShort = short && !(sweep && this.traits.primary === 'focused');
+    if (keepSweep) {
+      const f = mv.TraitEffects.focused, lean = (looks || []).reduce((a, b) => a + b, 0);
+      out.looks.push((lean > 0 ? -1 : 1) * f.sweepAngle); const t = lerp(f.sweepTime, r()); out.pause += t;
+      this.counts.sweeps++; this._note('focused', `deliberate sweep (+${t.toFixed(1)} s)`, 3.5);
+    }
+    if (keepShort) {
+      out.scale *= mv.TraitEffects.careless.shortScale; out.dropLast = true; out.pause = keepSweep ? out.pause : 0; out.looks.length = 0;
+      this.counts.shortStops++; this._note('careless', 'a quick look and moving on', 3);
+    }
     return out;
   };
 
@@ -134,6 +218,7 @@
     const s = this.shift, w = this.weight('bored'), e = mv.TraitEffects.bored, rs = this.rngs.shift;
     // serious states put the whole personality on hold; suspicion and investigation only the casual (bored) side
     this.overridden = SERIOUS.indexOf(state) >= 0 ? state + ' (personality on hold)' : state !== 'NORMAL' ? state + ' (casual behaviour on hold)' : '';
+    if (SERIOUS.indexOf(state) >= 0 || state === 'INVESTIGATING') this.writtenOff = null;   // he's taking it seriously now
     if (state !== 'NORMAL') { s.want = 0; s.wantHead = 0; s.next = null; if (this.current && this.current.trait === 'bored') this.current = null; }
     else if (w) {
       if (s.next == null) s.next = this.clock + lerp(e.shiftEvery, rs()) / w;

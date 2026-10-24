@@ -57,6 +57,8 @@ async function simPage() {
       visual.place(motor.position, motor.yaw); animator.update(1 / 60, motor); posture.update(1 / 60, motor, animator);
       visual.root.updateMatrixWorld(true);
     };
+    // a guard with one of the test personality profiles (A Curious/Bored, B Focused/Bored, C Careless/Bored)
+    window.useProfile = (k, extra) => { const g = MV.guard; g.personality = new MV.SCmv.GuardPersonality(g, Object.assign({}, MV.area.profiles[k], extra || {})); return g.personality; };
     window.angJump = (a, b) => 2 * Math.acos(Math.min(1, Math.abs(a.dot(b)))) * 57.2958;
     window.segDist = (p, a, b) => { const ab = b.clone().sub(a); const t = Math.max(0, Math.min(1, p.clone().sub(a).dot(ab) / ab.lengthSq())); return p.distanceTo(a.clone().addScaledVector(ab, t)); };
     motor.teleport(-6, -20, 0);
@@ -83,7 +85,10 @@ async function touchPage() {
   await page.goto(base + '/movement.html');
   await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
   await page.tap('#mv-start'); await page.waitForTimeout(300);
-  await page.evaluate(() => { MV.guard.patrol.enabled = false; MV.guard.personality.enabled = false; MV.guard.reset(); });   // stationary, neutral guard (see simPage)
+  await page.evaluate(() => {
+    MV.guard.patrol.enabled = false; MV.guard.personality.enabled = false; MV.guard.reset();   // stationary, neutral guard (see simPage)
+    window.useProfile = (k, extra) => { const g = MV.guard; g.personality = new MV.SCmv.GuardPersonality(g, Object.assign({}, MV.area.profiles[k], extra || {})); return g.personality; };
+  });
   const cdp = await ctx.newCDPSession(page);
   page.touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
   page.errors = errors;
@@ -1627,7 +1632,7 @@ const CHECKS = {
   async personaTraits() {
     const page = await simPage();
     const r = await page.evaluate(() => {
-      const { motor, noise } = MV, g = MV.guard, a = g.awareness, P = g.personality, T = MV.seeTarget, dt = 1 / 60;
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, P = useProfile('A'), T = MV.seeTarget, dt = 1 / 60;   // Step 10's profile
       const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
       P.enabled = true; const t0 = JSON.stringify(P.traits);
       let frozen = true; try { P.traits.primary = 'hungry'; } catch (e) { /* strict: throws */ } if (P.traits.primary !== 'curious') frozen = false;
@@ -1646,7 +1651,7 @@ const CHECKS = {
     });
     const T0 = JSON.parse(r.t0);
     const ok = T0.primary === 'curious' && T0.secondary === 'bored' && Object.keys(T0).length === 2 && r.frozen && r.duringAlert === r.t0 && r.afterCycle === r.t0 && r.afterReset === r.t0 && r.stood === 1
-      && r.traits.length === 6 && r.implemented.join() === 'curious,bored' && r.effects.sort().join() === 'bored,curious' && r.refuseSame && r.refuseUnknown && r.rollsOk && r.rollKinds >= 8 && r.again;
+      && r.traits.length === 6 && r.implemented.join() === 'curious,bored,focused,careless' && r.effects.sort().join() === 'bored,careless,curious,focused' && r.refuseSame && r.refuseUnknown && r.rollsOk && r.rollKinds >= 8 && r.again;
     return { pass: ok, detail: `traits ${r.t0} (frozen ${r.frozen}); stand-downs ${r.stood} (${r.endState}); unchanged in ALERT ${r.duringAlert === r.t0}, after a full alert cycle and stand-down ${r.afterCycle === r.t0}, after RESET ${r.afterReset === r.t0}; known traits ${r.traits.join('/')}, with behaviour: ${r.effects.join(', ')}; refuses a repeated trait ${r.refuseSame}, an unknown one ${r.refuseUnknown}; 40 seeded random assignments all two different known traits ${r.rollsOk} (${r.rollKinds} different pairs), same seed same pair ${r.again}` };
   },
 
@@ -1659,7 +1664,7 @@ const CHECKS = {
   async personaCurious() {
     const page = await simPage();
     const r = await page.evaluate(() => {
-      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, P0 = g.personality;
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, P0 = useProfile('A');   // Step 10's profile
       const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
       const setup = mode => { g.personality = mode === 'secondary' ? new MV.SCmv.GuardPersonality(g, { primary: 'bored', secondary: 'curious' }) : P0; g.personality.enabled = mode !== 'off'; g.reset(); motor.teleport(-17, 15, 0); sim(10); };
       const steps = (n, gap, d) => { let peak = 0, inv = false, heard = 0, react = a.reactions;
@@ -1699,7 +1704,7 @@ const CHECKS = {
   async personaBored() {
     const page = await simPage();
     const r = await page.evaluate(() => {
-      const { motor, noise } = MV, g = MV.guard, a = g.awareness, p = g.patrol, T = MV.seeTarget, dt = 1 / 60, B = g.bones, P0 = g.personality;
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, p = g.patrol, T = MV.seeTarget, dt = 1 / 60, B = g.bones, P0 = useProfile('A');   // Step 10's profile
       const run = (mode, laps) => {
         g.personality = mode === 'primary' ? new MV.SCmv.GuardPersonality(g, { primary: 'bored', secondary: 'curious' }) : P0;
         g.personality.enabled = mode !== 'off'; p.enabled = true; g.reset(); motor.teleport(-17, 15, 0);
@@ -1739,7 +1744,7 @@ const CHECKS = {
   async personaPriority() {
     const page = await patrolPage();
     const r = await page.evaluate(() => {
-      const { motor, noise } = MV, g = MV.guard, a = g.awareness, P = g.personality, v = g.vision, T = MV.seeTarget, dt = 1 / 60;
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, P = useProfile('A'), v = g.vision, T = MV.seeTarget, dt = 1 / 60;   // Step 10's profile
       const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
       const framesToAlert = on => { P.enabled = on; g.patrol.enabled = false; g.reset(); motor.teleport(-17, 15, 0); sim(30); const q = g.position.clone().addScaledVector(g.forward(), 3); motor.teleport(q.x, q.z, g.yaw + Math.PI); for (let f = 0; f < 2; f++) step(0, 'stand'); let n = 0; while (a.state !== 'ALERT' && n < 600) { sim(1); n++; } return n; };
       const nOff = framesToAlert(false), nOn = framesToAlert(true);
@@ -1772,7 +1777,7 @@ const CHECKS = {
   async personaTouch() {
     const page = await patrolPage(true), Tc = page.touch, runs = [];
     for (const [label, dy, back] of [['sneak', 25, 1.3], ['stealth walk', 50, 2.5], ['jog', 64, 2.5]]) {   // (a sneak step carries only ~2 m)
-      await page.evaluate(() => { const g = MV.guard; g.personality.enabled = true; g.reset(); MV.motor.teleport(-17, 15, 0); });
+      await page.evaluate(() => { const g = MV.guard; if (!g.personality.__a) { useProfile('A').__a = true; } g.personality.enabled = true; g.reset(); MV.motor.teleport(-17, 15, 0); });   // Step 10's profile
       await page.waitForFunction(() => MV.guard.patrol.state === 'walking' && MV.guard.patrol.index === 1 && Math.hypot(MV.guard.position.x - 2, MV.guard.position.z + 16) > 3, null, { timeout: 60000 }).catch(() => {});
       await page.evaluate(back => { const g = MV.guard, b = g.position.clone().addScaledVector(g.forward(), -back); MV.motor.teleport(b.x, b.z, g.yaw); /* following him */ MV.cam.snap(MV.motor); window.__h0 = g.hearing.heardCount; }, back);
       await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 300 - dy, id: 1 }]); await page.waitForTimeout(1600); await Tc('touchEnd', []);
@@ -1783,8 +1788,213 @@ const CHECKS = {
     const after = await page.evaluate(() => ({ traits: JSON.stringify(MV.guard.personality.traits), counts: JSON.stringify(MV.guard.personality.counts), state: MV.guard.awareness.state, patrol: MV.guard.patrol.state }));
     await page.evaluate(() => { MV.guard.personality.enabled = false; MV.guard.reset(); });
     const ok = runs.every(x => x.heard >= 2 && x.reactions <= 1 && x.incidents <= 1) && runs.filter(x => x.reactions === 1).length >= 2 && runs.every(x => /CURIOUS \(primary\) · BORED \(secondary\)/.test(x.stats))
-      && after.traits === '{"primary":"curious","secondary":"bored"}' && after.counts === '{"lingers":0,"casualLooks":0,"shifts":0,"closerLooks":0,"extraRounds":0}' && after.state === 'NORMAL' && after.patrol === 'observing' && page.errors.length === 0;
-    return { pass: ok, detail: runs.map(x => `${x.label}: ${x.heard} steps heard → "huh" ×${x.reactions}, ${x.state}`).join('; ') + `; STATS "${runs[0].stats}"; after RESET traits ${after.traits}, personality counters cleared ${after.counts === '{"lingers":0,"casualLooks":0,"shifts":0,"closerLooks":0,"extraRounds":0}'}, ${after.state}, patrol ${after.patrol}; page errors ${page.errors.length}` };
+      && after.traits === '{"primary":"curious","secondary":"bored"}' && Object.values(JSON.parse(after.counts)).every(x => x === 0) && after.state === 'NORMAL' && after.patrol === 'observing' && page.errors.length === 0;
+    return { pass: ok, detail: runs.map(x => `${x.label}: ${x.heard} steps heard → "huh" ×${x.reactions}, ${x.state}`).join('; ') + `; STATS "${runs[0].stats}"; after RESET traits ${after.traits}, personality counters cleared ${Object.values(JSON.parse(after.counts)).every(x => x === 0)}, ${after.state}, patrol ${after.patrol}; page errors ${page.errors.length}` };
+  },
+
+  // Step 11, 1, 2, 3, 14: Focused and Careless as primary and as secondary traits (profiles B
+  // and C, plus swapped pairs and Focused+Careless together). Traits never change, through a
+  // full alert cycle and RESET; every modifier as a secondary trait is 40% of the primary;
+  // on patrol the primary acts more often than the same trait as secondary; Focused+Careless
+  // together never makes one stop both longer and shorter; the same seed repeats exactly
+  async focCareTraits() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, area } = MV, g = MV.guard, a = g.awareness, p = g.patrol, T = MV.seeTarget, dt = 1 / 60, mv = MV.SCmv;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
+      const make = o => { g.personality = new mv.GuardPersonality(g, o); g.patrol.enabled = true; g.reset(); motor.teleport(-17, 15, 0); return g.personality; };
+      const laps = (o, n) => { const P = make(o), order = []; let both = 0, lastStops = 0;
+        for (let f = 0; f < n * 57 * 60; f++) { const c0 = P.counts.sweeps, s0 = P.counts.shortStops; sim(1); if (P.counts.sweeps > c0 && P.counts.shortStops > s0) both++; if (p.state === 'walking' && order[order.length - 1] !== p.index) order.push(p.index); }
+        return { counts: Object.assign({}, P.counts), order: order.join(''), both, choices: ['sweep', 'quick'].map(k => P.log.filter(x => x.what.indexOf(k) >= 0).map(x => x.what).join('|')).join(' / '), traits: JSON.stringify(P.traits) }; };
+      const B = laps(area.profiles.B, 3), B2 = laps(area.profiles.B, 3), C = laps(area.profiles.C, 3);
+      const fs = laps({ primary: 'bored', secondary: 'focused' }, 3), cs = laps({ primary: 'bored', secondary: 'careless' }, 3);
+      const fc = laps({ primary: 'focused', secondary: 'careless' }, 3), cf = laps({ primary: 'careless', secondary: 'focused' }, 3);
+      // modifier strength: secondary = 40% of primary
+      const mods = {}; for (const t of ['focused', 'careless']) { const pri = new mv.GuardPersonality(g, { primary: t, secondary: 'bored' }), sec = new mv.GuardPersonality(g, { primary: 'bored', secondary: t });
+        mods[t] = Object.keys(mv.TraitEffects[t]).filter(k => typeof mv.TraitEffects[t][k] === 'number' && pri.mod(k) !== 0).map(k => +(sec.mod(k) / pri.mod(k)).toFixed(3)); }
+      // traits through a full cycle and RESET (profile B)
+      const P = make(area.profiles.B); p.enabled = false; g.reset(); const t0 = JSON.stringify(P.traits);
+      a.cfg.evasionTime = 5; a.cfg.heightenedTime = 5; motor.teleport(2, -12, Math.PI); let t = 0; while (a.state !== 'ALERT' && t < 10) { sim(1); t += dt; }
+      const inAlert = JSON.stringify(P.traits); motor.teleport(-17, 15, 0); t = 0; while (a.standDowns === 0 && t < 60) { sim(1); t += dt; }
+      const stood = a.standDowns, afterCycle = JSON.stringify(P.traits); g.reset(); a.cfg.evasionTime = 30; a.cfg.heightenedTime = 60;
+      const afterReset = JSON.stringify(g.personality.traits);
+      g.personality = new mv.GuardPersonality(g, Object.assign({ enabled: false }, area.profiles.B)); p.enabled = false; g.reset();
+      return { B, B2, C, fs, cs, fc, cf, mods, t0, inAlert, afterCycle, afterReset, stood, def: area.profile };
+    });
+    const ratiosOk = Object.values(r.mods).every(v => v.length >= 4 && v.every(x => Math.abs(x - 0.4) < 1e-6));
+    const routes = [r.B, r.C, r.fs, r.cs, r.fc, r.cf].every(x => x.order.startsWith('1230123012'));
+    const ok = r.def === 'B' && r.t0 === '{"primary":"focused","secondary":"bored"}' && r.inAlert === r.t0 && r.afterCycle === r.t0 && r.afterReset === r.t0 && r.stood === 1 && ratiosOk
+      && r.B.counts.sweeps > r.fs.counts.sweeps && r.fs.counts.sweeps >= 1 && r.C.counts.shortStops > r.cs.counts.shortStops && r.cs.counts.shortStops >= 1
+      && r.fc.both === 0 && r.cf.both === 0 && r.fc.counts.sweeps > r.fc.counts.shortStops && r.cf.counts.shortStops > r.cf.counts.sweeps && routes && r.B.choices === r.B2.choices;
+    return { pass: ok, detail: `default profile ${r.def} ${r.t0}: unchanged in ALERT, after the cycle (stand-downs ${r.stood}) and RESET ${r.inAlert === r.t0 && r.afterCycle === r.t0 && r.afterReset === r.t0}; secondary/primary modifier ratios ${JSON.stringify(r.mods)}; 3 laps: Focused sweeps ${r.B.counts.sweeps} as primary vs ${r.fs.counts.sweeps} as secondary; Careless short stops ${r.C.counts.shortStops} vs ${r.cs.counts.shortStops}; Focused+Careless: sweeps ${r.fc.counts.sweeps} / short ${r.fc.counts.shortStops}, Careless+Focused: ${r.cf.counts.sweeps} / ${r.cf.counts.shortStops}, stops both longer and shorter ${r.fc.both + r.cf.both}; routes completed in order ${routes}; same seed same choices ${r.B.choices === r.B2.choices}` };
+  },
+
+  // Step 11, 4–9, 13: controlled comparison, same sounds and sights for a neutral guard,
+  // Curious (A), Focused (B) and Careless (C). Hearing and vision are identical (same steps
+  // heard or missed, same meter rise). One faint step: all four react once ("huh") and none
+  // investigates; Careless writes it off and is calm soonest, Focused holds it longest.
+  // Four faint steps in one area: Focused investigates where neutral and Careless don't;
+  // six: all of them do (Careless too). Three jog steps: all investigate, and search the spot
+  // Careless < neutral < Focused. Ambiguous evidence (peak below 85%): Careless cuts the
+  // search a round short. Nobody's target is ever where she really is
+  async focCareSuspicion() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, area } = MV, g = MV.guard, a = g.awareness, v = g.vision, T = MV.seeTarget, dt = 1 / 60, mv = MV.SCmv;
+      let knows = 0, hidden = true;   // (in the vision part she's in plain view: not counted)
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); if (hidden && a.focus && a.focus.position.distanceTo(motor.position) < 3) knows++; } };
+      const setP = k => { g.personality = new mv.GuardPersonality(g, k === 'N' ? Object.assign({ enabled: false }, area.profiles.B) : area.profiles[k]); g.patrol.enabled = false; g.reset(); motor.teleport(-17, 15, 0); sim(10); };
+      const steps = (n, gap, d, lvl) => { let peak = 0, inv = false, calmAt = null, t = 0, heard = 0; const r0 = a.reactions;
+        for (let k = 0; k < n; k++) { const h0 = g.hearing.heardCount; noise.emit(lvl || 1, 'footstep', new THREE.Vector3(g.position.x + d * 0.7, 0, g.position.z - d * 0.7 + k * 0.2), 'concrete', 'player'); heard += g.hearing.heardCount - h0; for (let f = 0; f < gap * 60; f++) { sim(1); t += dt; peak = Math.max(peak, a.suspicion); if (a.state === 'INVESTIGATING') inv = true; } }
+        for (let f = 0; f < 40 * 60 && calmAt == null && !inv; f++) { sim(1); t += dt; if (a.state === 'INVESTIGATING') inv = true; if (a.state === 'NORMAL') calmAt = t; }
+        return { peak, inv, calmAt, heard, reactions: a.reactions - r0, dismissed: g.personality.counts.dismissed }; };
+      const search = () => { let s0 = null, s1 = null, t = 0; while (t < 80 && s1 == null) { sim(1); t += dt; if (s0 == null && a.behavior === 'search') s0 = t; if (s0 != null && a.behavior === 'return') s1 = t; } return s0 == null || s1 == null ? null : s1 - s0; };
+      const out = {};
+      for (const k of ['N', 'A', 'B', 'C']) {
+        const o = out[k] = {};
+        setP(k); o.one = steps(1, 2, 2);
+        setP(k); o.four = steps(4, 2, 2);
+        setP(k); o.six = steps(6, 2, 2);
+        setP(k); o.far = steps(3, 2, 3.2);
+        setP(k); for (let q = 0; q < 3; q++) { noise.emit(3, 'footstep', new THREE.Vector3(g.position.x + 3, 0, g.position.z - 3), 'concrete', 'player'); sim(3); } o.strongInv = a.state === 'SUSPICIOUS' || a.state === 'INVESTIGATING'; o.strong = search(); o.strongReact = a.reactions;
+        setP(k); o.amb = steps(5, 2, 2); o.ambSearch = o.amb.inv ? search() : null; o.ambPeak = a.incident ? a.incident.peak : 0; o.earlyEnds = g.personality.counts.earlyEnds; o.extraRounds = g.personality.counts.extraRounds;
+        // vision: she stands 8 m in front of him for 1 s
+        setP(k); hidden = false; const q = g.position.clone().addScaledVector(g.forward(), 8); motor.teleport(q.x, q.z, g.yaw + Math.PI); for (let f = 0; f < 2; f++) step(0, 'stand'); sim(60); o.meter = +v.meter.toFixed(5); motor.teleport(-17, 15, 0); hidden = true;
+        o.senses = JSON.stringify([v.cfg, v.profile, v.range(), g.hearing.cfg, g.hearing.profile]);   // his physical senses' settings
+      }
+      g.personality = new mv.GuardPersonality(g, Object.assign({ enabled: false }, area.profiles.B)); g.reset();
+      out.knows = knows; return out;
+    });
+    const N = r.N, A = r.A, B = r.B, C = r.C, all = [N, A, B, C];
+    // the same steps heard or missed, identical sense settings, and the same meter rise (within 0.5%: his idle
+    // animation's phase, which RESET doesn't rewind, moves his eyes by millimetres between runs)
+    const sameSenses = all.every(x => x.one.heard === N.one.heard && x.four.heard === N.four.heard && x.far.heard === N.far.heard && x.senses === N.senses && Math.abs(x.meter - N.meter) <= 0.005 * N.meter);
+    const ok = sameSenses && all.every(x => x.one.reactions === 1 && !x.one.inv && x.four.reactions === 1 && x.six.inv && x.strongInv && x.strong != null)
+      && C.one.dismissed >= 1 && C.one.calmAt < N.one.calmAt && B.one.calmAt > N.one.calmAt
+      && B.four.inv && !N.four.inv && !C.four.inv && C.strong < N.strong && N.strong < B.strong
+      && C.amb.inv && C.ambPeak < 0.85 && C.earlyEnds >= 1 && B.extraRounds >= 1 && r.knows === 0;
+    const f = x => `${(x.peak * 100).toFixed(0)}%${x.inv ? ' → investigates' : x.calmAt != null ? ', calm after ' + x.calmAt.toFixed(1) + ' s' : ''}`;
+    return { pass: ok, detail: `same senses for all four ${sameSenses} (heard ${all.map(x => x.one.heard + '/' + x.four.heard + '/' + x.far.heard).join(', ')} steps, meter after 1 s at 8 m ${all.map(x => x.meter).join(', ')}); one faint step — neutral ${f(N.one)}, Curious ${f(A.one)}, Focused ${f(B.one)}, Careless ${f(C.one)} (dismissed ${C.one.dismissed}), "huh" ×1 each ${all.every(x => x.one.reactions === 1)}; four steps — N ${f(N.four)}, A ${f(A.four)}, B ${f(B.four)}, C ${f(C.four)}; six steps — C ${f(C.six)}; three jog steps: all investigate, search N ${N.strong.toFixed(1)} s, A ${A.strong.toFixed(1)}, B ${B.strong.toFixed(1)}, C ${C.strong.toFixed(1)}; five faint steps (ambiguous, Careless peak ${(C.ambPeak * 100).toFixed(0)}%): search N ${N.ambSearch == null ? '-' : N.ambSearch.toFixed(1)}, B ${B.ambSearch == null ? '-' : B.ambSearch.toFixed(1)}, C ${C.ambSearch == null ? '-' : C.ambSearch.toFixed(1)} s (Careless cut short ${C.earlyEnds}, Focused extra rounds ${B.extraRounds}); targets near her hidden position: ${r.knows} frames` };
+  },
+
+  // Step 11, 4: patrol observations over 3 laps (seeded): Focused stops are longer and more
+  // thorough (deliberate sweeps) than neutral, Careless ones sometimes shorter (quick looks),
+  // the route always completed in order, no joint pops, no teleport
+  async focCarePatrol() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, area } = MV, g = MV.guard, a = g.awareness, p = g.patrol, T = MV.seeTarget, dt = 1 / 60, B = g.bones, mv = MV.SCmv;
+      const run = k => {
+        g.personality = new mv.GuardPersonality(g, k === 'N' ? Object.assign({ enabled: false }, area.profiles.B) : area.profiles[k]); p.enabled = true; g.reset(); motor.teleport(-17, 15, 0);
+        const P = g.personality, order = [], durs = [], spans = [], prevQ = {}; let lastKey = '', start = 0, pops = 0, maxStep = 0, lp = g.position.clone(), yMin = 9, yMax = -9;
+        for (let f = 0; f < 3 * 60 * 60; f++) {
+          step(0, 'stand'); noise.update(dt); g.update(dt, T);
+          if (p.state === 'walking' && order[order.length - 1] !== p.index) order.push(p.index);
+          const key = p.state + p.index; if (key !== lastKey) { if (lastKey.startsWith('observing')) { durs.push(a.clock - start); spans.push((yMax - yMin) * 57.3); } if (p.state === 'observing') { start = a.clock; yMin = 9; yMax = -9; } lastKey = key; }
+          if (p.state === 'observing' && g.isStill()) { const face = (p.cfg.points[p.index].face || 0) * Math.PI / 180, y = Math.atan2(Math.sin(g.yaw - face), Math.cos(g.yaw - face)); yMin = Math.min(yMin, y); yMax = Math.max(yMax, y); }
+          maxStep = Math.max(maxStep, g.position.distanceTo(lp)); lp.copy(g.position);
+          const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert();
+          for (const nm of ['spine1', 'chest', 'neck', 'head', 'leftUpLeg', 'rightUpLeg']) { const q = ri.clone().multiply(B[nm].getWorldQuaternion(new THREE.Quaternion())); if (prevQ[nm] && 2 * Math.acos(Math.min(1, Math.abs(q.dot(prevQ[nm])))) * 57.3 > 9) pops++; prevQ[nm] = q; }
+        }
+        const mean = x => x.reduce((s, y) => s + y, 0) / Math.max(1, x.length);
+        return { order: order.join(''), stops: durs.length, mean: mean(durs), min: Math.min(...durs), span: mean(spans), counts: Object.assign({}, P.counts), pops, maxStep };
+      };
+      const out = { N: run('N'), B: run('B'), C: run('C') };
+      g.personality = new mv.GuardPersonality(g, Object.assign({ enabled: false }, area.profiles.B)); p.enabled = false; g.reset();
+      return out;
+    });
+    const { N, B, C } = r;
+    const ok = [N, B, C].every(x => x.order.startsWith('1230123012') && x.pops === 0 && x.maxStep < 0.03 && x.stops >= 9)
+      && B.mean > N.mean + 0.5 && B.span > N.span && B.counts.sweeps >= 3 && C.mean < N.mean && C.min < N.min && C.counts.shortStops >= 1;
+    const d = x => `${x.stops} stops, mean ${x.mean.toFixed(2)} s (shortest ${x.min.toFixed(2)}), looked over ${x.span.toFixed(0)}° on average`;
+    return { pass: ok, detail: `3 laps — neutral: ${d(N)}; Focused/Bored: ${d(B)}, ${B.counts.sweeps} deliberate sweeps; Careless/Bored: ${d(C)}, ${C.counts.shortStops} quick stops; routes in order ${[N, B, C].every(x => x.order.startsWith('1230123012'))}; joint pops ${N.pops}/${B.pops}/${C.pops}` };
+  },
+
+  // Step 11, 10, 11, 12: awareness first, for Focused (B) and Careless (C) on patrol. Plain
+  // view: ALERT on the same frame as a neutral guard. She stays in view for 10 s: he stays
+  // ALERT (Careless never lets a recognised intruder go). She hides: EVASION 30 s, HEIGHTENED
+  // 60 s, the walk back and stand-down; no personality action starts during them; then he
+  // resumes his route and his personality acts again
+  async focCarePriority() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, area } = MV, g = MV.guard, a = g.awareness, p = g.patrol, T = MV.seeTarget, dt = 1 / 60, mv = MV.SCmv;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
+      const total = P => Object.values(P.counts).reduce((s, x) => s + x, 0);
+      const run = k => {
+        g.personality = new mv.GuardPersonality(g, k === 'N' ? Object.assign({ enabled: false }, area.profiles.B) : area.profiles[k]); const P = g.personality;
+        // ALERT timing under identical conditions: at his post, she steps out 3 m in front
+        p.enabled = false; g.reset(); motor.teleport(-17, 15, 0); sim(30);
+        const q0 = g.position.clone().addScaledVector(g.forward(), 3); motor.teleport(q0.x, q0.z, g.yaw + Math.PI); for (let f = 0; f < 2; f++) step(0, 'stand');
+        let n = 0; while (a.state !== 'ALERT' && n < 600) { sim(1); n++; }
+        // then on patrol: recognised on the W0 → W1 leg
+        p.enabled = true; g.reset(); motor.teleport(-17, 15, 0);
+        let t = 0; while (!(p.state === 'walking' && p.index === 1 && Math.hypot(g.position.x - 2, g.position.z + 16) > 4) && t < 30) { sim(1); t += dt; }
+        const q = g.position.clone().addScaledVector(g.forward(), 3); motor.teleport(q.x, q.z, g.yaw + Math.PI); for (let f = 0; f < 2; f++) step(0, 'stand');
+        let m = 0; while (a.state !== 'ALERT' && m < 600) { sim(1); m++; }
+        let notAlert = 0; for (let f = 0; f < 600; f++) { sim(1); if (a.state !== 'ALERT') notAlert++; }
+        motor.teleport(-17, 15, 0); const seq = [a.state], times = {}; const c0 = total(P); let during = 0; t = 0;
+        while (a.standDowns === 0 && t < 150) { const b = total(P); sim(1); t += dt; if (seq[seq.length - 1] !== a.state) { seq.push(a.state); times[a.state] = a.clock; } if (a.state !== 'NORMAL' && total(P) > b) during++; }
+        const at = total(P); t = 0; while (t < 120 && !(p.state === 'walking' && p.resumes >= 1 && !p.rejoining)) { sim(1); t += dt; }
+        const resumed = p.state === 'walking' && p.resumes >= 1; t = 0; while (t < 120 && total(P) === at && P.enabled) { sim(1); t += dt; }
+        return { n, m, notAlert, seq: seq.join(' → '), ev: (times.HEIGHTENED || 0) - (times.EVASION || 0), hs: (times.RETURNING || 0) - (times.HEIGHTENED || 0), during, resumed, actedAgain: total(P) > at, traits: JSON.stringify(P.traits) };
+      };
+      const out = { N: run('N'), B: run('B'), C: run('C') };
+      g.personality = new mv.GuardPersonality(g, Object.assign({ enabled: false }, area.profiles.B)); p.enabled = false; g.reset();
+      return out;
+    });
+    const { N, B, C } = r;
+    const ok = [B, C].every(x => x.n === N.n && x.m < 600 && x.notAlert === 0 && /^ALERT → EVASION → HEIGHTENED → RETURNING → NORMAL$/.test(x.seq) && Math.abs(x.ev - 30) < 1 && Math.abs(x.hs - 60) < 0.5 && x.during === 0 && x.resumed && x.actedAgain)
+      && N.resumed && B.traits === '{"primary":"focused","secondary":"bored"}' && C.traits === '{"primary":"careless","secondary":"bored"}';
+    const d = x => `ALERT after ${x.n} frames at his post (${x.m} on patrol), not ALERT in 10 s of view ${x.notAlert}, ${x.seq} (search ${x.ev.toFixed(1)} s, Heightened ${x.hs.toFixed(1)} s), personality actions during ${x.during}, resumed route ${x.resumed}, personality again ${x.actedAgain}`;
+    return { pass: ok, detail: `neutral: ALERT after ${N.n} frames at his post, resumed ${N.resumed}; Focused: ${d(B)}; Careless: ${d(C)}` };
+  },
+
+  // Step 11 on an iPhone-landscape screen (real touches, frame loop running), a stationary
+  // guard. One faint footstep behind him: Focused and Careless both react once ("huh");
+  // Careless writes it off and is calm again sooner after his reaction. Then she sneaks back
+  // and forth behind him: with that repeated evidence both become convinced and investigate.
+  // STATS shows the profile and Careless's dismissal
+  async focCareTouch() {
+    const page = await touchPage(), Tc = page.touch, X = 150, Y = 300, out = {};
+    const steer = async (tx, tz, px, max) => {
+      const t0 = Date.now(); let first = true;
+      while (Date.now() - t0 < max) {
+        const st = await page.evaluate(([tx, tz]) => { const f = MV.cam.forward(new THREE.Vector3()), p = MV.motor.position, wx = tx - p.x, wz = tz - p.z, l = Math.hypot(wx, wz); return { mx: (wx * -f.z + wz * f.x) / l, my: (wx * f.x + wz * f.z) / l, d: l }; }, [tx, tz]);
+        if (st.d < 0.35 || await page.evaluate(() => MV.guard.awareness.state === 'INVESTIGATING' || MV.guard.awareness.state === 'ALERT')) break;
+        if (first) { await Tc('touchStart', [{ x: X, y: Y, id: 1 }]); first = false; }
+        await Tc('touchMove', [{ x: X + st.mx * px, y: Y - st.my * px, id: 1 }]); await page.waitForTimeout(200);
+      }
+      if (!first) await Tc('touchEnd', []);
+    };
+    for (const k of ['B', 'C']) {
+      await page.evaluate(k => {
+        useProfile(k); const g = MV.guard, a = g.awareness; g.patrol.enabled = false; g.reset();
+        const b = g.position.clone().addScaledVector(g.forward(), -2.0); MV.motor.teleport(b.x, b.z, g.yaw + Math.PI); MV.cam.snap(MV.motor);   // facing away: her steps lead away from him
+        for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; }   // (as RESET does: no phantom landing after a teleport)
+        window.__w = { h0: g.hearing.heardCount, reactT: null, calmT: null, stats: '' };
+        (function f() { const w = window.__w; if (w.reactT == null && a.reactions > 0) w.reactT = a.clock; if (w.reactT != null && w.calmT == null && a.state === 'NORMAL') w.calmT = a.clock;
+          const s = document.getElementById('mv-persona').textContent; if (/dismissed/.test(s)) w.stats = s; if (!window.__stop) requestAnimationFrame(f); })();
+      }, k);
+      await page.waitForTimeout(300);
+      // exactly one faint step 2 m behind him (a touch tap gives 0–3 steps depending on frame timing)
+      await page.evaluate(() => { const g = MV.guard, b = g.position.clone().addScaledVector(g.forward(), -2); MV.motor.teleport(-17, 15, 0); MV.cam.snap(MV.motor); for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; } window.__w.h0 = g.hearing.heardCount; MV.noise.emit(1, 'footstep', b, 'concrete', 'player'); });   // she's out of sight elsewhere
+      await page.waitForFunction(() => window.__w.calmT != null || MV.guard.awareness.state === 'INVESTIGATING', null, { timeout: 40000, polling: 100 }).catch(() => {});
+      const one = await page.evaluate(() => { const w = window.__w, a = MV.guard.awareness; return { heard: MV.guard.hearing.heardCount - w.h0, reactions: a.reactions, state: a.state, calm: w.calmT == null ? null : w.calmT - w.reactT, dismissed: MV.guard.personality.counts.dismissed, stats: w.stats || document.getElementById('mv-persona').textContent }; });
+      // she sneaks back and forth 1.4 m behind him
+      await page.evaluate(() => { const g = MV.guard; g.reset(); window.__h1 = g.hearing.heardCount; window.__r1 = g.awareness.reactions; const b = g.position.clone().addScaledVector(g.forward(), -1.4); MV.motor.teleport(b.x - 1.8, b.z, Math.PI / 2); MV.cam.snap(MV.motor); for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; } });
+      const back = await page.evaluate(() => { const g = MV.guard, b = g.position.clone().addScaledVector(g.forward(), -1.4); return [b.x, b.z]; });
+      for (let i = 0; i < 6; i++) await steer(back[0] + (i % 2 ? -1.8 : 1.8), back[1], 22, 6000);
+      await page.waitForFunction(() => ['INVESTIGATING', 'ALERT'].includes(MV.guard.awareness.state), null, { timeout: 8000 }).catch(() => {});
+      const many = await page.evaluate(() => ({ heard: MV.guard.hearing.heardCount - window.__h1, reactions: MV.guard.awareness.reactions, state: MV.guard.awareness.state }));
+      out[k] = { one, many };
+    }
+    await page.evaluate(() => { window.__stop = true; MV.guard.personality.enabled = false; MV.guard.reset(); });
+    const { B, C } = out;
+    const ok = [B, C].every(x => x.one.heard === 1 && x.one.reactions === 1 && x.one.calm != null && x.many.heard >= 4 && x.many.reactions === 1 && ['INVESTIGATING', 'ALERT'].includes(x.many.state))
+      && C.one.calm < B.one.calm && C.one.dismissed >= 1 && /dismissed weak evidence/.test(C.one.stats) && /FOCUSED \(primary\)/.test(B.one.stats) && page.errors.length === 0;
+    const d = x => `one faint step: ${x.one.heard} heard, "huh" ×${x.one.reactions}, calm ${x.one.calm == null ? 'never (' + x.one.state + ')' : x.one.calm.toFixed(1) + ' s after his reaction'}; sneaking back and forth behind him: ${x.many.heard} steps heard, "huh" ×${x.many.reactions}, ${x.many.state}`;
+    return { pass: ok, detail: `Focused: ${d(B)}; Careless: ${d(C)} (STATS "${C.one.stats}"); page errors ${page.errors.length}` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
