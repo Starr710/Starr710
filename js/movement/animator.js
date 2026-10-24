@@ -300,7 +300,9 @@
     if (this.state === 'stopped') dPhase = 0;
     // stepping while turning in place: about one step per 90° of turn
     if (this.turnSm > 1e-3 && this.state !== 'stopping') dPhase += dt * Math.abs(motor.angularVelocity) * c.turnStepRate * this.turnSm;
-    this.phase = (this.phase + dPhase) % 1;
+    // motor.reverseGait (Step 13.1, set only by CQC while she pulls a guard backward): the
+    // gait cycle runs backwards, so the walk reads as stepping backward. Normal movement never sets it
+    this.phase = motor.reverseGait ? ((this.phase - dPhase) % 1 + 1) % 1 : (this.phase + dPhase) % 1;
     this._lastLen = blendLen;
 
     A.idle.setEffectiveWeight(idleW * St);

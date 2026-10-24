@@ -2517,6 +2517,116 @@ const CHECKS = {
     return { pass: ok, detail: `walked up behind him: button lit ${ready}; tapped CQC: ${held.state}, button "${held.label}", he's ${held.aware}; stick + camera drag together: moved him ${mv.moved.toFixed(2)} m, camera turned ${mv.camTurn.toFixed(2)} rad, still ${mv.d.toFixed(2)} m apart; tapped RELEASE: ${freed.state}, button "${freed.label}", he's ${freed.aware}; held CQC 1 s by him: ${hold.state} ("${hold.note}"); RESET mid-grapple (${mid}): ${reset.state}, button "${reset.label}", he's ${reset.aware}; page errors ${page.errors.length}` };
   },
 
+  // Step 13.1, 1–8, 11: MGSV-style pulling. With the camera behind her, each of eight stick
+  // directions (toward the camera, left, right, away, and the four diagonals) moves the pair
+  // ≥ 1 m along the stick in 1.5 s, the pair turned so she faces away from the travel (she
+  // pulls him backward, both stepping backward); the pair's centre is up to speed (≥ 0.9 m/s)
+  // within 0.6 s; a 90° steer keeps ≥ 60% of the speed; a full reversal turns the pair round
+  // without a stop or a jump; partial pushes scale the speed and a tiny one does nothing;
+  // spacing and facing stay locked; his own AI never moves him; no joint pops on either
+  async cqcPull() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input, cam } = MV, g = MV.guard, cq = MV.cqc, dt = 1 / 60, wrap = x => Math.atan2(Math.sin(x), Math.cos(x)), c = cq.cfg;
+      let pops = 0; const prevQ = {};
+      const bonesOf = (B, tag) => ['spine1', 'chest', 'head', 'leftUpLeg', 'rightUpLeg', 'leftLeg', 'rightLeg', 'leftArm', 'rightArm'].map(n => [tag + n, B[n]]);
+      const all = bonesOf(MV.visual.bones, 'p').concat(bonesOf(g.bones, 'g'));
+      const frame = (mx, my) => {
+        const f = cam.forward(new THREE.Vector3()), rx = -f.z, rz = f.x; let dx = rx * (mx || 0) + f.x * (my || 0), dz = rz * (mx || 0) + f.z * (my || 0); const mag = Math.min(1, Math.hypot(mx || 0, my || 0)), l = Math.hypot(dx, dz); if (l > 1e-4) { dx /= l; dz /= l; }
+        const held = cq.update(dt, dx, dz, mag); if (!held) motor.update(dt, dx, dz, mag);
+        MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true);
+        g.update(dt, MV.seeTarget); noise.update(dt);
+        for (const [k, b] of all) { const root = k[0] === 'p' ? MV.visual.root : g.root, q = root.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(b.getWorldQuaternion(new THREE.Quaternion())); const ang = prevQ[k] ? 2 * Math.acos(Math.min(1, Math.abs(q.dot(prevQ[k])))) * 57.3 : 0; if (cq.state === 'GRAPPLING' && ang > 12) { pops++; (window.__pops = window.__pops || []).push(k + ' ' + ang.toFixed(1) + '° v' + (cq.vel ? Math.hypot(cq.vel.x, cq.vel.y).toFixed(2) : '-')); } prevQ[k] = q; }   // (only while she holds him: the setup teleports jolt both)
+      };
+      const centre = () => new THREE.Vector3((motor.position.x + g.position.x) / 2, 0, (motor.position.z + g.position.z) / 2);
+      const start = () => { cq.cancel(); g.patrol.enabled = false; g.reset(); g.motor.teleport(0, -2, 0); g.place(); const b = g.position.clone().addScaledVector(g.forward(), -1.0); motor.teleport(b.x, b.z, 0); cam.snap(motor); for (const k in prevQ) delete prevQ[k]; for (let i = 0; i < 10; i++) frame(); input.cqcTapped = true; for (let i = 0; i < 40; i++) frame(); };
+      const stickDir = (mx, my) => { const f = cam.forward(new THREE.Vector3()); return new THREE.Vector3(-f.z * mx + f.x * my, 0, f.x * mx + f.z * my).normalize(); };
+      const lock = { spacing: 0, yaw: 0, own: 0 }, track = () => { lock.spacing = Math.max(lock.spacing, Math.abs(Math.hypot(g.position.x - motor.position.x, g.position.z - motor.position.z) - c.holdOffset)); lock.yaw = Math.max(lock.yaw, Math.abs(wrap(g.yaw - motor.yaw)) * 57.3); if (g.moving || g.path) lock.own++; };
+      const dirs = [];
+      for (const [name, mx, my] of [['toward camera', 0, -1], ['left', -1, 0], ['right', 1, 0], ['away', 0, 1], ['back-left', -0.71, -0.71], ['back-right', 0.71, -0.71], ['fwd-left', -0.71, 0.71], ['fwd-right', 0.71, 0.71]]) {
+        start(); const want = stickDir(mx, my), c0 = centre(); let up = null, t = 0;
+        for (let i = 0; i < 90; i++) { const cb = centre(); frame(mx, my); track(); t += dt; const sp = centre().distanceTo(cb) / dt; if (up == null && sp >= 0.9) up = t; }
+        const d = centre().sub(c0), face = Math.abs(wrap(motor.yaw - Math.atan2(-want.x, -want.z))) * 57.3;
+        dirs.push({ name, along: d.dot(want), off: Math.abs(d.x * want.z - d.z * want.x), up, face, back: motor.reverseGait && g.motor.reverseGait, phaseMoving: MV.animator.state });
+      }
+      // steering: pulling toward the camera, then the stick swings 90° to the left
+      start(); for (let i = 0; i < 60; i++) { frame(0, -1); track(); } let steerMin = 9; for (let i = 0; i < 60; i++) { const cb = centre(); frame(-1, 0); track(); steerMin = Math.min(steerMin, centre().distanceTo(cb) / dt); }
+      // reversal: toward the camera, then straight away from it
+      start(); for (let i = 0; i < 60; i++) { frame(0, -1); track(); } let revMin = 9, revJump = 0, avMax = 0; const y0 = motor.yaw;
+      for (let i = 0; i < 120; i++) { const cb = centre(), pb = motor.position.clone(); frame(0, 1); track(); revMin = Math.min(revMin, centre().distanceTo(cb) / dt); revJump = Math.max(revJump, motor.position.distanceTo(pb)); avMax = Math.max(avMax, Math.abs(cq.av)); }
+      const revTurned = Math.abs(wrap(motor.yaw - y0)) * 57.3;
+      // partial pushes
+      const partial = {}; for (const p of [0.4, 0.25, 0.04]) { start(); for (let i = 0; i < 90; i++) frame(0, -p); let s = 0; for (let i = 0; i < 30; i++) { const cb = centre(); frame(0, -p); s += centre().distanceTo(cb) / dt; } partial[p] = s / 30; }
+      cq.cancel(); g.reset();
+      return { popList: (window.__pops || []).slice(0, 25).join(', '), dirs, steerMin, revMin, revJump, avMax, revTurned, partial, lock, pops, pull: c.pullSpeed, turnRate: c.turnRate };
+    });
+    // directions that need the pair to turn right round (away from the camera) get up to 1 s to reach speed
+    const ok = r.dirs.every(d => d.along >= 1.0 && d.off < 0.25 * d.along && d.up != null && d.up <= (/away|fwd/.test(d.name) ? 1.0 : 0.6) && d.face < 10 && d.back)
+      && r.steerMin >= 0.6 * r.pull && r.revMin >= 0.25 && r.revJump < 0.06 && r.avMax <= r.turnRate + 1e-6 && r.revTurned > 150
+      && r.partial[0.4] > 0.45 && r.partial[0.4] < 0.62 && r.partial[0.25] > 0.2 && r.partial[0.25] < 0.4 && r.partial[0.04] < 0.01
+      && r.lock.spacing < 0.01 && r.lock.yaw < 1 && r.lock.own === 0 && r.pops === 0;
+    return { pass: ok, detail: r.dirs.map(d => `${d.name}: ${d.along.toFixed(2)} m along the stick (${d.off.toFixed(2)} m off), up to speed in ${d.up == null ? '-' : d.up.toFixed(2)} s, facing away from travel within ${d.face.toFixed(0)}°, stepping backward ${d.back}`).join('; ') + `; steering 90°: speed ≥ ${r.steerMin.toFixed(2)} m/s; reversal: turned ${r.revTurned.toFixed(0)}°, speed ≥ ${r.revMin.toFixed(2)} m/s, pivot ≤ ${r.avMax.toFixed(2)} rad/s, largest per-frame move ${(r.revJump * 100).toFixed(1)} cm; pushes 40% / 25% / 4%: ${r.partial[0.4].toFixed(2)} / ${r.partial[0.25].toFixed(2)} / ${r.partial[0.04].toFixed(2)} m/s; spacing within ${(r.lock.spacing * 100).toFixed(2)} cm, facing within ${r.lock.yaw.toFixed(2)}°, his own movement ${r.lock.own}; joint pops ${r.pops}${r.pops ? ' (' + r.popList + ')' : ''}` };
+  },
+
+  // Step 13.1, 9, 10: both bodies against walls, crates and pillars. Pulled along the
+  // perimeter wall with him on the wall side: neither overlaps it and they slide along it.
+  // Pulled into the tall crate's corner, and pivoted next to a pillar: no overlap, no
+  // separation, and they still get somewhere (never permanently stuck)
+  async cqcPullCollision() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input, world } = MV, g = MV.guard, cq = MV.cqc, dt = 1 / 60;
+      const intr = (p, R) => { let w = 0; for (const b of world.boxes) { const dx = Math.max(b.minX - p.x, 0, p.x - b.maxX), dz = Math.max(b.minZ - p.z, 0, p.z - b.maxZ); w = Math.max(w, R - Math.hypot(dx, dz)); } for (const cy of world.cylinders) if (!cy.noSight) w = Math.max(w, cy.r + R - Math.hypot(p.x - cy.x, p.z - cy.z)); return w; };
+      const frame = (dx, dz, mag) => { cq.update(dt, dx, dz, mag); MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); g.update(dt, MV.seeTarget); noise.update(dt); };
+      const run = (gx, gz, gyaw, dirs) => {
+        cq.cancel(); g.patrol.enabled = false; g.reset(); g.motor.teleport(gx, gz, gyaw); g.place(); const b = g.position.clone().addScaledVector(g.forward(), -0.9); motor.teleport(b.x, b.z, gyaw);
+        input.cqcTapped = true; for (let i = 0; i < 40; i++) frame(0, 0, 0);
+        const c0 = new THREE.Vector3((motor.position.x + g.position.x) / 2, 0, (motor.position.z + g.position.z) / 2);
+        let worst = 0, sep = 0;
+        for (const [dx, dz, n] of dirs) for (let i = 0; i < n; i++) { frame(dx, dz, 1); worst = Math.max(worst, intr(g.position, g.cfg.radius), intr(motor.position, motor.cfg.radius)); sep = Math.max(sep, Math.abs(Math.hypot(g.position.x - motor.position.x, g.position.z - motor.position.z) - cq.cfg.holdOffset)); }
+        const c1 = new THREE.Vector3((motor.position.x + g.position.x) / 2, 0, (motor.position.z + g.position.z) / 2);
+        return { worst, sep, travel: c1.distanceTo(c0), state: cq.state };
+      };
+      // along the south perimeter wall (inner face z = −21.75), him on the wall side, pulled east
+      const wall = run(-4, -21.1, Math.PI, [[1, 0, 180]]);
+      // diagonally into the tall crate's corner (crate −2.6…−1.4 × −8.6…−7.4), then on along its side
+      const crate = run(-3.8, -10, 0.6, [[0.6, 0.8, 120], [1, 0, 90]]);
+      // pivoting next to a pillar (−14, −12, r 0.35): the stick swings round in a full circle
+      const circle = []; for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; circle.push([Math.sin(a), Math.cos(a), 30]); }
+      const pillar = run(-13.2, -12.6, 0, circle);
+      cq.cancel(); g.reset();
+      return { wall, crate, pillar };
+    });
+    const okOne = x => x.worst < 0.02 && x.sep < 0.01 && x.state === 'GRAPPLING';
+    const ok = okOne(r.wall) && okOne(r.crate) && okOne(r.pillar) && r.wall.travel > 2 && r.crate.travel > 1;
+    const d = (k, x) => `${k}: deepest overlap ${(Math.max(0, x.worst) * 100).toFixed(1)} cm, spacing error ${(x.sep * 100).toFixed(2)} cm, travelled ${x.travel.toFixed(2)} m`;
+    return { pass: ok, detail: [d('along the perimeter wall', r.wall), d('into the tall crate corner and along it', r.crate), d('circling the stick next to a pillar', r.pillar)].join('; ') };
+  },
+
+  // Step 13.1 with real iPhone touches (frame loop running): grab from behind, then the left
+  // thumb pulls toward the camera, to the left, to the right and diagonally while the right
+  // thumb turns the camera: each moves the pair along the stick; RELEASE frees him
+  async cqcPullTouch() {
+    const page = await patrolPage(true), Tc = page.touch, X = 150, Y = 300;
+    const tapCqc = async () => { const b = await page.locator('#mv-cqc').boundingBox(); await Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(80); await Tc('touchEnd', []); };
+    await page.evaluate(() => { const g = MV.guard; g.patrol.enabled = false; g.reset(); g.motor.teleport(0, -4, 0); g.place(); const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, 0); MV.cam.snap(MV.motor); });
+    await page.waitForTimeout(300); await tapCqc();
+    await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {});
+    const runs = [];
+    for (const [name, sx, sy] of [['toward camera', 0, 1], ['left', -1, 0], ['right', 1, 0], ['diagonal back-left', -0.71, 0.71]]) {
+      const before = await page.evaluate(([sx, sy]) => { const f = MV.cam.forward(new THREE.Vector3()), want = new THREE.Vector3(-f.z * sx + f.x * -sy, 0, f.x * sx + f.z * -sy).normalize(); window.__want = want; return [MV.motor.position.x, MV.motor.position.z, MV.guard.position.x, MV.guard.position.z]; }, [sx, sy]);
+      await Tc('touchStart', [{ x: X, y: Y, id: 1 }, { x: 620, y: 200, id: 2 }]);
+      for (let i = 1; i <= 10; i++) { await Tc('touchMove', [{ x: X + sx * 60, y: Y + sy * 60, id: 1 }, { x: 620 + (i % 2 ? 2 : -2), y: 200, id: 2 }]); await page.waitForTimeout(150); }
+      await Tc('touchEnd', []); await page.waitForTimeout(400);
+      runs.push(Object.assign({ name }, await page.evaluate(b => { const cx = (MV.motor.position.x + MV.guard.position.x) / 2 - (b[0] + b[2]) / 2, cz = (MV.motor.position.z + MV.guard.position.z) / 2 - (b[1] + b[3]) / 2, w = window.__want;
+        return { along: cx * w.x + cz * w.z, spacing: Math.hypot(MV.guard.position.x - MV.motor.position.x, MV.guard.position.z - MV.motor.position.z), state: MV.cqc.state }; }, before)));
+    }
+    await tapCqc(); await page.waitForFunction(() => MV.cqc.state === 'FREE', null, { timeout: 8000 }).catch(() => {});
+    const end = await page.evaluate(() => ({ state: MV.cqc.state, restrained: !!MV.guard.restraint, rev: MV.motor.reverseGait || MV.guard.motor.reverseGait }));
+    const ok = runs.every(x => x.along > 0.5 && Math.abs(x.spacing - 0.55) < 0.03 && x.state === 'GRAPPLING') && end.state === 'FREE' && !end.restrained && !end.rev && page.errors.length === 0;
+    return { pass: ok, detail: runs.map(x => `${x.name}: ${x.along.toFixed(2)} m along the stick, ${x.spacing.toFixed(2)} m apart`).join('; ') + ` (camera thumb held throughout); RELEASE: ${end.state}, reverse gait cleared ${!end.rev}; page errors ${page.errors.length}` };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();

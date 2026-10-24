@@ -6,8 +6,10 @@
 // rear. It only needs him within `range`, nothing solid between them (a sight line at
 // chest height) and the player free to act. While she holds him the pair is one unit:
 // she stands behind him, both facing the same way, `holdOffset` apart. The joystick moves
-// them slowly (a separate grapple mode, not a normal movement speed): the pair turns toward
-// the stick and steps forward, or backs up when the stick points behind. Both bodies are
+// them in a separate grapple mode (not a normal movement speed), MGSV-style (Step 13.1): the
+// stick is the direction of travel; the pair pivots about its centre until she faces away
+// from it and pulls him backward that way, both stepping backward. Travel follows the stick
+// at once, eased; any direction works, and a reversal turns the pair round. Both bodies are
 // kept out of walls. The guard's own locomotion and patrol are suspended (guard.restraint);
 // his awareness keeps its memory and knows he's in contact with an intruder, so he's ALERT
 // and stays so; he makes no sound. RELEASE pushes him a step away and hands him back to his
@@ -24,10 +26,18 @@
     holdTime: 0.45,        // s: a press longer than this is a HOLD (reserved), shorter a TAP
     grabTime: 0.4,         // s to bring both into the restraint position (eased, no snap)
     holdOffset: 0.55,      // m from her centre to his while she holds him (she's behind him)
-    moveSpeed: 0.55,       // m/s forward while restraining (cautious)…
-    backSpeed: 0.4,        // …and backing up
-    accel: 1.6,            // m/s² easing in and out of it
-    turnRate: 1.3,         // rad/s the pair turns toward the stick
+    // Step 13.1 restraint movement (MGSV-style): the stick is the direction of travel; the
+    // pair turns so she faces away from it and pulls him backward that way
+    pullSpeed: 1.0,        // m/s at a full push (slower and more deliberate than walking)…
+    fullPushAt: 0.7,       // …reached at this much stick push (partial pushes scale down)…
+    deadZone: 0.06,        // …below this the stick is ignored
+    accel: 3.0,            // m/s² speeding up…
+    decel: 4.0,            // …and slowing down
+    turnRate: 2.4,         // rad/s the pair can pivot (about its centre)…
+    turnStiffness: 5,      // …chasing the wanted facing with this gain…
+    turnSmoothing: 10,     // …smoothed (1/s)
+    steerMinSpeed: 0.5,    // share of speed kept while the pair still faces the wrong way (a reversal)
+    travelTurnRate: 4.5,   // rad/s the travel direction swings toward the stick (a reversal is a short U-turn, never a stop)
     releaseTime: 0.35,     // s for the release step…
     releasePush: 0.5,      // …moving him this much farther away from her
     arms: { shoulder: 48, elbow: 55 },   // ° her arms come up and bend to hold him (procedural)
@@ -79,7 +89,7 @@
     // she takes him from wherever she is: the pair faces from her toward him
     const yaw = Math.atan2(g.position.x - m.position.x, g.position.z - m.position.z);
     this.from = { p: m.position.clone(), py: m.yaw, g: g.position.clone(), gy: g.yaw, yaw };
-    this.yaw = yaw; this.state = 'GRABBING'; this.t = 0; this.speed = 0; this.grabs++;
+    this.yaw = yaw; this.state = 'GRABBING'; this.t = 0; this.speed = 0; this.grabs++; this.vel = null; this.av = 0; this.dir = null;
     if (this.input.crouch) this.input.setCrouch(false);
     m.stance = 'stand';
     g.restraint = { by: m, since: g.awareness ? g.awareness.clock : 0 };
@@ -98,6 +108,7 @@
   mv.CQC.prototype.cancel = function () {
     if (this.guard) { this.guard.restraint = null; this.guard.stopMoving(); }
     this.state = 'FREE'; this.speed = 0; this.motor.speed = 0; this.motor.targetSpeed = 0; this.motor.angularVelocity = 0;
+    this.motor.reverseGait = false; if (this.guard) this.guard.motor.reverseGait = false; this.vel = null; this.av = 0; this.dir = null;
   };
 
   // keep a body out of solid things (the guard's own collider moved aside)
@@ -143,28 +154,48 @@
       return true;
     }
     if (this.state === 'GRAPPLING') {
-      // turn toward the stick; step forward, or back up when it points behind
-      let want = 0, turn = 0;
-      if (mag > 0.15) {
-        const diff = wrap(Math.atan2(dx, dz) - m.yaw);
-        if (Math.abs(diff) > 2.2) want = -c.backSpeed * mag;                 // pulling back: back up, no turn
-        else { turn = Math.max(-c.turnRate * dt, Math.min(c.turnRate * dt, diff)); want = c.moveSpeed * mag * Math.max(0, Math.cos(diff)); }
+      // Step 13.1: the stick is the travel direction (camera-relative, as always). The pair
+      // pivots about its centre until she faces away from it, and she pulls him backward
+      // that way. Travel follows the stick at once (a little less while still turning round)
+      const v = this.vel || (this.vel = new THREE.Vector2(0, 0));
+      const push = mag > c.deadZone ? Math.min(1, (mag - c.deadZone) / (c.fullPushAt - c.deadZone)) : 0;
+      let wantYaw = m.yaw, tvx = 0, tvz = 0;
+      if (push > 0) {
+        const tl = Math.hypot(dx, dz) || 1, ux = dx / tl, uz = dz / tl;          // travel direction (unit)
+        wantYaw = Math.atan2(-ux, -uz);                                          // she faces away from it
+        const err = Math.abs(wrap(wantYaw - m.yaw));
+        const keep = Math.max(c.steerMinSpeed, Math.sqrt(Math.max(0, Math.cos(err / 2))));
+        tvx = ux * c.pullSpeed * push * keep; tvz = uz * c.pullSpeed * push * keep;
       }
-      this.speed += Math.max(-c.accel * dt, Math.min(c.accel * dt, want - this.speed));
-      if (Math.abs(this.speed) < 0.005 && want === 0) this.speed = 0;
-      const yaw = wrap(m.yaw + turn), ox = m.position.x, oz = m.position.z;
-      this._place(ox + Math.sin(yaw) * this.speed * dt, oz + Math.cos(yaw) * this.speed * dt, yaw, c.holdOffset);
-      const moved = Math.hypot(m.position.x - ox, m.position.z - oz) / Math.max(dt, 1e-6);
-      // the animators read the motors: walking forward plays the walk, backing up stays in place
-      m.speed = this.speed > 0 ? Math.min(this.speed, moved) : 0; m.targetSpeed = this.speed > 0.02 ? m.speed : 0; m.angularVelocity = turn / Math.max(dt, 1e-6);
-      this._setGuardMotion(m.speed, m.angularVelocity);
+      // pivot (rate-limited, smoothed)
+      const diff = wrap(wantYaw - m.yaw), wantAv = push > 0 ? Math.max(-c.turnRate, Math.min(c.turnRate, diff * c.turnStiffness)) : 0;
+      this.av = (this.av || 0) + (wantAv - (this.av || 0)) * (1 - Math.exp(-c.turnSmoothing * dt));
+      // travel: the speed eases up and down; the direction swings toward the stick at a set rate
+      // (so changing direction, even reversing, keeps moving: a short arc rather than a stop)
+      const tSpd = Math.hypot(tvx, tvz); let spd = Math.hypot(v.x, v.y), dir = this.dir != null ? this.dir : m.yaw + Math.PI;
+      const fromRest = spd < 0.05;                                               // setting off: straight toward the stick
+      spd += Math.max(-c.decel * dt, Math.min(c.accel * dt, tSpd - spd));
+      if (tSpd > 0) { const want = Math.atan2(tvx, tvz); dir = fromRest ? want : dir + Math.max(-c.travelTurnRate * dt, Math.min(c.travelTurnRate * dt, wrap(want - dir))); }
+      if (push === 0 && spd < 0.01) spd = 0;
+      this.dir = wrap(dir); v.set(Math.sin(this.dir) * spd, Math.cos(this.dir) * spd);
+      // move: pivot about the pair's centre, then travel; both bodies kept out of walls
+      const yaw = wrap(m.yaw + this.av * dt), half = c.holdOffset / 2;
+      const cx = m.position.x + Math.sin(m.yaw) * half, cz = m.position.z + Math.cos(m.yaw) * half;
+      const ox = m.position.x, oz = m.position.z;
+      this._place(cx - Math.sin(yaw) * half + v.x * dt, cz - Math.cos(yaw) * half + v.y * dt, yaw, c.holdOffset);
+      // the animators read the motors: the pair's travel speed (the pivot shows as stepping round
+      // on the spot), stepping backward while she pulls him (gait run in reverse)
+      const sp = Math.hypot(v.x, v.y); this.speed = sp;
+      const back = v.x * Math.sin(yaw) + v.y * Math.cos(yaw) <= 0;
+      m.speed = sp > 0.03 ? sp : 0; m.targetSpeed = push > 0 && sp > 0.03 ? sp : 0; m.angularVelocity = this.av; m.reverseGait = back;
+      this._setGuardMotion(m.speed, this.av, back, m.targetSpeed);
       return true;
     }
     if (this.state === 'RELEASING') {
       this.t += dt; const k = ease(this.t / c.releaseTime), f = this.from, yaw = m.yaw;
       const want = new THREE.Vector3(f.g.x + Math.sin(yaw) * c.releasePush * k, 0, f.g.z + Math.cos(yaw) * c.releasePush * k);
       const r = this._resolve(want.x, want.z, g.cfg.radius); g.position.x = r.x; g.position.z = r.z; g.place();
-      m.speed = 0; m.targetSpeed = 0; m.angularVelocity = 0; this._setGuardMotion(0, 0);
+      m.speed = 0; m.targetSpeed = 0; m.angularVelocity = 0; m.reverseGait = false; this._setGuardMotion(0, 0);
       if (this.t >= c.releaseTime) {
         g.restraint = null; g.stopMoving(); g.wantYaw = g.yaw;
         if (g.awareness && g.awareness.onReleased) g.awareness.onReleased(m.position);
@@ -175,8 +206,8 @@
     return false;
   };
 
-  mv.CQC.prototype._setGuardMotion = function (speed, av) {
-    const gm = this.guard.motor; gm.speed = speed; gm.targetSpeed = speed > 0.02 ? speed : 0; gm.angularVelocity = av; gm.accel = 0;
+  mv.CQC.prototype._setGuardMotion = function (speed, av, back, target) {
+    const gm = this.guard.motor; gm.speed = speed; gm.targetSpeed = target != null ? target : (speed > 0.02 ? speed : 0); gm.angularVelocity = av; gm.accel = 0; gm.reverseGait = !!back;
   };
 
   // after her animator and posture layer: her arms come up and forward to hold him
