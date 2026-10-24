@@ -77,6 +77,7 @@
   // start the throw with plan p and these phase times (Step 16: the quick takedown runs it shorter)
   mv.CQC.prototype._throwBegin = function (p, dur, quick) {
     const m = this.motor, g = this.guard, c = this.tcfg;
+    this.bf = null;   // (Step 17: a committed throw ends the break-free countdown)
     const want = Math.atan2(p.L.x, p.L.z), rel = wrap(want - m.yaw), turn = Math.max(-c.playerTurnMax, Math.min(c.playerTurnMax, rel * 180 / Math.PI * c.playerTurn)) * Math.PI / 180;
     this.thr = { t: 0, phase: 'initiate', L: p.L, side: p.side, S: g.position.clone(), yaw0: g.yaw, yaw1: Math.atan2(-p.L.x, -p.L.z), pyaw0: m.yaw, pyaw1: m.yaw + turn,
       by: m.position.clone(), hipsOut: c.hipsOut, impacted: false, guard: g, dur, quick: !!quick };

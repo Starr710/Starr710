@@ -58,6 +58,7 @@
     this.tcfg = Object.assign({}, mv.ThrowDefaults || {}, (opts && opts.throw) || {});   // Step 14 throw settings
     this.kcfg = Object.assign({}, mv.ChokeDefaults || {}, (opts && opts.choke) || {});   // Step 15 choke settings
     this.dcfg = Object.assign({}, mv.TakedownDefaults || {}, (opts && opts.takedown) || {});   // Step 16 quick takedown settings
+    this.bcfg = Object.assign({}, mv.BreakFreeDefaults || {}, (opts && opts.breakFree) || {});   // Step 17 break-free timer
     this.guards = Array.isArray(guards) ? guards : [guards];
     this.guard = this.guards[0];   // the guard she holds (or last held / last checked)
     this.world = world;
@@ -70,6 +71,7 @@
     this.ch = null; this.chokes = 0; this.chokeInterrupts = 0; this.chokeDone = 0; this.lastChoke = ''; this.lastLowerSound = null; this._chokeSeen = this.input ? this.input.chokePresses || 0 : 0;
     this.thr = null; this.throwPose = null; this.throws = 0; this.impacts = 0; this.lastThrow = ''; this.lastImpact = null;
     this.quick = false; this.takedowns = 0; this.takedownFails = 0; this.lastTakedown = '';
+    this.bf = null; this.breaks = 0; this.bfResets = 0; this.lastBreak = '';
     this.t = 0; this.from = null; this.speed = 0; this.grabs = 0; this.releases = 0;
     this.lastTry = ''; this.holdNote = ''; this.armW = 0; this._armBase = new Map();
   };
@@ -122,6 +124,7 @@
     if (this.input.crouch) this.input.setCrouch(false);
     m.stance = 'stand';
     g.restraint = { by: m, since: g.awareness ? g.awareness.clock : 0 };
+    if (!this.quick && this._bfStart) this._bfStart();   // Step 17: the standard break-free countdown starts with the grab
     g.stopMoving();
     if (g.awareness && g.awareness.onRestrained) g.awareness.onRestrained(m.position);
   };
@@ -129,7 +132,7 @@
   mv.CQC.prototype.release = function () {
     if (this.state !== 'GRAPPLING') return;
     const g = this.guard;
-    this.state = 'RELEASING'; this.t = 0; this.releases++;
+    this.state = 'RELEASING'; this.t = 0; this.releases++; this.bf = null;   // (RELEASE ends the break-free countdown)
     this.from = { g: g.position.clone() };
   };
 
@@ -141,7 +144,7 @@
     if (this.thr) { if (!this.thr.impacted && this.thr.guard.ko) this.thr.guard.ko.abortThrow(); this.thr = null; this.throwPose = null; this.motor.stance = 'stand'; }
     if (this.guard) { this.guard.restraint = null; this.guard.stopMoving(); }
     for (const g of this.guards) if (g.restraint && g.restraint.by === this.motor) { g.restraint = null; g.stopMoving(); }
-    this.state = 'FREE'; this.speed = 0; this.motor.speed = 0; this.motor.targetSpeed = 0; this.motor.angularVelocity = 0;
+    this.state = 'FREE'; this.speed = 0; this.motor.speed = 0; this.motor.targetSpeed = 0; this.motor.angularVelocity = 0; this.bf = null;
     this.motor.reverseGait = false; if (this.guard) this.guard.motor.reverseGait = false; this.vel = null; this.av = 0; this.dir = null;
   };
 
@@ -180,7 +183,9 @@
     const g = this.guard;   // (after the tap: a grab may have just picked a different guard)
     const holding = this.state === 'GRABBING' || this.state === 'GRAPPLING' || (this.state === 'THROWING' && this.thr.phase !== 'recover') || (this.state === 'CHOKING' && this.ch.phase !== 'recover');
     this.armW += ((holding ? 1 : 0) - this.armW) * (1 - Math.exp(-8 * dt));
+    if (this._bfTick) this._bfTick(dt);   // Step 17: the break-free countdown (may start a BREAKING)
     if (this.state === 'FREE') return false;
+    if (this.state === 'BREAKING') return this._breakStep(dt);
     if (this.state === 'THROWING') return this._throwStep(dt);
     if (this.state === 'CHOKING') return this._chokeStep(dt, !!(inp.choking && inp.choking()));
     if (this.state === 'GRABBING') {
@@ -284,7 +289,9 @@
     if (this.state === 'FREE') { const why = this.check(); return `FREE · ${why ? 'no grab: ' + why : 'CQC available: ' + name(this.target)}${this.holdNote ? ' · ' + this.holdNote : ''}`; }
     if (this.state === 'THROWING') return `${this.thr.quick ? 'TAKEDOWN' : 'THROWING'} · ${name(this.guard)} · ${this.throwStatus()}`;
     if (this.quick) return `TAKEDOWN · seizing ${name(this.guard)}`;
-    if (this.state === 'CHOKING') return `CHOKING · ${name(this.guard)} ${this.ch.phase === 'hold' ? 'RESTRAINED' : 'UNCONSCIOUS'} · ${PHASES_CH[this.ch.phase] || this.ch.phase}`;
-    return `${this.state === 'GRAPPLING' ? 'GRAPPLING · ' + name(this.guard) + ' RESTRAINED' : this.state + ' · ' + name(this.guard)}${this.state === 'GRAPPLING' ? ' · ' + this.speed.toFixed(2) + ' m/s' : ''}`;
+    if (this.state === 'CHOKING') return `CHOKING · ${name(this.guard)} ${this.ch.phase === 'hold' ? 'RESTRAINED' : 'UNCONSCIOUS'} · ${PHASES_CH[this.ch.phase] || this.ch.phase}${this.bf ? ` · break-free paused (${this.bf.left.toFixed(1)} s)` : ''}`;
+    const bf = this.bf ? ` · breaks free in ${this.bf.left.toFixed(1)} s${this.state === 'CHOKING' ? ' (paused)' : ''}` : '';
+    if (this.state === 'BREAKING') return `BREAKING FREE · ${name(this.guard)}`;
+    return `${this.state === 'GRAPPLING' ? 'GRAPPLING · ' + name(this.guard) + ' RESTRAINED' : this.state + ' · ' + name(this.guard)}${this.state === 'GRAPPLING' ? ' · ' + this.speed.toFixed(2) + ' m/s' : ''}${bf}`;
   };
 })(SC.mv);

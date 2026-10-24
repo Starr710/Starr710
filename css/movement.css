@@ -144,6 +144,12 @@ body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.pla
 #mv-cqc.charging .mv-ring, #mv-cqc.fired .mv-ring { visibility: visible; }
 #mv-cqc .mv-ring circle { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 182.2; stroke-dashoffset: 182.2; }
 #mv-cqc.fired .mv-ring circle { stroke: var(--warn); stroke-dashoffset: 0; }
+/* Step 17: while she holds a guard the ring round RELEASE is the break-free time left; red and pulsing near the end */
+#mv-cqc.timer .mv-ring { visibility: visible; }
+#mv-cqc.timer .mv-ring circle { stroke: var(--text); stroke-width: 3; }
+#mv-cqc.timer.urgent .mv-ring circle { stroke: #ff4a3d; stroke-width: 4; animation: mv-urgent 0.5s ease-in-out infinite alternate; }
+@keyframes mv-urgent { from { opacity: 1; } to { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { #mv-cqc.timer.urgent .mv-ring circle { animation: none; } }
 /* THROW (Step 14): appears above RELEASE only while she holds a guard; dim when there's no room to throw */
 #mv-throw {
   position: absolute; width: 56px; height: 56px; border-radius: 50%;

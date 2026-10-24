@@ -152,7 +152,7 @@
   let fps = 60, fpsT = 0, fpsN = 0, hudT = 0, grace = 2;
   // stats text is written only when it changes (each write re-lays out the bar)
   const put = (el, v) => { if (el._v !== v) { el._v = v; el.textContent = v; } };
-  const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false, thr: false, thrReady: null, thrShown: null, locked: false, ring: null, charging: false, fired: false, cring: null };
+  const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false, thr: false, thrReady: null, thrShown: null, locked: false, ring: null, charging: false, fired: false, cring: null, timer: false, urgent: false };
   ui.chokeRing = ui.chokeBtn.querySelector('circle'); ui.cqcRing = ui.cqcBtn.querySelector('circle'); ui.cqcLabel = ui.cqcBtn.querySelector('span');
   function frame() {
     const dt = Math.min(clock.getDelta(), 1 / 20);
@@ -184,7 +184,12 @@
         const hp = input.cqcHoldProgress(), charging = hp != null && hp > 0.3, fired = cqc.quick || (cqc.state === 'THROWING' && cqc.thr.quick && cqc.thr.t < 0.35);
         if (cqcUi.charging !== charging) { cqcUi.charging = charging; ui.cqcBtn.classList.toggle('charging', charging); }
         if (cqcUi.fired !== fired) { cqcUi.fired = fired; ui.cqcBtn.classList.toggle('fired', fired); }
-        if (charging) { const off = (182.2 * (1 - hp)).toFixed(1); if (cqcUi.cring !== off) { cqcUi.cring = off; ui.cqcRing.style.strokeDashoffset = off; } } else if (cqcUi.cring !== null) { cqcUi.cring = null; ui.cqcRing.style.strokeDashoffset = ''; }
+        // Step 17: while she holds a guard the same ring shows the break-free time left (urgent near the end)
+        const bf = cqc.breakFreeInfo(), timer = !charging && !!bf, urgent = timer && bf.urgent;
+        if (cqcUi.timer !== timer) { cqcUi.timer = timer; ui.cqcBtn.classList.toggle('timer', timer); }
+        if (cqcUi.urgent !== urgent) { cqcUi.urgent = urgent; ui.cqcBtn.classList.toggle('urgent', urgent); }
+        const ringK = charging ? hp : timer ? bf.left / bf.full : null;
+        if (ringK != null) { const off = (182.2 * (1 - ringK)).toFixed(1); if (cqcUi.cring !== off) { cqcUi.cring = off; ui.cqcRing.style.strokeDashoffset = off; } } else if (cqcUi.cring !== null) { cqcUi.cring = null; ui.cqcRing.style.strokeDashoffset = ''; }
         if (cqcUi.hold !== hold) { cqcUi.hold = hold; ui.cqcBtn.classList.toggle('holding', hold); }
         if (cqcUi.shown !== cqcUi.ready) { cqcUi.shown = cqcUi.ready; ui.cqcBtn.classList.toggle('ready', cqcUi.ready); }
       }

@@ -61,6 +61,7 @@
       this.throwPose = A ? A.chokePlayer('hold', ch.p, ch.t, c) : null;
       if (ch.p >= 1) {   // out: limp in her arms, she lowers him
         g.poseHook = null; g.ko.beginLower(); if (g._live) g._live.clear();   // (his slumped pose is what's frozen)
+        this.bf = null;   // (Step 17: he's out: no break-free)
         ch.phase = 'lower'; ch.t = 0; this.lastChoke = 'completed'; this.chokeDone = (this.chokeDone || 0) + 1;
         const want = Math.atan2(ch.L.x, ch.L.z), turn = Math.max(-this.tcfg.playerTurnMax, Math.min(this.tcfg.playerTurnMax, wrap(want - m.yaw) * 180 / Math.PI * c.playerTurn)) * Math.PI / 180;
         ch.pyaw1 = m.yaw + turn;
@@ -93,6 +94,7 @@
     g.poseHook = null; if (mv.ThrowAnim) mv.ThrowAnim.clearLive(g);
     this.lastChoke = `interrupted at ${Math.round(ch.p * 100)}%`; this.chokeInterrupts = (this.chokeInterrupts || 0) + 1;
     this.ch = null; this.throwPose = null; this.state = 'GRAPPLING'; this.vel = null; this.av = 0; this.dir = null; this.speed = 0;
+    if (this._bfReset) this._bfReset();   // Step 17: a partial choke buys the full break-free time again
     return true;
   };
 

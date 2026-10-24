@@ -2429,7 +2429,7 @@ const CHECKS = {
   // Step 13: holding him. They stay aligned (0.55 m apart, facing the same way) through the
   // grab and while she moves him forward, turns and backs up; neither ever overlaps a wall
   // when she drives him into the tall crate; his own AI never moves him (no orders of his,
-  // patrol interrupted), he's ALERT and stays in contact for 20 s (no search starts), makes
+  // patrol interrupted), he's ALERT and stays in contact (no search starts) until just before his Step 17 break-free time (≥ 2 s), makes
   // no sound. RELEASE separates them, she moves normally again, he's free, still ALERT and
   // turns to her. RESET mid-grapple ends it cleanly
   async cqcRestraint() {
@@ -2459,8 +2459,10 @@ const CHECKS = {
       let f = F(); sim(120, f[0], f[1], 1); const fwd = motor.position.clone().sub(p0).dot(new THREE.Vector3(Math.sin(yaw0), 0, Math.cos(yaw0)));
       const y1 = motor.yaw; for (let i = 0; i < 120; i++) { const y = motor.yaw + Math.PI / 2; frame(Math.sin(y), Math.cos(y), 1); } const turned = Math.abs(wrap(motor.yaw - y1)) * 57.3;
       const p2 = motor.position.clone(), y2 = motor.yaw; for (let i = 0; i < 120; i++) { const y = y2 + Math.PI; frame(Math.sin(y), Math.cos(y), 1); } const back = -motor.position.clone().sub(p2).dot(new THREE.Vector3(Math.sin(y2), 0, Math.cos(y2)));
-      // held 20 s, she's behind him (out of his sight): contact the whole time
-      let notAlert = 0, sounds = 0; for (let i = 0; i < 20 * 60; i++) { frame(); if (a.state !== 'ALERT') notAlert++; } sounds = a.reactions - r0;
+      // held (she's behind him, out of his sight): contact the whole time. Since Step 17 he breaks
+      // free after 10 s, so this hold runs to half a second before that
+      const holdFor = cq.bf ? Math.max(0, cq.bf.left - 0.5) : 0;
+      let notAlert = 0, sounds = 0; for (let i = 0; i < Math.round(holdFor * 60); i++) { frame(); if (a.state !== 'ALERT') notAlert++; } sounds = a.reactions - r0;
       // release (in the open)
       const relAt = motor.position.clone(); input.cqcTapped = true; sim(40);
       const rel = { state: cq.state, restrained: !!g.restraint, sep: Math.hypot(g.position.x - motor.position.x, g.position.z - motor.position.z), aware: a.state };
@@ -2475,13 +2477,13 @@ const CHECKS = {
       const bb = g.position.clone().addScaledVector(g.forward(), -1.0); motor.teleport(bb.x, bb.z, g.yaw); for (let k = 0; k < 2; k++) step(0, 'stand'); lp.copy(motor.position); window.__glp = null; input.cqcTapped = true; sim(30); const midState = cq.state;
       cq.cancel(); g.reset(); motor.teleport(MV.area.spawn.x, MV.area.spawn.z, MV.area.spawn.yaw); sim(30);
       const reset = { state: cq.state, restrained: !!g.restraint, aware: a.state, post: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z) };
-      return { grabbed, align, yawErr, jump, ownMoves, fwd, turned, back, notAlert, sounds, captions: MV.caption.shown - c0, crateWorst, rel, spd, after, midState, reset };
+      return { grabbed, align, yawErr, jump, ownMoves, fwd, turned, back, notAlert, sounds, captions: MV.caption.shown - c0, crateWorst, rel, spd, after, midState, reset, holdFor };
     });
     const ok = r.grabbed.state === 'GRAPPLING' && r.grabbed.aware === 'ALERT' && r.grabbed.patrol === 'interrupted' && r.align < 0.02 && r.yawErr < 1 && r.jump < 0.06 && r.ownMoves === 0
-      && r.fwd > 0.6 && r.turned > 60 && r.back > 0.35 && r.notAlert === 0 && r.sounds === 0 && r.captions === 0 && r.crateWorst < 0.02
+      && r.fwd > 0.6 && r.turned > 60 && r.back > 0.35 && r.holdFor >= 2 && r.notAlert === 0 && r.sounds === 0 && r.captions === 0 && r.crateWorst < 0.02
       && r.rel.state === 'FREE' && !r.rel.restrained && r.rel.sep > 0.9 && r.rel.aware === 'ALERT' && r.spd > 0.95 && r.spd < 1.35 && r.after.calm === 0 && r.after.patrolled === 0 && (r.after.state === 'ALERT' || r.after.state === 'EVASION') && r.after.searchFrom < 2
       && r.midState === 'GRAPPLING' && r.reset.state === 'FREE' && !r.reset.restrained && r.reset.aware === 'NORMAL' && r.reset.post < 0.01;
-    return { pass: ok, detail: `grabbed on his patrol: ${r.grabbed.state}, he's ${r.grabbed.aware}, patrol ${r.grabbed.patrol}; held: spacing within ${(r.align * 100).toFixed(1)} cm of ${0.55} m, facing within ${r.yawErr.toFixed(2)}°, largest per-frame move ${(r.jump * 100).toFixed(1)} cm, his own movement orders ${r.ownMoves}; moved him ${r.fwd.toFixed(2)} m forward, turned ${r.turned.toFixed(0)}°, backed up ${r.back.toFixed(2)} m; 20 s held: not ALERT ${r.notAlert} frames, vocal reactions ${r.sounds}, captions ${r.captions}; pushed into the tall crate: deepest overlap ${(Math.max(0, r.crateWorst) * 100).toFixed(1)} cm; RELEASE: ${r.rel.state}, ${r.rel.sep.toFixed(2)} m apart, he's ${r.rel.aware}, then she sneaks off at ${r.spd.toFixed(2)} m/s; 5 s later he's ${r.after.state} (calm frames ${r.after.calm}, patrolling frames ${r.after.patrolled}), hunting from ${r.after.searchFrom.toFixed(2)} m of where she let go; RESET mid-grapple (${r.midState}): ${r.reset.state}, restrained ${r.reset.restrained}, ${r.reset.aware}, at his post ${r.reset.post.toFixed(2)} m` };
+    return { pass: ok, detail: `grabbed on his patrol: ${r.grabbed.state}, he's ${r.grabbed.aware}, patrol ${r.grabbed.patrol}; held: spacing within ${(r.align * 100).toFixed(1)} cm of ${0.55} m, facing within ${r.yawErr.toFixed(2)}°, largest per-frame move ${(r.jump * 100).toFixed(1)} cm, his own movement orders ${r.ownMoves}; moved him ${r.fwd.toFixed(2)} m forward, turned ${r.turned.toFixed(0)}°, backed up ${r.back.toFixed(2)} m; ${r.holdFor.toFixed(1)} s held: not ALERT ${r.notAlert} frames, vocal reactions ${r.sounds}, captions ${r.captions}; pushed into the tall crate: deepest overlap ${(Math.max(0, r.crateWorst) * 100).toFixed(1)} cm; RELEASE: ${r.rel.state}, ${r.rel.sep.toFixed(2)} m apart, he's ${r.rel.aware}, then she sneaks off at ${r.spd.toFixed(2)} m/s; 5 s later he's ${r.after.state} (calm frames ${r.after.calm}, patrolling frames ${r.after.patrolled}), hunting from ${r.after.searchFrom.toFixed(2)} m of where she let go; RESET mid-grapple (${r.midState}): ${r.reset.state}, restrained ${r.reset.restrained}, ${r.reset.aware}, at his post ${r.reset.post.toFixed(2)} m` };
   },
 
   // Step 13 with real iPhone touches (frame loop running, patrol on): she walks up behind
@@ -3605,6 +3607,124 @@ const CHECKS = {
       && cancelled.cqc === 'FREE' && cancelled.ko === 'CONSCIOUS' && !cancelled.held && cancelled.input === 'CANCELLED'
       && nobody.cqc === 'FREE' && nobody.grabs === g1 && /failed/.test(nobody.last) && clean(resetHold) && midPhase !== 'FREE' && clean(resetMid) && page.errors.length === 0;
     return { pass: ok, detail: `0.08 s tap by Guard 2: ${tap.cqc} (takedowns ${tap.takedowns}); RELEASE: ${rel.cqc}, he's ${rel.ko}; 0.6 s hold: ring filled ${hold.charge}, states ${hold.seen.join(' > ')}, grabs +${hold.grabs - g0}, takedowns ${hold.takedowns}, he's ${hold.ko}, then she walked ${Math.hypot(walked.pos[0] - hold.pos[0], walked.pos[1] - hold.pos[1]).toFixed(2)} m; press cancelled at 0.15 s: ${cancelled.cqc}, he's ${cancelled.ko} (${cancelled.input}); 0.6 s hold with nobody near: ${nobody.cqc}, grabs +${nobody.grabs - g1}, "${nobody.last}"; RESET during a hold: ${resetHold.cqc}, ${resetHold.g.map(g => g.ko + ' ' + g.post.toFixed(2) + ' m').join(', ')}; RESET mid-takedown (${midPhase}): ${resetMid.cqc}, ${resetMid.g.map(g => g.ko + ' ' + g.post.toFixed(2) + ' m').join(', ')}; page errors ${page.errors.length}` };
+  },
+
+  // Step 17, 1–14: the standard break-free timer. Every grab starts the same 10 s countdown:
+  // Guard 2 from behind (unaware), Guard 2 from the front fully ALERT, Guard 1 on patrol with
+  // a different personality — all identical. It runs standing (3 s), pulling (2 s) and
+  // turning (2 s) alike. Holding CHOKE pauses it; letting go puts it back to 10 s, again and
+  // again, and the next choke still starts from 0. Left alone it runs out: he twists free
+  // (no frame jump over 6 cm, nothing through walls), ends ≥ 1 m from her, unrestrained and
+  // ALERT, remembering where she was; she walks again at once and can grab him straight away
+  async breakFreeTimer() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input, world } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget;
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) motor.update(dt, dx || 0, dz || 0, mag || 0); MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); noise.update(dt); g1.update(dt, T); g2.update(dt, T); };
+      const sim = (n, dx, dz, mag) => { for (let i = 0; i < n; i++) frame(dx, dz, mag); }, until = (fn, max) => { let n = 0; while (!fn() && n < max) { frame(); n++; } return n; };
+      const place = (g, rel, d) => { const y = g.yaw + rel, p = g.position.clone().add(new THREE.Vector3(Math.sin(y) * d, 0, Math.cos(y) * d)); motor.teleport(p.x, p.z, Math.atan2(g.position.x - p.x, g.position.z - p.z)); for (let k = 0; k < 2; k++) step(0, 'stand'); };
+      const fresh = () => { cq.cancel(); input._chokeKey = false; g1.patrol.enabled = false; g1.reset(); g2.reset(); motor.teleport(-19, 19, 0); sim(10); };
+      const grab = () => { input.cqcTapped = true; frame(); const at = cq.bf ? cq.bf.left : null; sim(40); return { full: cq.bf && cq.bf.full, start: at, state: cq.state }; };
+      const out = { starts: {} };
+      fresh(); place(g2, Math.PI, 1.0); out.starts['G2 unaware, behind'] = grab();
+      fresh(); place(g2, 0, 1.2); until(() => g2.awareness.state === 'ALERT', 300); sim(150); out.starts['G2 ALERT, front'] = grab();
+      fresh(); g1.personality = new MV.SCmv.GuardPersonality(g1, MV.area.profiles.C); g1.patrol.enabled = true; g1.reset(); until(() => g1.patrol.state === 'walking' && g1.moving, 600); place(g1, Math.PI, 1.0); out.starts['G1 patrolling, careless'] = grab();
+      g1.personality = new MV.SCmv.GuardPersonality(g1, MV.area.profiles.B);
+      // what runs it down
+      fresh(); place(g2, Math.PI, 1.0); grab();
+      let a = cq.bf.left; sim(180); out.still = a - cq.bf.left;
+      a = cq.bf.left; const f = motor.yaw + Math.PI; sim(120, Math.sin(f), Math.cos(f), 1); out.pull = a - cq.bf.left;
+      a = cq.bf.left; for (let i = 0; i < 120; i++) { const y = motor.yaw + Math.PI / 2; frame(Math.sin(y), Math.cos(y), 1); } out.turn = a - cq.bf.left;
+      // CHOKE pauses, letting go resets (repeatedly), the choke itself starts again from 0
+      a = cq.bf.left; input._chokeKey = true; input.chokePresses++; sim(60); out.choke = { before: a, during: cq.bf.left, p: cq.ch.p, state: cq.state };
+      input._chokeKey = false; frame(); out.reset1 = { left: cq.bf.left, state: cq.state, ko: g2.ko.state };
+      sim(300); const mid = cq.bf.left; input._chokeKey = true; input.chokePresses++; sim(12); const p2 = cq.ch.p; input._chokeKey = false; frame(); out.reset2 = { before: mid, left: cq.bf.left, p: p2 };
+      // left alone: he breaks free
+      const P0 = motor.position.clone(); let jump = 0, gJump = 0, lp = motor.position.clone(), lg = g2.position.clone(), worst = 0, saw = [];
+      const intr = (p, R) => { let w = 0; for (const b of world.boxes) { const dx = Math.max(b.minX - p.x, 0, p.x - b.maxX), dz = Math.max(b.minZ - p.z, 0, p.z - b.maxZ); w = Math.max(w, R - Math.hypot(dx, dz)); } return w; };
+      const t0 = cq.bf.left; let n = 0;
+      while (n < 900) { frame(); n++; if (saw[saw.length - 1] !== cq.state) saw.push(cq.state); jump = Math.max(jump, motor.position.distanceTo(lp)); gJump = Math.max(gJump, g2.position.distanceTo(lg)); lp.copy(motor.position); lg.copy(g2.position); worst = Math.max(worst, intr(g2.position, g2.cfg.radius), intr(motor.position, motor.cfg.radius)); if (cq.state === 'FREE') break; }
+      const ga = g2.awareness;
+      out.broke = { after: n / 60, t0, states: saw.join('>'), jump, gJump, worst, sep: Math.hypot(g2.position.x - motor.position.x, g2.position.z - motor.position.z), restrained: !!g2.restraint, aware: ga.state, note: ga.note,
+        mem: ga.seen ? Math.hypot(ga.seen.position.x - motor.position.x, ga.seen.position.z - motor.position.z) : 99, bf: cq.bf, breaks: cq.breaks, stat: '' };
+      sim(30); out.broke.aware2 = ga.state; out.broke.moves = g2.restraint == null;
+      let spd = 0; const f2 = motor.yaw + Math.PI; for (let i = 0; i < 40; i++) { frame(Math.sin(f2), Math.cos(f2), 0.78); spd = Math.max(spd, motor.speed); } out.broke.spd = spd;
+      place(g2, Math.PI, 1.0); out.regrab = grab();
+      cq.cancel(); g1.reset(); g2.reset();
+      return out;
+    });
+    const starts = Object.values(r.starts), b = r.broke;
+    const ok = starts.every(s => s.full === 10 && s.state === 'GRAPPLING' && Math.abs(s.start - starts[0].start) < 1e-6) && starts[0].start > 9.9
+      && Math.abs(r.still - 3) < 0.02 && Math.abs(r.pull - 2) < 0.02 && Math.abs(r.turn - 2) < 0.02
+      && r.choke.state === 'CHOKING' && Math.abs(r.choke.during - r.choke.before) < 1e-6 && r.reset1.state === 'GRAPPLING' && r.reset1.ko === 'CONSCIOUS' && Math.abs(r.reset1.left - 10) < 0.02
+      && r.reset2.before < 5.1 && Math.abs(r.reset2.left - 10) < 0.02 && r.reset2.p < 0.1
+      && Math.abs(b.after - b.t0 - 0.5) < 0.05 && b.states === 'GRAPPLING>BREAKING>FREE' && b.jump < 0.06 && b.gJump < 0.06 && b.worst < 0.02 && b.sep > 1.0 && !b.restrained && b.aware === 'ALERT' && /broke free/.test(b.note) && b.mem < 0.3 && !b.bf && b.breaks === 1
+      && b.spd > 0.9 && r.regrab.state === 'GRAPPLING' && r.regrab.full === 10 && page.errors.length === 0;
+    return { pass: ok, detail: `starts: ${Object.entries(r.starts).map(([k, s]) => `${k} ${s.start.toFixed(2)}/${s.full} s`).join(', ')}; used by 3 s standing ${r.still.toFixed(2)} s, 2 s pulling ${r.pull.toFixed(2)} s, 2 s turning ${r.turn.toFixed(2)} s; CHOKE held 1 s: ${r.choke.before.toFixed(2)} → ${r.choke.during.toFixed(2)} s (paused), let go: ${r.reset1.state}, he's ${r.reset1.ko}, ${r.reset1.left.toFixed(2)} s; 5 s later ${r.reset2.before.toFixed(2)} s, a 0.2 s choke (from ${Math.round(r.reset2.p * 100)}%) → ${r.reset2.left.toFixed(2)} s; left alone: ${b.states} ${b.after.toFixed(2)} s later (${b.t0.toFixed(2)} s on the clock + the 0.5 s wrench), steps ≤ ${(b.jump * 100).toFixed(1)} / ${(b.gJump * 100).toFixed(1)} cm, overlap ${(Math.max(0, b.worst) * 100).toFixed(1)} cm, ${b.sep.toFixed(2)} m apart, restrained ${b.restrained}, he's ${b.aware} ("${b.note}"), remembers her ${b.mem.toFixed(2)} m from where she is, then she walks at ${b.spd.toFixed(2)} m/s; grabbed again at once: ${r.regrab.state} (${r.regrab.full} s)` };
+  },
+
+  // Step 17, 11, 15–17: the timer never cuts into a committed action. THROW started with 1 s
+  // left, and a full CHOKE started with 2 s left, both finish (UNCONSCIOUS, no break-free).
+  // RELEASE ends the countdown. The quick takedown never starts one. RESET mid-grapple
+  // clears it all. Grapple pulling is unchanged by it (≥ 1.3 m in 1.5 s, spacing locked)
+  async breakFreeActions() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget;
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) step(0, 'stand'); else { MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); } noise.update(dt); g1.update(dt, T); g2.update(dt, T); };
+      const sim = (n, dx, dz, mag) => { for (let i = 0; i < n; i++) frame(dx, dz, mag); }, until = (fn, max) => { let n = 0; while (!fn() && n < max) { frame(); n++; } return n; };
+      const setup = () => { cq.cancel(); input._chokeKey = false; g1.patrol.enabled = false; g1.reset(); g2.reset(); const b = g2.position.clone().addScaledVector(g2.forward(), -1.0); motor.teleport(b.x, b.z, g2.yaw); for (let k = 0; k < 2; k++) step(0, 'stand'); sim(2); input.cqcTapped = true; sim(40); };
+      const out = {};
+      setup(); until(() => cq.bf.left <= 1, 900); input.throwTapped = true; frame(); const b0 = cq.breaks; until(() => cq.state === 'FREE', 300);
+      out.throw = { ko: g2.ko.state, breaks: cq.breaks - b0, bf: cq.bf };
+      setup(); until(() => cq.bf.left <= 2, 900); input._chokeKey = true; input.chokePresses++; const b1 = cq.breaks; until(() => cq.state === 'FREE', 600); input._chokeKey = false;
+      out.choke = { ko: g2.ko.state, breaks: cq.breaks - b1, bf: cq.bf };
+      setup(); sim(60); input.cqcTapped = true; frame(); out.release = { bf: cq.bf, state: cq.state }; sim(40); out.release.after = cq.state; sim(700); out.release.breaks = cq.breaks;
+      cq.cancel(); g2.reset(); const b = g2.position.clone().addScaledVector(g2.forward(), -1.0); motor.teleport(b.x, b.z, g2.yaw); for (let k = 0; k < 2; k++) step(0, 'stand'); sim(2);
+      let anyBf = false; input.cqcHeld = true; for (let i = 0; i < 90; i++) { frame(); if (cq.bf) anyBf = true; } out.quick = { anyBf, ko: g2.ko.state };
+      setup(); sim(30); const left = cq.bf.left; cq.cancel(); g1.reset(); g2.reset(); sim(5); out.reset = { left, bf: cq.bf, state: cq.state, restrained: !!g2.restraint };
+      setup(); const c0 = motor.position.clone(), f = motor.yaw + Math.PI; let sep = 0; for (let i = 0; i < 90; i++) { frame(Math.sin(f), Math.cos(f), 1); sep = Math.max(sep, Math.abs(Math.hypot(g2.position.x - motor.position.x, g2.position.z - motor.position.z) - cq.cfg.holdOffset)); }
+      out.pull = { moved: motor.position.distanceTo(c0), sep };
+      cq.cancel(); g1.reset(); g2.reset();
+      return out;
+    });
+    const ok = r.throw.ko === 'UNCONSCIOUS' && r.throw.breaks === 0 && !r.throw.bf && r.choke.ko === 'UNCONSCIOUS' && r.choke.breaks === 0 && !r.choke.bf
+      && !r.release.bf && r.release.after === 'FREE' && r.release.breaks === 0 && !r.quick.anyBf && r.quick.ko === 'UNCONSCIOUS'
+      && r.reset.left > 0 && !r.reset.bf && r.reset.state === 'FREE' && !r.reset.restrained && r.pull.moved > 1.3 && r.pull.sep < 0.01 && page.errors.length === 0;
+    return { pass: ok, detail: `THROW with 1 s left: he's ${r.throw.ko}, break-frees ${r.throw.breaks}; full CHOKE from 2 s left: ${r.choke.ko}, break-frees ${r.choke.breaks}; RELEASE: countdown ${r.release.bf ? 'STILL ON' : 'gone'}, then ${r.release.after}, no break-free later (${r.release.breaks}); quick takedown: countdown ever ${r.quick.anyBf}, he's ${r.quick.ko}; RESET at ${r.reset.left.toFixed(1)} s left: ${r.reset.state}, countdown ${r.reset.bf ? 'STILL ON' : 'gone'}; pull: ${r.pull.moved.toFixed(2)} m, spacing ±${(r.pull.sep * 100).toFixed(1)} cm` };
+  },
+
+  // Step 17, 18 with real iPhone touches (frame loop running), the whole loop on Guard 2: TAP
+  // grabs and the ring round RELEASE shows the countdown (the CQC stats line says "breaks
+  // free in"); a real ~1 s CHOKE press, lifted, puts it back near 10 s; the ring goes urgent
+  // under 3 s; then he breaks free: CQC FREE, the ring gone, he's ALERT and loose. Grab again,
+  // RESET: everything cleared
+  async breakFreeTouch() {
+    const page = await touchPage(), Tc = page.touch;
+    const box = async sel => page.locator(sel).boundingBox();
+    const tap = async () => { const b = await box('#mv-cqc'); const down = Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(80); const up = Tc('touchEnd', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await down; await up; };
+    const behind = async () => { await page.evaluate(() => { const g = MV.guard2; g.reset(); const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); }); await page.waitForTimeout(250); };
+    const ui = () => page.evaluate(() => { const c = document.getElementById('mv-cqc'); return { cqc: MV.cqc.state, left: MV.cqc.bf ? MV.cqc.bf.left : null, timer: c.classList.contains('timer'), urgent: c.classList.contains('urgent'), ring: getComputedStyle(c.querySelector('.mv-ring')).visibility === 'visible', stat: document.getElementById('mv-cqcstat').textContent, aware: MV.guard2.awareness.state, held: !!MV.guard2.restraint, ko: MV.guard2.ko.state }; });
+    await page.evaluate(() => { document.getElementById('mv-stats').hidden = false; });
+    await behind(); await tap(); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(400);
+    const grabbed = await ui();
+    await page.waitForFunction(() => MV.cqc.bf && MV.cqc.bf.left < 7, null, { timeout: 20000, polling: 'raf' }).catch(() => {});
+    const before = await ui();
+    const C = await box('#mv-choke'); const cx = C.x + C.width / 2, cy = C.y + C.height / 2;
+    await Tc('touchStart', [{ x: cx, y: cy, id: 9 }]); await page.waitForFunction(() => MV.cqc.ch && MV.cqc.ch.p > 0.25, null, { timeout: 15000, polling: 'raf' }).catch(() => {});
+    await Tc('touchEnd', [{ x: cx, y: cy, id: 9 }]); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 3000, polling: 'raf' }).catch(() => {}); await page.waitForTimeout(100);
+    const reset = await ui();
+    await page.waitForFunction(() => MV.cqc.bf && MV.cqc.bf.left < 2.5, null, { timeout: 30000, polling: 'raf' }).catch(() => {});
+    const urgent = await ui();
+    await page.waitForFunction(() => MV.cqc.state === 'FREE', null, { timeout: 15000, polling: 'raf' }).catch(() => {}); await page.waitForTimeout(300);
+    const broke = await ui();
+    await behind(); await tap(); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {});
+    await page.tap('#mv-reset'); await page.waitForTimeout(300);
+    const after = await ui();
+    const ok = grabbed.cqc === 'GRAPPLING' && grabbed.timer && grabbed.ring && /breaks free in/.test(grabbed.stat) && grabbed.left > 9
+      && before.left < 7 && reset.cqc === 'GRAPPLING' && reset.ko === 'CONSCIOUS' && reset.left > 9.5 && !reset.urgent && urgent.urgent && urgent.left < 3
+      && broke.cqc === 'FREE' && !broke.timer && !broke.held && broke.aware === 'ALERT' && broke.left === null && after.cqc === 'FREE' && after.left === null && !after.timer && page.errors.length === 0;
+    return { pass: ok, detail: `tapped: ${grabbed.cqc}, ring ${grabbed.ring} (${grabbed.left.toFixed(1)} s), stats "${grabbed.stat}"; at ${before.left.toFixed(1)} s a real CHOKE press, lifted: ${reset.cqc}, he's ${reset.ko}, back to ${reset.left.toFixed(1)} s; at ${urgent.left.toFixed(1)} s urgent ${urgent.urgent}; ran out: ${broke.cqc}, ring ${broke.timer}, he's ${broke.aware}, restrained ${broke.held}; RESET mid-grapple: ${after.cqc}, countdown ${after.left === null ? 'gone' : after.left}; page errors ${page.errors.length}` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
