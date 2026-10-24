@@ -174,6 +174,13 @@
     const c = this.cfg, m = this.motor, inp = this.input;
     // button events from the input layer
     // Step 16: a press begun while free turns into a HOLD (quick takedown) once it's held long enough
+    // Step 18: while she aims (main.js sets blocked) CQC is unavailable: its presses are swallowed, nothing starts
+    if (this.blocked && this.state === 'FREE') {
+      if (inp.cqcTapped || inp.cqcHeld || inp.throwTapped) this.holdNote = 'not while aiming';
+      inp.cqcTapped = inp.cqcHeld = inp.throwTapped = false; inp.cqcHoldAllowed = false; if (inp._cqcDrop) inp._cqcDrop();
+      this._chokeSeen = inp.chokePresses || 0; this.armW += (0 - this.armW) * (1 - Math.exp(-8 * dt));
+      return false;
+    }
     if (inp.pollCqcHold) { inp.cqcHoldAllowed = this.state === 'FREE'; inp.pollCqcHold(); }
     if (inp.cqcTapped) { inp.cqcTapped = false; this.tap(); }
     if (inp.cqcHeld) { inp.cqcHeld = false; this.hold(); }
@@ -286,6 +293,7 @@
   // short status for the developer view
   mv.CQC.prototype.status = function () {
     const name = g => g && g.cfg.label || 'guard';
+    if (this.state === 'FREE' && this.blocked) return 'FREE · CQC unavailable while aiming';
     if (this.state === 'FREE') { const why = this.check(); return `FREE · ${why ? 'no grab: ' + why : 'CQC available: ' + name(this.target)}${this.holdNote ? ' · ' + this.holdNote : ''}`; }
     if (this.state === 'THROWING') return `${this.thr.quick ? 'TAKEDOWN' : 'THROWING'} · ${name(this.guard)} · ${this.throwStatus()}`;
     if (this.quick) return `TAKEDOWN · seizing ${name(this.guard)}`;

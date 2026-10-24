@@ -3142,7 +3142,7 @@ const CHECKS = {
         const rect = id => document.getElementById(id).getBoundingClientRect();
         const over = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
         const cellRects = cells.map(c => c.getBoundingClientRect());
-        const clear = ['mv-reset', 'mv-stats-btn', 'mv-crouch', 'mv-cqc', 'mv-throw'].map(rect).every(b => cellRects.every(c => !over(c, b))) && R.bottom <= rect('mv-throw').top
+        const clear = ['mv-reset', 'mv-stats-btn', 'mv-crouch', 'mv-cqc', 'mv-throw', 'mv-aim'].map(rect).every(b => cellRects.every(c => !over(c, b))) && R.bottom <= rect('mv-throw').top
           && getComputedStyle(document.querySelector('.mv-head')).display === 'none';
         const hit = ['mv-reset', 'mv-stats-btn', 'mv-throw', 'mv-cqc'].every(id => { const b = rect(id); return document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) === document.getElementById(id); });
         const rule = [...document.styleSheets].flatMap(s => { try { return [...s.cssRules]; } catch (e) { return []; } }).find(r => r.selectorText === '.mv-panel');
@@ -3159,7 +3159,7 @@ const CHECKS = {
       const off = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), title: getComputedStyle(document.querySelector('.mv-head')).display !== 'none' }));
       await page.tap('#mv-stats-btn'); await page.waitForTimeout(400);
       const on = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), g2: document.getElementById('mv-g2').textContent }));
-      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 24 && g.fontPx >= 9.5
+      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 25 && g.fontPx >= 9.5
         && long.inside && long.right <= long.W && long.height <= 0.4 * long.H && off.hidden && off.pressed === 'false' && off.title && !on.hidden && on.pressed === 'true' && !/VERY LONG/.test(on.g2) && errs.length === 0;
       if (!ok) errors++;
       out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside}, title hidden and no value over RESET/STATS/CROUCH/CQC/THROW ${g.clear}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside}, ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden} (title back ${off.title}), on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
@@ -3766,6 +3766,291 @@ const CHECKS = {
     const rows = Object.entries(r);
     // still pose ≥ 15 cm; the crouch-walk arm swing passes closer (≈13 cm as approved), so ≥ 12 cm there
     return { pass: rows.every(([k, v]) => v[0] >= (k === 'crouch idle' ? 0.15 : 0.12) && v[1] >= 0.15), detail: rows.map(([k, v]) => `${k}: hand–shin ${cm(v[0])}, thigh–body ${cm(v[1])}`).join('; ') };
+  },
+
+  // ---------------------------------------------------------------- Step 18: aiming (AIM ONLY)
+  // AIM toggles; the camera eases into the over-the-shoulder view and back to exactly the normal
+  // framing; the crosshair only while aiming; the pistol out only while aiming; rapid toggling
+  // never leaves anything half-way; RESET restores the defaults (steps the real frame, MV.tick)
+  async aimToggle() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, dt = 1 / 60, A = MV.aim, P = MV.aimPose, xh = document.getElementById('mv-crosshair'), btn = document.getElementById('mv-aim');
+      const sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      motor.teleport(-19, 19, 0); cam.snap(motor); sim(60);
+      const before = { dist: cam.dist, pitch: cam.pitch, yaw: cam.yaw, sens: cam.cfg.sensitivity, xh: xh.hidden, pistol: P.pistol.visible };
+      input.aimTapped = true; let maxStep = 0, last = MV.camera.position.clone(), ks = [];
+      for (let i = 0; i < 90; i++) { MV.tick(dt, true); maxStep = Math.max(maxStep, MV.camera.position.distanceTo(last)); last.copy(MV.camera.position); ks.push(cam.aimK); }
+      const k5 = ks[4], mono = ks.every((k, i) => i === 0 || k >= ks[i - 1] - 1e-9);
+      const on = { active: A.active, k: cam.aimK, dist: cam.dist, xh: xh.hidden, btn: btn.classList.contains('on'), pistol: P.pistol.visible, status: A.status(false) };
+      // the camera's offset from her: closer, further right
+      const c = MV.camera.position, m = motor.position, right = new THREE.Vector3(Math.cos(cam.yaw), 0, -Math.sin(cam.yaw));
+      on.side = c.clone().sub(m).dot(right);
+      input.aimTapped = true; let maxOut = 0;
+      for (let i = 0; i < 150; i++) { MV.tick(dt, true); maxOut = Math.max(maxOut, MV.camera.position.distanceTo(last)); last.copy(MV.camera.position); }
+      const off = { active: A.active, k: cam.aimK, dist: cam.dist, pitch: cam.pitch, yaw: cam.yaw, xh: xh.hidden, btn: btn.classList.contains('on'), pistol: P.pistol.visible, sens: cam.cfg.sensitivity, wArm: MV.visual.bones.rightArm.quaternion.clone() };
+      // rapid toggling: 10 taps a few frames apart (ends not aiming), then settle
+      for (let i = 0; i < 10; i++) { input.aimTapped = true; sim(3 + (i % 3)); }
+      const midRapid = A.active; sim(150);
+      const rapid = { active: A.active, k: cam.aimK, xh: xh.hidden, pistol: P.pistol.visible, legYaw: A.legYaw, enters: A.enters, exits: A.exits };
+      // RESET while aiming
+      input.aimTapped = true; sim(40);
+      document.getElementById('mv-reset').click(); sim(2);
+      const reset = { active: A.active, k: cam.aimK, target: cam.aimTarget, xh: xh.hidden, btn: btn.classList.contains('on'), pistol: P.pistol.visible, legYaw: A.legYaw };
+      return { before, on, off, rapid, midRapid, reset, maxStep, maxOut, k5, mono };
+    });
+    const ok = r.before.xh && !r.before.pistol && r.on.active && r.on.k > 0.99 && Math.abs(r.on.dist - 1.6) < 0.1 && r.on.side > 0.45 && !r.on.xh && r.on.btn && r.on.pistol && /ON/.test(r.on.status)
+      && r.k5 < 0.3 && r.mono && r.maxStep < 0.15 && r.maxOut < 0.15
+      && !r.off.active && r.off.k < 0.01 && Math.abs(r.off.dist - r.before.dist) < 0.05 && Math.abs(r.off.pitch - r.before.pitch) < 1e-6 && Math.abs(r.off.yaw - r.before.yaw) < 1e-6 && r.off.xh && !r.off.btn && !r.off.pistol && r.off.sens === r.before.sens
+      && !r.rapid.active && r.rapid.k < 0.01 && r.rapid.xh && !r.rapid.pistol && Math.abs(r.rapid.legYaw) < 1e-3 && r.rapid.enters === 6 && r.rapid.exits === 6
+      && !r.reset.active && r.reset.k === 0 && r.reset.target === 0 && r.reset.xh && !r.reset.btn && !r.reset.pistol && r.reset.legYaw === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `tap: aiming ${r.on.active}, camera ${r.on.dist.toFixed(2)} m back (normal ${r.before.dist.toFixed(2)}), ${r.on.side.toFixed(2)} m right, blend after 5 frames ${(r.k5 * 100).toFixed(0)}% (eased, monotonic ${r.mono}), largest camera step ${cm(r.maxStep)} in / ${cm(r.maxOut)} out per frame; crosshair ${!r.on.xh}, pistol ${r.on.pistol}; tap again: camera ${r.off.dist.toFixed(2)} m, yaw/pitch unchanged ${Math.abs(r.off.yaw - r.before.yaw) < 1e-6 && Math.abs(r.off.pitch - r.before.pitch) < 1e-6}, crosshair hidden ${r.off.xh}, pistol ${r.off.pistol}; 10 rapid taps then settled: aiming ${r.rapid.active}, blend ${r.rapid.k.toFixed(3)}, entered/left ${r.rapid.enters}/${r.rapid.exits}; RESET while aiming: aiming ${r.reset.active}, blend ${r.reset.k}, crosshair hidden ${r.reset.xh}, pistol ${r.reset.pistol}; page errors ${page.errors.length}` };
+  },
+
+  // dragging the camera turns the aim (horizontal: yaw, vertical: pitch) and she turns to face
+  // it smoothly (rate-limited, no snap), standing still; the crosshair (screen centre) is the aim
+  // ray; neither her head nor her shoulder sits over the crosshair
+  async aimFacing() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, dt = 1 / 60, A = MV.aim, B = MV.visual.bones, wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+      const sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      motor.teleport(-19, 19, 0.5); cam.snap(motor); sim(30); input.aimTapped = true; sim(60);
+      const p0 = motor.position.clone(), yaw0 = cam.yaw;
+      // a horizontal drag of 120 px (touch) in 10 frames, then a vertical one
+      for (let i = 0; i < 10; i++) { input.look.dx += 12; input.mouse = false; MV.tick(dt, true); }
+      const dyaw = wrap(cam.yaw - yaw0), want = cam.cfg.sensitivity * cam.cfg.aim.sensitivity * 120;
+      let maxRate = 0, prev = motor.yaw, n = 0;
+      while (Math.abs(wrap(cam.yaw + Math.PI - motor.yaw)) > 0.01 && n < 300) { MV.tick(dt, true); maxRate = Math.max(maxRate, Math.abs(wrap(motor.yaw - prev)) / dt); prev = motor.yaw; n++; }
+      sim(10);
+      const faced = Math.abs(wrap(cam.yaw + Math.PI - motor.yaw)) * 57.3;
+      const p1 = motor.position.clone();
+      const pitch0 = cam.pitch; for (let i = 0; i < 10; i++) { input.look.dy += -6; MV.tick(dt, true); }
+      const dpitch = cam.pitch - pitch0;
+      sim(5);
+      // the aim ray is the camera's centre ray
+      const T = A.target, cd = MV.camera.getWorldDirection(new THREE.Vector3()), along = T.dir.dot(cd), fromCam = T.origin.distanceTo(MV.camera.position);
+      const up = Math.asin(T.dir.y);
+      // a 180° flip of the camera: she turns round over several frames, never snapping
+      const yawB = motor.yaw; cam.yaw = wrap(cam.yaw + Math.PI); let flipF = 0, flipMax = 0; prev = motor.yaw;
+      while (Math.abs(wrap(cam.yaw + Math.PI - motor.yaw)) > 0.02 && flipF < 400) { MV.tick(dt, true); flipMax = Math.max(flipMax, Math.abs(wrap(motor.yaw - prev))); prev = motor.yaw; flipF++; }
+      sim(20);
+      // pixels from the screen centre to her head and right shoulder (844×390 screen)
+      const scr = v => { const q = v.clone().project(MV.camera); return [(q.x + 1) / 2 * 844, (1 - q.y) / 2 * 390]; };
+      const W = b => b.getWorldPosition(new THREE.Vector3());
+      const dpx = b => { const [x, y] = scr(W(b)); return Math.hypot(x - 422, y - 195); };
+      const head = dpx(B.head), shoulder = dpx(B.rightArm), xh = (() => { const [x] = scr(W(B.head)); return x; })();
+      // she stood still throughout (turning on the spot)
+      const drift = Math.hypot(p1.x - p0.x, p1.z - p0.z);
+      return { dyaw, want, maxRate, n, faced, dpitch, along, fromCam, up, flipF, flipMax: flipMax * 57.3, head, shoulder, headX: xh, drift, turnRate: A.cfg.turnRate };
+    });
+    const ok = Math.abs(-r.dyaw - r.want) < 0.01 && r.want > 0.4 && r.n > 3 && r.maxRate <= r.turnRate + 0.01 && r.faced < 1 && r.dpitch < -0.03 && r.along > 0.9999 && r.fromCam < 1e-3 && r.up > 0
+      && r.flipF >= 25 && r.flipMax < 8 && r.head > 60 && r.shoulder > 60 && r.headX < 422 && r.drift < 0.05 && page.errors.length === 0;
+    return { pass: ok, detail: `120 px drag right → aim turned ${(-r.dyaw * 57.3).toFixed(1)}° right (expected ${(r.want * 57.3).toFixed(1)}°); she followed in ${r.n} frames, at most ${(r.maxRate * 57.3).toFixed(0)}°/s (limit ${(r.turnRate * 57.3).toFixed(0)}), now ${r.faced.toFixed(2)}° off; upward drag → camera pitch ${(r.dpitch * 57.3).toFixed(1)}°, aim ${(r.up * 57.3).toFixed(1)}° up; aim ray = camera centre ray (dot ${r.along.toFixed(5)}, from the camera ${r.fromCam.toFixed(4)} m); camera flipped 180°: she turned round in ${r.flipF} frames, largest step ${r.flipMax.toFixed(1)}°; head ${r.head.toFixed(0)} px, right shoulder ${r.shoulder.toFixed(0)} px from the crosshair (head left of it ${r.headX < 422}); drift standing ${cm(r.drift)}; page errors ${page.errors.length}` };
+  },
+
+  // movement while aiming: forward, back, both strafes and diagonals, at the configured 1.4 m/s,
+  // camera-relative, without turning away from the aim; footsteps keep their noise; when AIM
+  // ends the normal stick speeds are exactly as before
+  async aimMovement() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, dt = 1 / 60, A = MV.aim, noise = MV.noise;
+      const sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      const speeds = () => { const out = {}; for (const [n, m] of [['sneak', 0.35], ['walk', 0.78], ['jog', 1]]) { motor.teleport(-6, -20, 0); cam.snap(motor); input.move.x = 0; input.move.y = m; sim(110); out[n] = +motor.speed.toFixed(3); input.move.y = 0; sim(60); } return out; };
+      const before = speeds();
+      motor.teleport(-6, -14, 0.3); cam.snap(motor); sim(20); input.aimTapped = true; sim(60);
+      const moves = {}; let steps = 0, stepLevels = new Set();
+      const heard = () => { const n = noise.last; return n; };
+      for (const [n, x, y] of [['forward', 0, 1], ['backward', 0, -1], ['left', -1, 0], ['right', 1, 0], ['diag fwd-right', 0.707, 0.707], ['diag back-left', -0.707, -0.707]]) {
+        motor.teleport(-6, -14, motor.yaw); sim(5);
+        const yaw0 = motor.yaw, p0 = motor.position.clone(), f = new THREE.Vector3(); cam.forward(f); const rt = new THREE.Vector3(-f.z, 0, f.x);
+        input.move.x = x; input.move.y = y; let spd = 0, turn = 0, leg = 0, rev = false, n0 = noise.last;
+        for (let i = 0; i < 130; i++) { MV.tick(dt, true); if (i > 60) { spd = Math.max(spd, motor.speed); leg = Math.max(leg, Math.abs(A.legYaw)); rev = rev || motor.reverseGait; }
+          turn = Math.max(turn, Math.abs(Math.atan2(Math.sin(motor.yaw - yaw0), Math.cos(motor.yaw - yaw0))));
+          if (noise.last && noise.last !== n0 && noise.last.type === 'footstep') { steps++; stepLevels.add(noise.last.level); n0 = noise.last; } }
+        input.move.x = input.move.y = 0; sim(40);
+        const d = motor.position.clone().sub(p0), dl = Math.hypot(d.x, d.z) || 1;
+        moves[n] = { spd, turn: turn * 57.3, along: (d.dot(f) * y + d.dot(rt) * x) / dl / Math.hypot(x, y), leg: leg * 57.3, rev, still: motor.speed };
+      }
+      const stillAiming = A.active;
+      input.aimTapped = true; sim(80);
+      const after = speeds();
+      return { before, after, moves, steps, levels: [...stepLevels], stillAiming, cfg: A.cfg.speed };
+    });
+    const M = r.moves, mv = Object.values(M);
+    const ok = mv.every(m => Math.abs(m.spd - r.cfg) < 0.03 && m.turn < 1 && m.along > 0.99 && m.still < 0.05) && M.backward.rev && !M.forward.rev && M.left.leg > 30 && M.right.leg > 30 && M.forward.leg < 2
+      && r.steps > 6 && r.levels.length > 0 && r.levels.every(l => l >= 1) && r.stillAiming && JSON.stringify(r.before) === JSON.stringify(r.after) && page.errors.length === 0;
+    return { pass: ok, detail: Object.entries(M).map(([k, m]) => `${k} ${m.spd.toFixed(2)} m/s (turned ${m.turn.toFixed(1)}°, on line ${m.along.toFixed(3)}, legs ${m.leg.toFixed(0)}°${m.rev ? ', stepping back' : ''})`).join('; ') + `; ${r.steps} footsteps at levels ${r.levels.join('/')}; normal speeds before ${JSON.stringify(r.before)} = after ${JSON.stringify(r.after)}; page errors ${page.errors.length}` };
+  },
+
+  // crouched aiming: enter while crouched, the camera drops, the slower crouched pace, standing
+  // up keeps AIM, and leaving AIM gives the normal crouch back
+  async aimCrouch() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, dt = 1 / 60, A = MV.aim, P = MV.aimPose, B = MV.visual.bones, W = b => b.getWorldPosition(new THREE.Vector3());
+      const sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      motor.teleport(-19, 19, 0); cam.snap(motor); sim(20);
+      input.aimTapped = true; sim(80); const standY = MV.camera.position.y;
+      input.setCrouch(true); sim(80);
+      const crouchY = MV.camera.position.y, inCrouch = { active: A.active, stance: motor.stance, hand: W(B.rightHand).distanceTo(W(P.pistol)), pistol: P.pistol.visible, gunUp: P.gunDir.y };
+      input.move.y = 1; let spd = 0; for (let i = 0; i < 120; i++) { MV.tick(dt, true); spd = Math.max(spd, motor.speed); } input.move.y = 0; sim(40);
+      input.setCrouch(false); sim(60); const stoodUp = A.active;
+      input.setCrouch(true); sim(30); input.aimTapped = true; sim(90);
+      // normal crouch again: the stick picks the normal crouch speeds
+      input.move.y = 1; let cs = 0; for (let i = 0; i < 150; i++) { MV.tick(dt, true); cs = Math.max(cs, motor.speed); } input.move.y = 0; sim(30);
+      const out = { active: A.active, stance: motor.stance, pistol: P.pistol.visible, k: cam.aimK };
+      // entering AIM while already crouched
+      sim(30); input.aimTapped = true; sim(60); const enterCrouched = A.active && motor.stance === 'crouch';
+      return { standY, crouchY, inCrouch, spd, stoodUp, out, cs, enterCrouched, cfg: A.cfg.crouchSpeed };
+    });
+    const ok = r.inCrouch.active && r.inCrouch.stance === 'crouch' && r.inCrouch.pistol && r.inCrouch.hand < 0.12 && r.crouchY < r.standY - 0.3 && Math.abs(r.spd - r.cfg) < 0.03
+      && r.stoodUp && !r.out.active && r.out.stance === 'crouch' && !r.out.pistol && r.out.k < 0.01 && r.cs > r.cfg + 0.2 && r.enterCrouched && page.errors.length === 0;
+    return { pass: ok, detail: `aiming then CROUCH: still aiming ${r.inCrouch.active}, camera ${r.standY.toFixed(2)} → ${r.crouchY.toFixed(2)} m, hand on the pistol ${cm(r.inCrouch.hand)}; crouched aim pace ${r.spd.toFixed(2)} m/s (config ${r.cfg}); stood up still aiming ${r.stoodUp}; AIM off while crouched: ${r.out.stance}, normal crouch speed ${r.cs.toFixed(2)} m/s, pistol ${r.out.pistol}; AIM entered while crouched ${r.enterCrouched}; page errors ${page.errors.length}` };
+  },
+
+  // the aiming camera keeps out of walls (her right shoulder against the corridor wall); the aim
+  // ray stops at the real first obstruction (wall, crate, pillar, guard, ground); the muzzle's
+  // own line is reported separately (cover in front of the pistol but not the camera)
+  async aimCollision() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam, world } = MV, dt = 1 / 60, A = MV.aim, g2 = MV.guard2;
+      const sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      const inside = p => world.boxes.some(b => p.x > b.minX && p.x < b.maxX && p.z > b.minZ && p.z < b.maxZ && p.y < b.top);
+      const rayClear = () => { const o = new THREE.Vector3(motor.position.x, cam.focus.y, motor.position.z), c = MV.camera.position; return !world.segmentBlocked(o, c.clone()); };
+      const out = {};
+      // corridor (x 16.2 … 17.8): facing north along it, her right shoulder 0.3 m from the west wall
+      motor.teleport(16.5, -3, 0); cam.snap(motor); sim(30); input.aimTapped = true;
+      let bad = 0, minWall = Infinity; for (let i = 0; i < 120; i++) { MV.tick(dt, true); const c = MV.camera.position; if (inside(c) || !rayClear()) bad++; minWall = Math.min(minWall, c.x - 16.175); }
+      out.corridor = { bad, minWall, dist: cam.dist };
+      // turning the camera round in the corridor while aiming
+      let bad2 = 0; for (let i = 0; i < 120; i++) { input.look.dx += 15; MV.tick(dt, true); const c = MV.camera.position; if (inside(c) || !rayClear()) bad2++; }
+      out.turning = bad2;
+      input.aimTapped = true; sim(90);
+      // aim ray targets: aim straight at things from a known spot
+      const aimAt = (px, pz, tx, ty, tz, crouch) => { motor.teleport(px, pz, 0); cam.snap(motor); input.setCrouch(!!crouch); sim(40); input.aimTapped = true; sim(60);
+        for (let k = 0; k < 4; k++) { // turn the camera until the screen centre is on the point
+          MV.camera.updateMatrixWorld(); const d = new THREE.Vector3(tx, ty, tz).sub(MV.camera.position).normalize();
+          cam.yaw = Math.atan2(-d.x, -d.z); cam.pitch = Math.asin(-d.y); sim(30); }
+        const T = A.target, res = { what: T.what, dist: T.dist, guard: T.guard ? T.guard.cfg.label : null, clear: T.muzzleClear, point: T.point.clone(), muzzle: !!T.muzzle, mdir: !!T.muzzleDir, xh: document.getElementById('mv-crosshair').className };
+        input.aimTapped = true; sim(60); return res; };
+      out.crate = aimAt(-2, -12, -2, 1.2, -8);           // the tall crate (2 m) from 4 m south
+      out.crateFace = out.crate.point.z;                 // its south face is at z = -8.6
+      const gp = g2.position; out.guard = aimAt(gp.x - 3, gp.z, gp.x, 1.2, gp.z);
+      out.ground = aimAt(-19, 19, -15, 0, 21);
+      out.wall = aimAt(4, 10, 4, 1.5, 13);               // the long wall (face at z = 12.825)
+      // crouched behind the low crate (0.9 m, just in front of her), aiming over it at the long wall:
+      // the camera sees the wall, the pistol's own line is blocked by the crate
+      out.lowCover = aimAt(3, -6.2, 3, 1.0, 12.8, true); input.setCrouch(false); sim(30);
+      return out;
+    });
+    const o = r, ok = o.corridor.bad === 0 && o.turning === 0 && o.corridor.minWall > 0.1
+      && o.crate.what === 'wall / cover' && Math.abs(o.crateFace - -8.6) < 0.05 && /^Guard 2/.test(o.guard.guard) && /guard/.test(o.guard.xh) && o.ground.what === 'ground' && Math.abs(o.ground.point.y) < 1e-6
+      && o.wall.what === 'wall / cover' && Math.abs(o.wall.point.z - 12.825) < 0.05 && o.crate.clear && o.crate.muzzle && o.crate.mdir && o.lowCover.what === 'wall / cover' && Math.abs(o.lowCover.point.z - 12.825) < 0.05 && !o.lowCover.clear && /blocked/.test(o.lowCover.xh);
+    return { pass: ok && page.errors.length === 0, detail: `corridor, right shoulder to the wall: camera inside a wall or behind one in ${o.corridor.bad}/120 frames, ${o.turning}/120 turning round, closest ${cm(o.corridor.minWall)} from the wall; aim at the tall crate → ${o.crate.what} at z ${o.crate.point.z.toFixed(2)} (face −8.60); at Guard 2 → ${o.guard.guard} (${o.guard.dist.toFixed(1)} m, crosshair "${o.guard.xh}"); at the floor → ${o.ground.what}; at the long wall → ${o.wall.what} at z ${o.wall.point.z.toFixed(2)} (face 12.83); muzzle origin/direction reported ${o.crate.muzzle}/${o.crate.mdir}, its line to the crate clear ${o.crate.clear}; crouched behind the low crate: camera sees ${o.lowCover.what} at z ${o.lowCover.point.z.toFixed(2)}, muzzle clear ${o.lowCover.clear} (crosshair "${o.lowCover.xh}"); page errors ${page.errors.length}` };
+  },
+
+  // AIM and CQC: AIM isn't available in any CQC state (restraint, throw, choke, quick takedown,
+  // break-free); while aiming, TAP / HOLD CQC, THROW and CHOKE do nothing; after AIM ends CQC
+  // works as before; nothing fires, hurts or alerts (no FIRE button, guards stay calm)
+  async aimCqc() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, dt = 1 / 60, A = MV.aim, cq = MV.cqc, g2 = MV.guard2, g1 = MV.guard;
+      const sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      const behind = () => { cq.cancel(); g2.reset(); const b = g2.position.clone().addScaledVector(g2.forward(), -1.0); motor.teleport(b.x, b.z, g2.yaw); cam.snap(motor); sim(10); };
+      const tryAim = () => { input.aimTapped = true; sim(2); const a = A.active; if (a) { input.aimTapped = true; sim(2); } return a; };
+      const out = {};
+      // while aiming: CQC presses do nothing
+      behind(); input.aimTapped = true; sim(40);
+      input.cqcTapped = true; sim(30); out.tap = cq.state;
+      cq.input._cqcPress(performance.now() - 1000); sim(30); cq.input._cqcUp(performance.now()); sim(10); out.hold = cq.state;
+      input.throwTapped = true; input._chokeKey = true; input.chokePresses++; sim(20); input._chokeKey = false; out.throwChoke = cq.state;
+      out.cqcStat = cq.status(); out.cqcLocked = document.getElementById('mv-cqc').classList.contains('aimlock');
+      out.alerted = g2.awareness.state;   // (he may well have heard her step in behind him: the normal hearing rules; that's not this check)
+      out.guard = { aware: g2.awareness.state, held: !!g2.restraint, ko: g2.ko.state };
+      // AIM off: CQC is back
+      input.aimTapped = true; sim(30); input.cqcTapped = true; sim(40); out.after = cq.state;
+      // AIM during each CQC state
+      out.grappling = tryAim(); out.aimBtnLocked = document.getElementById('mv-aim').classList.contains('locked');
+      input._chokeKey = true; input.chokePresses++; sim(20); out.choking = cq.state === 'CHOKING' && tryAim(); input._chokeKey = false; sim(5);
+      input.throwTapped = true; sim(3); out.throwing = cq.state === 'THROWING' && tryAim(); sim(200);
+      behind(); cq.input._cqcPress(performance.now()); let f = 0; while (cq.state === 'FREE' && f < 60) { MV.tick(dt, true); f++; } const td = cq.state; out.takedown = (td === 'GRABBING' || td === 'THROWING') && tryAim(); cq.input._cqcUp(performance.now()); sim(200);
+      behind(); input.cqcTapped = true; sim(40); cq.bf.left = 0.05; sim(3); out.breaking = cq.state === 'BREAKING' && tryAim(); sim(60);
+      out.freeAgain = cq.state === 'FREE' && tryAim();
+      // aiming at a calm guard alerts nobody; no FIRE button exists
+      cq.cancel(); g2.reset(); g1.reset(); sim(10);
+      const p = g2.position.clone().addScaledVector(g2.forward(), -5); motor.teleport(p.x, p.z, g2.yaw); cam.snap(motor); sim(20);
+      const n0 = MV.noise.last; input.aimTapped = true; sim(240);
+      out.calm = { g2: g2.awareness.state, g2s: g2.awareness.suspicion, g1: g1.awareness.state, noise: MV.noise.last === n0, hp: 'health' in g2 || 'hp' in g2 };
+      out.fire = !!document.querySelector('#mv-fire, [id*="fire"], [id*="shoot"], [id*="ammo"]') || /FIRE|SHOOT|AMMO/i.test([...document.querySelectorAll('button')].map(b => b.textContent).join(' '));
+      input.aimTapped = true; sim(60);
+      return out;
+    });
+    const o = r, ok = o.tap === 'FREE' && o.hold === 'FREE' && o.throwChoke === 'FREE' && /unavailable while aiming/.test(o.cqcStat) && o.cqcLocked && !o.guard.held && o.guard.ko === 'CONSCIOUS'
+      && o.after === 'GRAPPLING' && o.grappling === false && o.aimBtnLocked && o.choking === false && o.throwing === false && o.takedown === false && o.breaking === false && o.freeAgain === true
+      && o.calm.g2 === 'NORMAL' && o.calm.g2s === 0 && o.calm.g1 === 'NORMAL' && o.calm.noise && !o.calm.hp && !o.fire && page.errors.length === 0;
+    return { pass: ok, detail: `aiming behind Guard 2: TAP → ${o.tap}, HOLD → ${o.hold}, THROW/CHOKE → ${o.throwChoke}, stats "${o.cqcStat}", CQC dimmed ${o.cqcLocked}, he's not held ${!o.guard.held}, ${o.guard.ko}; AIM off then TAP → ${o.after}; AIM accepted while grappling ${o.grappling} (button dimmed ${o.aimBtnLocked}), choking ${o.choking}, throwing ${o.throwing}, quick takedown ${o.takedown}, breaking free ${o.breaking}; free again → AIM ${o.freeAgain}; aiming at Guard 2 for 4 s: G2 ${o.calm.g2} ${o.calm.g2s}%, G1 ${o.calm.g1}, no sound ${o.calm.noise}; FIRE/ammo/health anywhere ${o.fire || o.calm.hp}; page errors ${page.errors.length}` };
+  },
+
+  // the guards carry on exactly as they would: Guard 1's patrol and Guard 2 at his post, the
+  // same as an identical run without AIM (aiming from where neither can see or hear her)
+  async aimGuards() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, dt = 1 / 60, A = MV.aim, g1 = MV.guard, g2 = MV.guard2;
+      const sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      const run = aim => {
+        g1.patrol.enabled = true; g1.reset(); g2.reset(); A.reset(); motor.teleport(-19, -19, 0.8); cam.snap(motor); sim(5);
+        if (aim) input.aimTapped = true;
+        const trail = [];
+        for (let i = 0; i < 600; i++) { if (aim && i % 120 === 30) input.look.dx += 40; MV.tick(dt, true); if (i % 60 === 0) trail.push([g1.position.x, g1.position.z, g2.position.x, g2.position.z]); }
+        const res = { trail, s1: g1.awareness.state, s2: g2.awareness.state, post: g2.atPost(), patrol: g1.patrol.status(), aimed: A.active };
+        if (A.active) { input.aimTapped = true; sim(60); }
+        return res;
+      };
+      const a = run(false), b = run(true);
+      const dev = Math.max(...a.trail.map((t, i) => Math.max(Math.hypot(t[0] - b.trail[i][0], t[1] - b.trail[i][1]), Math.hypot(t[2] - b.trail[i][2], t[3] - b.trail[i][3]))));
+      const moved = Math.hypot(a.trail[0][0] - a.trail[a.trail.length - 1][0], a.trail[0][1] - a.trail[a.trail.length - 1][1]);
+      return { a, b, dev, moved };
+    });
+    const ok = r.b.aimed && r.dev < 1e-6 && r.moved > 3 && r.a.s1 === r.b.s1 && r.b.s1 === 'NORMAL' && r.b.s2 === 'NORMAL' && r.b.post && r.a.patrol === r.b.patrol && page.errors.length === 0;
+    return { pass: ok, detail: `10 s with and without aiming: Guard 1 patrolled ${r.moved.toFixed(1)} m, guards' paths differ by at most ${r.dev.toExponential(1)} m; G1 ${r.b.s1} (${r.b.patrol}), G2 ${r.b.s2} at post ${r.b.post}; page errors ${page.errors.length}` };
+  },
+
+  // iPhone: real taps on AIM, the right thumb dragging the aim while the left thumb walks (two
+  // fingers at once), AIM tapped while both are down, rapid taps; nothing stuck
+  async aimTouch() {
+    const page = await touchPage(), Tc = page.touch;
+    const box = await page.locator('#mv-aim').boundingBox(), ax = box.x + box.width / 2, ay = box.y + box.height / 2;
+    const tapAim = async id => { const d = Tc('touchStart', [{ x: ax, y: ay, id }]); await page.waitForTimeout(70); const u = Tc('touchEnd', [{ x: ax, y: ay, id }]); await d; await u; };
+    const st = () => page.evaluate(() => ({ active: MV.aim.active, k: MV.cam.aimK, xh: document.getElementById('mv-crosshair').hidden, yaw: MV.cam.yaw, pitch: MV.cam.pitch, my: MV.motor.yaw, spd: MV.motor.speed, x: MV.motor.position.x, z: MV.motor.position.z, cqc: MV.cqc.state, look: !!MV.input.lookT, joy: !!MV.input.joy }));
+    const settle = async (want) => page.waitForFunction(w => w ? MV.cam.aimK > 0.98 : MV.cam.aimK < 0.02, want, { timeout: 15000, polling: 'raf' }).catch(() => {});
+    await page.evaluate(() => { MV.motor.teleport(-19, 19, 0.6); MV.cam.snap(MV.motor); });
+    // the AIM button isn't under any other control, nor over the camera-drag or stick areas used here
+    const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y).id, [ax, ay]);
+    await tapAim(5); await settle(true); const on = await st();
+    // two thumbs: left stick forward, right thumb dragging right and up, together
+    const t0 = await page.evaluate(() => MV.guard.awareness.clock);
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 240, id: 1 }]);
+    await Tc('touchStart', [{ x: 150, y: 240, id: 1 }, { x: 560, y: 200, id: 2 }]);
+    for (let i = 1; i <= 12; i++) { await Tc('touchMove', [{ x: 150, y: 240, id: 1 }, { x: 560 + i * 8, y: 200 - i * 3, id: 2 }]); await page.waitForTimeout(30); }
+    const both = await st();
+    // AIM tapped by a third finger while both are down: aim ends, both thumbs keep working
+    await tapAim(6); await page.waitForTimeout(200); const third = await st();
+    await Tc('touchMove', [{ x: 150, y: 240, id: 1 }, { x: 680, y: 160, id: 2 }]); await page.waitForTimeout(100); const after3 = await st();
+    await Tc('touchEnd', [{ x: 680, y: 160, id: 2 }]); await Tc('touchEnd', [{ x: 150, y: 240, id: 1 }]); await page.waitForTimeout(400);
+    await settle(false); const off = await st();
+    // rapid: 7 taps (odd: ends aiming), then settle
+    for (let i = 0; i < 7; i++) { await tapAim(10 + i); await page.waitForTimeout(60); }
+    await settle(true); const rapid = await st();
+    await tapAim(20); await settle(false); const last = await st();
+    const errs = page.errors.length, wr = a => Math.atan2(Math.sin(a), Math.cos(a));
+    const ok = hit === 'mv-aim' && on.active && on.k > 0.98 && !on.xh && both.active && both.look && both.joy && both.spd > 1.2 && both.spd < 1.5 && Math.abs(wr(both.yaw - on.yaw)) > 0.1 && both.pitch !== on.pitch
+      && !third.active && third.look && third.joy && Math.abs(wr(after3.yaw - third.yaw)) > 0.05 && !off.active && off.k < 0.02 && off.xh && rapid.active && !rapid.xh && !last.active && last.xh && last.k < 0.02 && last.cqc === 'FREE' && errs === 0;
+    return { pass: ok, detail: `AIM button gets the touch ${hit === 'mv-aim'}; tap → aiming ${on.active}, crosshair ${!on.xh}; left thumb walking (${both.spd.toFixed(2)} m/s) while the right drags: aim turned ${(-wr(both.yaw - on.yaw) * 57.3).toFixed(1)}° right, pitch ${((both.pitch - on.pitch) * 57.3).toFixed(1)}°; AIM tapped by a third finger: aiming ${third.active}, thumbs still held ${third.look}/${third.joy}, drag still turns ${(Math.abs(wr(after3.yaw - third.yaw)) * 57.3).toFixed(1)}°; settled: blend ${off.k.toFixed(3)}, crosshair hidden ${off.xh}; 7 rapid taps → aiming ${rapid.active}, one more → ${last.active} (blend ${last.k.toFixed(3)}); page errors ${errs}` };
   },
 };
 

@@ -32,6 +32,9 @@
     // choke); choking() is true while it's held: by a touch on it (until that touch ends or is
     // cancelled), the G key or the mouse. Anything that drops input (blur, hidden page) lets go
     this.chokePresses = 0; this._chokeTouches = new Set(); this._chokeKey = false; this._chokeMouse = false;
+    // AIM button (Step 18): aimTapped is one request per press (toggle mode, read and cleared by
+    // main.js); aiming() is true while it's held (hold mode): a touch on it, the Q key or the mouse
+    this.aimTapped = false; this._aimTouches = new Set(); this._aimKey = false; this._aimMouse = false;
     this._bind();
   };
 
@@ -78,6 +81,10 @@
     this.els.crouch.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail !== 0) this.setCrouch(!this.crouch); });
     if (this.els.cqc) this.els.cqc.addEventListener('click', e => { if (this.enabled && e.pointerType !== 'touch' && e.detail !== 0) this.cqcTapped = true; });
     if (this.els.throw) this.els.throw.addEventListener('click', e => { if (this.enabled && e.pointerType !== 'touch' && e.detail !== 0) this.throwTapped = true; });
+    if (this.els.aim) {
+      this.els.aim.addEventListener('mousedown', e => { if (this.enabled && !this.sourceCapabilitiesTouch(e)) { this._aimMouse = true; this.aimTapped = true; this.els.aim.classList.add('down'); } });
+      window.addEventListener('mouseup', () => { if (this._aimMouse) { this._aimMouse = false; this.els.aim.classList.remove('down'); } });
+    }
     if (this.els.choke) {
       this.els.choke.addEventListener('mousedown', e => { if (this.enabled && !this.sourceCapabilitiesTouch(e)) { this._chokeMouse = true; this.chokePresses++; this.els.choke.classList.add('down'); } });
       window.addEventListener('mouseup', () => { if (this._chokeMouse) { this._chokeMouse = false; this.els.choke.classList.remove('down'); } });
@@ -86,6 +93,7 @@
   // a mouse event synthesised from a touch (the touch handlers already took it)
   P.sourceCapabilitiesTouch = function (e) { return !!(e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) || (this._lastTouch && performance.now() - this._lastTouch < 800); };
   P.choking = function () { return this._chokeTouches.size > 0 || this._chokeKey || this._chokeMouse; };
+  P.aiming = function () { return this._aimTouches.size > 0 || this._aimKey || this._aimMouse; };
 
   P._ts = function (e) {
     this._lastTouch = performance.now();
@@ -102,6 +110,7 @@
         continue;
       }
       if (el && el.closest && el.closest('#mv-throw')) { this.btn.set(t.identifier, 'throw'); this.throwTapped = true; this.els.throw.classList.add('down'); continue; }
+      if (el && el.closest && el.closest('#mv-aim')) { this.btn.set(t.identifier, 'aim'); this._aimTouches.add(t.identifier); this.aimTapped = true; this.els.aim.classList.add('down'); continue; }
       if (el && el.closest && el.closest('#mv-choke')) { this.btn.set(t.identifier, 'choke'); this._chokeTouches.add(t.identifier); this.chokePresses++; this.els.choke.classList.add('down'); continue; }
       if (el && el.closest && el.closest('button, .mv-panel')) { allow = true; continue; }
       if (!this.joy && t.clientX < window.innerWidth * 0.45) {
@@ -143,6 +152,7 @@
       } else if (this.lookT && t.identifier === this.lookT.id) this.lookT = null;
       if (this.btn.get(t.identifier) === 'cqc' && t.identifier === this._cqcTouch) { this._cqcTouch = null; if (e.type === 'touchcancel') this._cqcDrop(); else this._cqcUp(when(e)); }
       if (this.btn.get(t.identifier) === 'throw' && this.els.throw) this.els.throw.classList.remove('down');
+      if (this.btn.get(t.identifier) === 'aim') { this._aimTouches.delete(t.identifier); if (!this._aimTouches.size && this.els.aim) this.els.aim.classList.remove('down'); }
       if (this.btn.get(t.identifier) === 'choke') { this._chokeTouches.delete(t.identifier); if (!this._chokeTouches.size && this.els.choke) this.els.choke.classList.remove('down'); }
       this.btn.delete(t.identifier);
     }
@@ -157,6 +167,7 @@
     if (k === 'KeyC' && down && !e.repeat) this.setCrouch(!this.crouch);
     if (k === 'KeyF' && !e.repeat) { if (down) { if (this._cqcDown == null) this._cqcPress(when(e)); } else this._cqcUp(when(e)); }
     if (k === 'KeyT' && down && !e.repeat) this.throwTapped = true;   // THROW (Step 14)
+    if (k === 'KeyQ' && !e.repeat) { if (down) { this._aimKey = true; this.aimTapped = true; } else this._aimKey = false; }   // AIM (Step 18)
     if (k === 'KeyG' && !e.repeat) { if (down) { this._chokeKey = true; this.chokePresses++; } else this._chokeKey = false; }   // CHOKE, held (Step 15)
     let x = 0, y = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1;
@@ -209,6 +220,7 @@
     this.move.x = this.move.y = 0; this.look.dx = this.look.dy = 0;
     this.joy = this.lookT = null; this.btn.clear(); this.keys.clear(); this._cqcDrop(); this._cqcTouch = null;
     this._chokeTouches.clear(); this._chokeKey = false; this._chokeMouse = false; if (this.els.choke) this.els.choke.classList.remove('down');
+    this.aimTapped = false; this._aimTouches.clear(); this._aimKey = false; this._aimMouse = false; if (this.els.aim) this.els.aim.classList.remove('down');
     this.els.root.classList.remove('stick-on');
   };
 })(SC.mv);

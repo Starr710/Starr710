@@ -476,6 +476,9 @@
     }
   };
 
+  // the helpers, for other pose layers (Step 18: the aiming pose, aim-pose.js)
+  mv.PostureKit = { rotateWorld, setWorldQuat, twoBoneIK, orientHand, curlFingers };
+
   mv.TacticalPosture.prototype._rifle = function (dt, walkF, sprintF, fwd, left, up) {
     const v = this.v, b = v.bones, root = v.root, c = this.cfg, t = this.t;
     // 4. weapon carry pose in the yaw frame, anchored to the chest, on a spring

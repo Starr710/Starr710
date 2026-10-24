@@ -17,6 +17,8 @@
     followStiffness: 13,      // spring stiffness on the follow point
     recenterDelay: 1.4, recenterRate: 1.6,
     baseFov: 58,
+    // Step 18: the aiming view (blended in while aimK > 0): closer, further onto her right shoulder
+    aim: { distance: 1.6, shoulder: 0.6, height: 0.1, sensitivity: 0.8, minPitch: -0.75, time: 0.4 },   // time: s to blend in or out (eased at both ends)
   };
 
   mv.ThirdPersonCamera = function (camera, world, opts) {
@@ -29,6 +31,7 @@
     this.focusVel = new THREE.Vector3();
     this.dist = this.cfg.distance;
     this.idleLook = 0;
+    this.aimTarget = 0; this.aimK = 0; this.aimP = 0;   // Step 18: 0 = normal view, 1 = aiming view (aimK: the eased aimP)
     this.ray = new THREE.Raycaster();
     this._o = new THREE.Vector3(); this._d = new THREE.Vector3();
   };
@@ -45,16 +48,20 @@
   };
 
   mv.ThirdPersonCamera.prototype.update = function (dt, motor, look, isMouse) {
-    const c = this.cfg;
-    const sens = isMouse ? c.mouseSensitivity : c.sensitivity;
+    const c = this.cfg, A = c.aim, want = this.aimTarget || 0;
+    this.aimP = want > this.aimP ? Math.min(want, this.aimP + dt / A.time) : Math.max(want, this.aimP - dt / A.time);
+    const ak = this.aimK = this.aimP * this.aimP * (3 - 2 * this.aimP);
+    const lerp = (a, b) => a + (b - a) * ak;
+    const sens = (isMouse ? c.mouseSensitivity : c.sensitivity) * lerp(1, A.sensitivity);
     const looked = Math.abs(look.dx) + Math.abs(look.dy) > 0.5;
     this.yaw = wrap(this.yaw - look.dx * sens);
-    this.pitch = Math.max(c.minPitch, Math.min(c.maxPitch, this.pitch + look.dy * sens * 0.8));
+    // (aiming allows a little more upward look; leaving it, that extra eases back rather than snapping)
+    this.pitch = Math.max(lerp(c.minPitch, A.minPitch), Math.min(c.maxPitch, this.pitch + look.dy * sens * 0.8));
     look.dx = look.dy = 0;
 
-    // ease back behind the character once the player stops steering the camera
+    // ease back behind the character once the player stops steering the camera (never while aiming)
     this.idleLook = looked ? 0 : this.idleLook + dt;
-    if (this.idleLook > c.recenterDelay && motor.speed > 0.8) {
+    if (ak < 0.01 && this.idleLook > c.recenterDelay && motor.speed > 0.8) {
       const behind = wrap(motor.yaw + Math.PI);
       // only drift behind when travelling away from or across the view; walking
       // toward the camera (or along it) never swings the camera around
@@ -66,7 +73,7 @@
     // critically damped spring toward the character
     // camera drops with the operative when she crouches
     this.crouchK = (this.crouchK || 0) + ((motor.stance === 'crouch' ? 1 : 0) - (this.crouchK || 0)) * (1 - Math.exp(-6 * dt));
-    const tx = motor.position.x, ty = motor.position.y + c.height - c.crouchDrop * this.crouchK, tz = motor.position.z;
+    const tx = motor.position.x, ty = motor.position.y + c.height + A.height * ak - c.crouchDrop * this.crouchK, tz = motor.position.z;
     const w = c.followStiffness, f = this.focus, v = this.focusVel, e = Math.exp(-w * dt);
     for (const [axis, t] of [['x', tx], ['y', ty], ['z', tz]]) {
       const x = f[axis] - t, tmp = (v[axis] + w * x) * dt;
@@ -77,12 +84,22 @@
     // orbit offset + shoulder
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch), sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const rx = cy, rz = -sy;
-    const ox = f.x + rx * c.shoulder, oy = f.y, oz = f.z + rz * c.shoulder;
+    let shoulder = lerp(c.shoulder, A.shoulder);
+    const distance = lerp(c.distance, A.distance);
+    // aiming: the shoulder pivot itself stays out of a wall at her right (pulled in at once, eased back out)
+    if (ak > 0.001) {
+      this.ray.set(this._o.set(f.x, f.y, f.z), this._d.set(rx, 0, rz)); this.ray.far = shoulder + 0.25;
+      const sh = this.ray.intersectObjects(this.world.meshes, false), lim = sh.length ? Math.max(0, sh[0].distance - 0.25) : shoulder;
+      this.shLim = this.shLim == null || lim < this.shLim ? lim : this.shLim + (lim - this.shLim) * (1 - Math.exp(-3 * dt));
+      shoulder = Math.min(shoulder, this.shLim);
+    } else this.shLim = null;
+    const ox = f.x + rx * shoulder, oy = f.y, oz = f.z + rz * shoulder;
     const d = this._d.set(sy * cp, sp, cy * cp);
     this.ray.set(this._o.set(ox, oy, oz), d);
-    this.ray.far = c.distance + 0.3;
+    this.ray.far = distance + 0.3;
     const hits = this.ray.intersectObjects(this.world.meshes, false);
-    const allowed = hits.length ? Math.max(0.7, hits[0].distance - 0.25) : c.distance;
+    // (closest it's pulled in: 0.7 m, or nearer while aiming, when it sits off her shoulder rather than behind her head)
+    const allowed = hits.length ? Math.max(Math.min(lerp(0.7, 0.05, ak), distance), hits[0].distance - 0.25) : distance;
     this.dist = allowed < this.dist ? allowed : this.dist + (allowed - this.dist) * (1 - Math.exp(-3 * dt));
     let px = ox + d.x * this.dist, py = oy + d.y * this.dist, pz = oz + d.z * this.dist;
     if (py < 0.25) py = 0.25;
