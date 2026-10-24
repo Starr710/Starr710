@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -185,6 +185,7 @@
         ui.reason.textContent = (a.evasion && a.state === 'EVASION' ? a.evasion.reason + (a.note ? ' · ' + a.note : '') : a.hs && a.state === 'HEIGHTENED' ? a.hs.reason + (a.note ? ' · ' + a.note : '') : a.note) || '–';
         ui.voice.textContent = voice ? voice.status() : '–';
         ui.patrol.textContent = guard.patrol.status();
+        ui.persona.textContent = guard.personality.status();
         ui.post.textContent = `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`;
       }
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
@@ -197,5 +198,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { SCmv: mv, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

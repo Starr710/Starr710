@@ -140,12 +140,13 @@
   mv.GuardAwareness.prototype.onHeard = function (rec) {
     const c = this.cfg, p = rec.position.clone();
     this.heard = { position: p, time: this.clock, intensity: rec.intensity, surface: rec.surface, distance: rec.distance, estimate: p.clone(), uncertainty: 0 };
-    this.recent = this.recent.filter(r => this.clock - r.time <= c.repeatWindow);
+    const P = this.guard.personality, pm = k => (P ? P.mod(k) : 0);         // Step 10: personality modifiers (0 when neutral)
+    this.recent = this.recent.filter(r => this.clock - r.time <= c.repeatWindow + pm('repeatWindow'));
     const repeats = this.recent.filter(r => Math.hypot(r.position.x - p.x, r.position.z - p.z) <= c.repeatRadius).length;
     this.recent.push({ position: p, time: this.clock });
     const close = 1 + c.closeBoost * Math.max(0, 1 - rec.distance / Math.max(0.01, rec.reach));
-    const repeat = Math.min(c.repeatMax, 1 + c.repeatBoost * repeats);
-    const gain = lerpTab(c.hearGain, rec.intensity) * close * repeat;
+    const repeat = Math.min(c.repeatMax + pm('repeatMax'), 1 + (c.repeatBoost + pm('repeatBoost')) * repeats);
+    const gain = lerpTab(c.hearGain, rec.intensity) * close * repeat * (1 + pm('hearInterest'));
     this.lastGain = gain;
     if (c.uncertainStates.indexOf(this.state) >= 0) this._estimate(this.heard, rec);
     if (this.confirmed) { this._alertHeard(this.heard, gain); return; }   // alerted: sounds feed the search
@@ -202,7 +203,7 @@
     }
     this._incidentUpdate(v.seen.rate > 0, v.meter);
     if (this.confirmed) { this.suspicion = 1; this._alerted(); return; }
-    if (this.clock - this.lastEvidence > c.holdTime) this.suspicion = Math.max(0, this.suspicion - c.decayRate * dt);
+    if (this.clock - this.lastEvidence > c.holdTime + (this.incident && this.incident.closer || 0)) this.suspicion = Math.max(0, this.suspicion - c.decayRate * dt);
 
     if (this.state === 'NORMAL') {
       const pat = this._patrolling();
@@ -232,6 +233,8 @@
   mv.GuardAwareness.prototype._beginIncident = function (kind, silent) {
     const c = this.cfg, heard = kind === 'heard', delay = heard ? c.reactDelay : c.visualReactDelay;
     this.incident = { start: this.clock, kind, reactAt: this.clock + delay, assessUntil: this.clock + delay + (heard ? c.assessTime : 0), voiced: !!silent };
+    // a curious guard sometimes takes a closer look: his suspicion holds a little longer before fading
+    if (!silent && this.guard.personality) this.incident.closer = this.guard.personality.onIncident();
     this.incidents++; this.calmSince = null;
   };
 
@@ -305,7 +308,9 @@
         s.heldFor = 0; s.i++;
         if (s.i >= c.lookAround.length) {
           s.i = 0; s.round++;
-          if (this.suspicion < c.searchRelaxAt || s.round >= c.searchRounds || timedOut) this._return();
+          const P = this.guard.personality, extra = P ? P.extraRounds() : 0;   // curious: one more round while still suspicious
+          if (this.suspicion < c.searchRelaxAt || s.round >= c.searchRounds + extra || timedOut) this._return();
+          else if (s.round >= c.searchRounds) P.noteExtraRound();
         }
       }
     } else if (this.behavior === 'return') {

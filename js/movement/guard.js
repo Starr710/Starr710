@@ -113,6 +113,8 @@
     this.hearing = noise && mv.GuardHearing ? new mv.GuardHearing(this, noise, o.hearing) : null;
     // Step 9: an optional patrol routine (o.patrol: mv.PatrolDefaults); without one he's a stationary guard
     this.patrol = mv.GuardPatrol ? new mv.GuardPatrol(this, o.patrol || { enabled: false }) : null;
+    // Step 10: his two permanent personality traits (o.personality: mv.PersonalityDefaults)
+    this.personality = mv.GuardPersonality ? new mv.GuardPersonality(this, o.personality) : null;
     this.awareness = mv.GuardAwareness ? new mv.GuardAwareness(this) : null;
     this.headYaw = 0; this.tension = 0; this._blBase = new Map();
     if (this.hearing && this.awareness) this.hearing.onHeard = rec => this.awareness.onHeard(rec);
@@ -129,6 +131,7 @@
     if (this.hearing) { this.hearing.last = null; this.hearing.heard = null; }
     if (this.awareness) this.awareness.reset();
     if (this.patrol) this.patrol.reset();
+    if (this.personality) this.personality.reset();   // traits unchanged
     this.headYaw = 0; this.tension = 0;
     this.place();
   };
@@ -250,8 +253,9 @@
     this.headYaw += Math.max(-lim, Math.min(lim, ease));
     this.tension += (att.tension - this.tension) * (1 - Math.exp(-o.tensionSmoothing * dt));
     const lean = o.lean * Math.PI / 180 * this.tension, right = _ax.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)).clone();
-    const turns = [[B.spine1, _up, 0, right, lean * 0.5], [B.chest, _up, 0, right, lean * 0.5],
-      [B.neck, _up, this.headYaw * o.neckShare, right, -lean * 0.4], [B.head, _up, this.headYaw * (1 - o.neckShare), right, -lean * 0.6]];
+    const sh = this.personality ? this.personality.shift : { yaw: 0, head: 0 };   // a bored guard's occasional stance shift
+    const turns = [[B.spine1, _up, sh.yaw * 0.5, right, lean * 0.5], [B.chest, _up, sh.yaw * 0.5, right, lean * 0.5],
+      [B.neck, _up, this.headYaw * o.neckShare + sh.head * 0.4, right, -lean * 0.4], [B.head, _up, this.headYaw * (1 - o.neckShare) + sh.head * 0.6, right, -lean * 0.6]];
     for (const [bone, yAxis, yaw, pAxis, pitch] of turns) {
       if (!bone) continue;
       const kept = this._blBase.get(bone);
@@ -276,6 +280,7 @@
     // the idle stance is squared to his facing; walking clips already face forward
     this.pivot.rotation.y = this.pivotYaw - this.squareYaw * this.animator.weights.idle;
     this.root.updateMatrixWorld(true);
+    if (this.personality && this.awareness) this.personality.update(dt, this.awareness.state, this.awareness.state === 'NORMAL' && this.isStill());
     this._bodyLanguage(dt);
     if (target) this.vision.update(dt, target);
     if (this.awareness) this.awareness.update(dt, target);

@@ -134,9 +134,13 @@
   mv.GuardPatrol.prototype._observe = function () {
     const c = this.cfg, g = this.guard, wp = c.points[this.index], r = this.rng;
     const face = wp.face != null ? wp.face * D2R : g.yaw;
-    const total = wp.pause ? wp.pause[0] + (wp.pause[1] - wp.pause[0]) * r() : 2;
+    let total = wp.pause ? wp.pause[0] + (wp.pause[1] - wp.pause[0]) * r() : 2;
     // the facing first, then his looks (an extra look is sometimes skipped; each varies a little)
-    const looks = [0].concat((wp.looks || []).filter((o, i) => i === 0 || r() >= c.skipLook)).map(o => face + (o + (o ? (r() * 2 - 1) * c.lookJitter : 0)) * D2R);
+    let offs = [0].concat((wp.looks || []).filter((o, i) => i === 0 || r() >= c.skipLook));
+    // Step 10: a bored guard sometimes lingers, adds a casual look, and varies more
+    const P = g.personality, ex = P ? P.observeExtras(face) : null;
+    if (ex) { total = total * ex.scale + ex.pause; offs = offs.concat(ex.looks); }
+    const looks = offs.map((o, k) => face + (o + (o && k <= (wp.looks || []).length ? (r() * 2 - 1) * c.lookJitter : 0)) * D2R);
     this.obs = { looks, i: 0, hold: total / looks.length, heldFor: 0, total };
     this.state = 'observing';
   };

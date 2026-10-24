@@ -88,7 +88,8 @@
     // here). The spawn is in the yard's west corner, 19 m from the guard (beyond his 16 m
     // sight range) and 84° off his facing (outside his 55° half-cone), in open ground
     // (3.6 m to the nearest pillar, 5 m to the wall), facing east toward the yard.
-    const GUARD = { x: 2, z: -16, yaw: 0, patrol: PATROL };
+    // his two permanent personality traits (Step 10; guard-personality.js)
+    const GUARD = { x: 2, z: -16, yaw: 0, patrol: PATROL, personality: { primary: 'curious', secondary: 'bored' } };
     const SPAWN = { x: -17, z: -14, yaw: Math.PI / 2 };
     const tex = gridTexture(renderer);
     tex.repeat.set(SIZE / 4, SIZE / 4);
