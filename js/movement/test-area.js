@@ -70,6 +70,12 @@
 
   mv.buildTestArea = function (scene, world, renderer) {
     const SIZE = 44;
+    // The guard's post, and the player's spawn (the one place to change it; RESET returns
+    // here). The spawn is in the yard's west corner, 19 m from the guard (beyond his 16 m
+    // sight range) and 84° off his facing (outside his 55° half-cone), in open ground
+    // (3.6 m to the nearest pillar, 5 m to the wall), facing east toward the yard.
+    const GUARD = { x: 2, z: -16, yaw: 0 };
+    const SPAWN = { x: -17, z: -14, yaw: Math.PI / 2 };
     const tex = gridTexture(renderer);
     tex.repeat.set(SIZE / 4, SIZE / 4);
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(SIZE, SIZE).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: tex }));
@@ -143,10 +149,10 @@
       world.addSurface(x, z, w, d, type);
     }
 
-    // start pad
+    // start pad, at the player's spawn
     const pad = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.65, 32).rotateX(-Math.PI / 2), mats.paint);
-    pad.position.set(0, 0.006, 0); scene.add(pad);
+    pad.position.set(SPAWN.x, 0.006, SPAWN.z); scene.add(pad);
 
-    return { spawn: { x: 0, z: 0, yaw: 0 }, size: SIZE, guard: { x: 2, z: -16, yaw: 0 } };
+    return { spawn: SPAWN, size: SIZE, guard: GUARD };
   };
 })(SC.mv);

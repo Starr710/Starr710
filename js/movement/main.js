@@ -72,9 +72,13 @@
   let animator = null, posture = null;
   scene.add(visual.root);
 
+  // the player at the spawn: standing, still, the camera behind her looking into the yard
   function spawn() {
+    input.setCrouch(false); motor.stance = 'stand';
     motor.teleport(area.spawn.x, area.spawn.z, area.spawn.yaw);
     cam.snap(motor);
+    // a foot in the air when she's moved must not land as a footstep at the spawn
+    if (footsteps) for (const f of footsteps.feet) { f.down = true; f.prev = null; f.at = null; }
   }
   spawn();
   applyTier(0);
@@ -180,5 +184,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { motor, cam, input, world, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

@@ -984,6 +984,108 @@ const CHECKS = {
     return { pass: ok, detail: `seen during Heightened Security: ${r.hsSight} after ${r.hsSightT.toFixed(2)} s ("${r.hsInterrupted}"), then a fresh search (${r.hsFresh.toFixed(1)} s); seen during the return: ${r.retSight} ${r.retSightT.toFixed(2)} s after the re-alert level, fresh search ${r.retFresh}; 40 s of faint steps extended it by ${r.weakExtended.toFixed(1)} s; a metal jog step: "${r.meanNote}", he heads for his estimate (${r.meanExact.toFixed(2)} m off the real spot), +${r.meanExt.toFixed(1)} s; a stream of strong sounds: ${r.exts} extensions at least ${isFinite(r.minGap) ? r.minGap.toFixed(1) : '-'} s apart (gap ${r.gapCfg}), longest ${r.maxLen.toFixed(1)} s (cap ${r.cap}), then ${r.streamEndState}; a sound during the walk back → ${r.retInt} ("${r.retIntNote}"), then ${r.retSeq}, ${r.retPost.toFixed(2)} m from post; in plain view 100 s: NORMAL frames ${r.visibleNormal}, ends ${r.visibleState}` };
   },
 
+  // Step 7, 15–17: the spawn. Every vision body point is beyond his range or outside his
+  // cone; standing still there for 20 s he never detects her (meter 0, NORMAL); she
+  // overlaps no obstacle, has open ground around her, is well away from him and inside the
+  // yard, and the camera starts behind her looking into the yard
+  async spawnSafe() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, world, area, cam } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, v = g.vision;
+      const S = area.spawn; motor.teleport(S.x, S.z, S.yaw); cam.snap(motor);
+      for (let f = 0; f < 120; f++) { step(0, 'stand'); MV.footsteps.update(dt); }
+      g.reset();
+      const eye = g.eye(new THREE.Vector3()), fw = g.forward(new THREE.Vector3()), half = Math.max(...v.cfg.zones.map(z => z.angle)) / 2;
+      const pts = T.points().map(p => { const dx = p.x - eye.x, dz = p.z - eye.z, d = Math.hypot(dx, dz); return { d, off: Math.acos((dx * fw.x + dz * fw.z) / d) * 57.2958 }; });
+      const minDist = Math.min(...pts.map(p => p.d)), minOff = Math.min(...pts.map(p => p.off)), allOut = pts.every(p => p.d > v.range() || p.off > half);
+      // 20 s standing still with the guard watching and listening
+      let maxMeter = 0, states = new Set(), steps0 = MV.footsteps.count;
+      for (let f = 0; f < 20 * 60; f++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); maxMeter = Math.max(maxMeter, v.meter); states.add(a.state); }
+      // space around her: obstacles and the perimeter
+      const R = motor.radius || 0.3, P = motor.position; let clear = Infinity;
+      for (const b of world.boxes) { const dx = Math.max(b.minX - P.x, 0, P.x - b.maxX), dz = Math.max(b.minZ - P.z, 0, P.z - b.maxZ); clear = Math.min(clear, Math.hypot(dx, dz) - R); }
+      for (const c of world.cylinders) if (!c.noSight) clear = Math.min(clear, Math.hypot(P.x - c.x, P.z - c.z) - c.r - R);
+      const toGuard = Math.hypot(P.x - g.position.x, P.z - g.position.z), inside = Math.abs(P.x) < area.size / 2 - 1 && Math.abs(P.z) < area.size / 2 - 1;
+      // the camera looks the way she faces, into the yard (toward its centre)
+      const cf = cam.forward(new THREE.Vector3()), toC = new THREE.Vector3(-P.x, 0, -P.z).normalize();
+      return { minDist, minOff, half, range: v.range(), allOut, maxMeter, states: [...states], why: v.seen.why, footsteps: MV.footsteps.count - steps0, clear, toGuard, inside, camYard: cf.dot(toC), camFacing: cf.dot(new THREE.Vector3(Math.sin(S.yaw), 0, Math.cos(S.yaw))), at: [P.x, P.z] };
+    });
+    const ok = r.allOut && r.maxMeter === 0 && r.states.length === 1 && r.states[0] === 'NORMAL' && r.footsteps === 0 && r.clear >= 1.5 && r.toGuard >= 3 && r.inside && r.camYard > 0.5 && r.camFacing > 0.99;
+    return { pass: ok, detail: `spawn (${r.at[0].toFixed(1)}, ${r.at[1].toFixed(1)}): every body point outside his sight (nearest ${r.minDist.toFixed(1)} m vs range ${r.range}, at least ${r.minOff.toFixed(0)}° off his facing vs ${r.half}° half-cone): ${r.allOut}; 20 s standing still: meter peak ${(r.maxMeter * 100).toFixed(0)}%, states ${r.states.join('/')}, his last look "${r.why}", footsteps ${r.footsteps}; ${r.clear.toFixed(1)} m clear of the nearest obstacle, ${r.toGuard.toFixed(1)} m from him, inside the yard ${r.inside}; camera along her facing ${r.camFacing.toFixed(2)}, toward the yard ${r.camYard.toFixed(2)}` };
+  },
+
+  // Step 7, 18: RESET on an iPhone-landscape screen (real touches, frame loop running) after
+  // she's crouched and moving and he's alerted, searching and has heard her: she's back at
+  // the spawn standing still with the camera behind her; he's at his post, facing it, NORMAL,
+  // with no alert, sound, search or investigation left; it stays that way
+  async resetClean() {
+    const page = await touchPage(), Tc = page.touch;
+    await page.evaluate(() => { const { motor, cam } = MV; motor.teleport(2, -10, Math.PI); cam.snap(motor); });
+    await page.waitForFunction(() => MV.guard.awareness.state === 'ALERT', null, { timeout: 30000 }).catch(() => {});   // he sees her
+    const alerted = await page.evaluate(() => MV.guard.awareness.state);
+    await page.evaluate(() => { const { motor, cam } = MV; motor.teleport(-6, 15, Math.PI); cam.snap(motor); });
+    await page.waitForFunction(() => MV.guard.awareness.state === 'EVASION', null, { timeout: 30000 }).catch(() => {});   // he loses her: searching
+    const bb = await page.locator('#mv-crouch').boundingBox();
+    await Tc('touchStart', [{ x: bb.x + 30, y: bb.y + 30, id: 9 }]); await Tc('touchEnd', []); await page.waitForTimeout(300);
+    await page.evaluate(() => MV.noise.emit(3, 'footstep', new THREE.Vector3(MV.guard.position.x + 3, 0, MV.guard.position.z), 'metal', 'player'));
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 236, id: 1 }]); await page.waitForTimeout(1200);
+    const before = await page.evaluate(() => { const a = MV.guard.awareness; return { state: a.state, crouch: MV.input.crouch, speed: MV.motor.speed, heard: !!a.heard, moving: MV.guard.moving }; });
+    await Tc('touchEnd', []);
+    await page.tap('#mv-reset'); await page.waitForTimeout(100);
+    const snap = () => page.evaluate(() => {
+      const { motor, input, cam, area } = MV, g = MV.guard, a = g.awareness, S = area.spawn, wrap = x => Math.atan2(Math.sin(x), Math.cos(x));
+      return { pos: Math.hypot(motor.position.x - S.x, motor.position.z - S.z), yaw: Math.abs(wrap(motor.yaw - S.yaw)) * 57.3, speed: Math.abs(motor.speed), stance: motor.stance, crouch: input.crouch,
+        camYaw: Math.abs(wrap(cam.yaw - S.yaw - Math.PI)) * 57.3, gPost: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), gYaw: Math.abs(wrap(g.yaw - g.postYaw)) * 57.3, gMoving: g.moving, path: !!g.path,
+        state: a.state, suspicion: a.suspicion, confirmed: a.confirmed, left: [a.evasion, a.hs, a.search, a.focus, a.seen, a.heard].filter(x => x != null).length + a.track.length + a.recent.length,
+        meter: g.vision.meter, hearing: !!g.hearing.heard, idle: MV.animator.weights.idle, steps: MV.footsteps.count, still: g.isStill() };
+    });
+    // she may finish the step she was taking (the animator's normal settle into idle, at the
+    // spawn, unheard by him); after that, nothing
+    const A = await snap(); await page.waitForTimeout(2000); const M = await snap(); await page.waitForTimeout(3000); const B = await snap();
+    const clean = s => s.pos < 0.01 && s.yaw < 0.5 && s.speed < 0.01 && s.stance === 'stand' && !s.crouch && s.gPost < 0.01 && s.gYaw < 0.5 && !s.gMoving && s.state === 'NORMAL' && s.suspicion === 0 && !s.confirmed && s.left === 0 && s.meter === 0 && !s.hearing;
+    const ok = alerted === 'ALERT' && before.state === 'EVASION' && before.crouch && before.speed > 0.5 && clean(A) && A.camYaw < 1 && clean(M) && clean(B) && M.steps - A.steps <= 2 && B.steps === M.steps && B.idle > 0.9 && B.still && page.errors.length === 0;
+    return { pass: ok, detail: `before RESET: ${alerted} then ${before.state}, crouched ${before.crouch}, moving ${before.speed.toFixed(2)} m/s, heard ${before.heard}; after: her ${A.pos.toFixed(2)} m / ${A.yaw.toFixed(1)}° from the spawn, ${A.stance}, crouch ${A.crouch}, camera ${A.camYaw.toFixed(1)}° from behind her; him ${A.gPost.toFixed(2)} m / ${A.gYaw.toFixed(1)}° from his post, ${A.state}, suspicion ${A.suspicion}, leftover memory/search items ${A.left}, meter ${A.meter}, heard-sound record ${A.hearing}; settle steps in the first 2 s ${M.steps - A.steps} (heard: ${M.hearing}); 3 s later ${B.state}, items ${B.left}, footsteps ${B.steps - M.steps}, her idle ${B.idle.toFixed(2)}, him still ${B.still}; page errors ${page.errors.length}` };
+  },
+
+  // Step 7 on an iPhone-landscape screen, real touches, frame loop running (about 2 minutes):
+  // from the spawn she stealth-walks into his view until he's alerted, jogs back out of
+  // range and north along the west wall, then stands hidden. The whole stand-down runs:
+  // EVASION → HEIGHTENED (~60 s) → RETURNING → NORMAL at his post, facing it, never seeing her
+  async hsTouchCycle() {
+    const page = await touchPage(), Tc = page.touch, X = 150, Y = 300;
+    await page.evaluate(() => {
+      const g = MV.guard, a = g.awareness; window.__c = { seq: [], times: {}, maxStep: 0, seenHidden: 0, normalSeen: 0 }; let last = '', lp = g.position.clone();
+      (function f() {
+        const c = window.__c, s = a.state; if (s !== last) { c.seq.push(s); c.times[s] = a.clock; last = s; }
+        c.maxStep = Math.max(c.maxStep, g.position.distanceTo(lp)); lp.copy(g.position);
+        if (c.hidden && g.vision.seen.rate > 0) c.seenHidden++;
+        if (s === 'NORMAL' && c.times.ALERT != null && g.vision.seen.rate > 0) c.normalSeen++;   // after the alert
+        requestAnimationFrame(f);
+      })();
+    });
+    // the thumb pushes toward a world point (from the camera's forward / right), re-aimed every 0.3 s
+    const steer = async (tx, tz, px, done, max) => {
+      const t0 = Date.now(); let first = true;
+      while (Date.now() - t0 < max && !(await page.evaluate(done))) {
+        const st = await page.evaluate(([tx, tz]) => { const f = MV.cam.forward(new THREE.Vector3()), p = MV.motor.position, wx = tx - p.x, wz = tz - p.z, l = Math.hypot(wx, wz); return { mx: (wx * -f.z + wz * f.x) / l, my: (wx * f.x + wz * f.z) / l }; }, [tx, tz]);
+        if (first) { await Tc('touchStart', [{ x: X, y: Y, id: 1 }]); first = false; }
+        await Tc('touchMove', [{ x: X + st.mx * px, y: Y - st.my * px, id: 1 }]); await page.waitForTimeout(300);
+      }
+      await Tc('touchEnd', []);
+    };
+    await steer(2, -14, 32, () => MV.guard.awareness.state === 'ALERT', 60000);
+    await steer(-18, -14, 64, () => MV.motor.position.x < -17, 30000);
+    await steer(-18, 18, 64, () => MV.motor.position.z > 17.5, 30000);
+    await page.evaluate(() => { window.__c.hidden = true; });
+    await page.waitForFunction(() => MV.guard.awareness.standDowns > 0 || MV.guard.awareness.evasions > 1, null, { timeout: 300000, polling: 500 }).catch(() => {});
+    await page.waitForTimeout(1000);
+    const r = await page.evaluate(() => { const g = MV.guard, a = g.awareness, c = window.__c, wrap = x => Math.atan2(Math.sin(x), Math.cos(x));
+      return { seq: c.seq.join(' → '), hs: (c.times.RETURNING || 0) - (c.times.HEIGHTENED || 0), maxStep: c.maxStep, seenHidden: c.seenHidden, normalSeen: c.normalSeen, state: a.state, post: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), facing: Math.abs(wrap(g.yaw - g.postYaw)) * 57.3, at: [MV.motor.position.x, MV.motor.position.z] }; });
+    const ok = /ALERT → EVASION → HEIGHTENED → RETURNING → NORMAL$/.test(r.seq) && Math.abs(r.hs - 60) < 1 && r.maxStep < 0.15 && r.seenHidden === 0 && r.normalSeen === 0
+      && r.state === 'NORMAL' && r.post <= 0.4 && r.facing <= 4 && page.errors.length === 0;
+    return { pass: ok, detail: `${r.seq}; Heightened Security ${r.hs.toFixed(1)} s; she hid at (${r.at[0].toFixed(1)}, ${r.at[1].toFixed(1)}), seen while hidden ${r.seenHidden} frames; NORMAL while seeing her after the alert ${r.normalSeen} frames; stood down ${r.post.toFixed(2)} m / ${r.facing.toFixed(1)}° from his post; largest per-frame move ${(r.maxStep * 100).toFixed(1)} cm; page errors ${page.errors.length}` };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();

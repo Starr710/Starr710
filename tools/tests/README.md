@@ -1,7 +1,7 @@
 # Movement regression checks
 
 ```
-node tools/tests/movement-checks.cjs              # all checks (about 1–2 minutes)
+node tools/tests/movement-checks.cjs              # all checks (about 5 minutes; `hsTouchCycle` alone runs about 2)
 node tools/tests/movement-checks.cjs zones stops  # only some
 ```
 
@@ -38,6 +38,9 @@ Run from the repo root. The script starts its own local server, opens `movement.
 | `hsCycle` | Step 7 full cycle with her hidden far away: EVASION → HEIGHTENED → RETURNING → NORMAL in that order; Heightened Security lasts its setting (60 s ± 0.5); at least 2 checkpoint walks and 3 look-around pauses; he walks slower than in the search (< 0.8×), every checkpoint within his leash (12 m) of the post; he stands down ≤ 0.4 m from his post and ≤ 4° from its facing, turning no faster than his turn rate; still NORMAL, standing and idle 5 s later; no per-frame jump (< 6 cm, < 4.6°), no obstacle overlap, he never saw her; afterwards a sound is heard and she's seen in front of him |
 | `hsInterrupt` | A sighting during Heightened Security and during the return → ALERT as soon as his meter reaches the re-alert level (the stand-down cancelled and noted), then a fresh search; 40 s of faint steps never extend it; a meaningful sound sends him to his estimate (not the exact spot) and adds ≤ 5 s; a stream of strong sounds: extensions ≥ 8 s apart, total capped at 90 s, then he returns; a strong sound during the walk back interrupts it, he checks, then returns and stands down at his post; in plain view for 100 s he's never NORMAL |
 | `evasionReacquire` | Seeing her again mid-search returns him to ALERT ("saw her again"); losing her again starts search #2 with a fresh 30 s |
+| `spawnSafe` | The spawn: every one of the 9 vision body points is beyond his range or outside his cone; standing still there 20 s with him watching and listening gives a meter of 0, NORMAL only and no footsteps; ≥ 1.5 m clear of every obstacle, ≥ 3 m from him, inside the yard; the camera starts behind her along her facing, looking into the yard |
+| `resetClean` | Real touches on an iPhone-landscape screen: after he's alerted and searching, she's crouched and moving and he's heard a sound, RESET puts her at the spawn (position and facing exact), standing, not crouched, camera behind her; him at his post facing it, NORMAL, suspicion 0, no memory/search/investigation/sound left, meter 0. Only the step she was taking may finish (≤ 2 settle steps in 2 s, unheard by him), then nothing for 3 s; she's in idle and he's still |
+| `hsTouchCycle` | Real touches, frame loop running (about 2 minutes): from the spawn she stealth-walks into view until he's alerted, jogs back out of range and north along the west wall, and hides. He runs the whole cycle ALERT → EVASION → HEIGHTENED (60 s ± 1) → RETURNING → NORMAL, stands down ≤ 0.4 m and ≤ 4° from his post, never sees her while she's hidden, is never NORMAL while seeing her, and never jumps (< 15 cm per frame) |
 | `groundContact` | In the crouch idle both feet touch the ground (lowest skinned vertex ≤ 3 cm) |
 | `clearance` | Limbs stay out of the body: hand to shin ≥ 15 cm in the crouch idle (≥ 12 cm during the crouch-walk arm swing), thigh to spine ≥ 15 cm |
 
