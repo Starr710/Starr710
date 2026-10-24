@@ -1,14 +1,19 @@
-// SHADOW CELL — guard awareness: suspicion, investigation and confirmed threats
-// (docs/GAME_DESIGN.md §5). The guard's first brain. Four states:
+// SHADOW CELL — guard awareness: suspicion, investigation, alert and evasion
+// (docs/GAME_DESIGN.md §5–6). The guard's brain. States:
 //   NORMAL         at his post, idle; hears and sees normally
 //   SUSPICIOUS     something caught his attention: he turns to it and assesses
 //   INVESTIGATING  suspicion is significant: he walks to the last suspicious spot,
 //                  searches around it, and walks back to his post if nothing turns up
-//   CONFIRMED      his vision meter reached 100%: he actually saw her. Persistent in
-//                  this stage: no sound, timer or return-to-post can undo it; he faces
-//                  the last place he actually saw her
-// Memory is only what he earned: the last sound he heard, the last place he actually
-// saw her, and whether a sighting was confirmed. He never knows where she is unseen.
+//   ALERT          his vision meter reached 100% (confirmed): while he can see her he
+//                  stands his ground, faces her and tracks her with his eyes
+//   EVASION        he lost sight of her (after a short grace): a 30 s Active Search of
+//                  the last place he saw her, where she was heading and nearby hiding
+//                  spots, redirected by meaningful sounds; seeing her again re-alerts him
+//   HEIGHTENED_PENDING  the search ran out: he settles where he is (Step 7 takes over)
+// Memory is only what he earned and is kept apart: the last place he actually saw her
+// (and which way she was going), the last sound he heard (exact origin for the record,
+// his approximate estimate of it once alerted), and whether a sighting was confirmed.
+// He never reads where she really is: only what his eyes and ears gave him.
 // All thresholds and timers are initial test values, adjustable here.
 (function (mv) {
   'use strict';
@@ -43,6 +48,34 @@
     lookHold: 1.1,         // …for this long each
     searchRounds: 2,       // at most this many look-around rounds before heading back
     maxInvestigate: 45,    // s: an investigation never runs longer than this
+    // ---- alert and evasion (Step 6)
+    alertGrace: 0.75,      // s out of sight before ALERT becomes EVASION (a brief occlusion doesn't flicker)
+    reacquireMeter: 0.35,  // during EVASION / HEIGHTENED PENDING, a sighting that fills his meter this far re-alerts him
+    evasionTime: 30,       // s of Active Search after losing her
+    soundExtend: 3,        // s a meaningful new sound adds to the search…
+    evasionMax: 40,        // …but the search never lasts longer than this in total
+    travelWindow: 0.6,     // s of sightings used to judge which way she was going
+    predictTime: 1.5,      // s ahead along that direction he checks first…
+    predictMax: 5,         // …at most this far (m)
+    hideRadius: 7,         // m around the last-known area where hiding spots are considered
+    hideCount: 4,          // hiding spots per search plan
+    spotSpacing: 2.5,      // m: spots this close are the same place (no re-checking it)
+    searchJitter: 1.5,     // m of random variation in how spots are ranked (search order varies)
+    evasionLooks: [0, 60, -60],   // ° from his arrival heading, looked at in turn at each spot…
+    evasionLookHold: 0.6,  // …held this long each
+    escapeAngle: 45,       // ° either side of her heading for the two escape-direction spots…
+    escapeDistance: 4,     // …this far (m) beyond where she was heading
+    widen: 1.6,            // when every spot is checked, the next plan searches this much wider
+    evasionWithin: 1.0,    // m from a spot where he lets the walk finish
+    evasionPush: 0.78,     // ≈1.95 m/s: a hurried search walk (the motor's stealth-walk zone)
+    // hearing once alerted: an approximate estimate, not the exact spot. Its spread (m)
+    // = base + far × (distance / reach) + weak × max(0, 1 − intensity / 3)
+    soundUncertainty: { base: 0.6, far: 3.0, weak: 1.2 },
+    uncertainStates: ['ALERT', 'EVASION', 'HEIGHTENED_PENDING'],
+    redirectStrength: 0.2, // a sound must be at least this strong (as suspicion gain) to redirect the search…
+    redirectDistance: 3,   // …its estimate this far (m) from where he's heading…
+    redirectGap: 1.5,      // …and this long (s) after the last redirect
+    seed: 1337,            // for the random variation (repeatable in tests)
     debug: true,           // developer markers and stats (separate from any player HUD)
   };
 
@@ -68,14 +101,18 @@
     this.recent = [];         // recent heard sounds, for repetition
     this.lastRedirect = -Infinity; this.redirects = 0;
     this.search = null; this.investigateStart = 0; this.note = '';
+    this.track = [];          // recent sightings { position, time }: her direction of travel
+    this.lastContact = -Infinity;
+    this.evasion = null; this.evasions = 0;
+    this.rng = mulberry(this.cfg.seed);
   };
+  function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
   // ---------------------------------------------------------------- evidence
   // a sound the guard heard (from guard-hearing.js)
   mv.GuardAwareness.prototype.onHeard = function (rec) {
     const c = this.cfg, p = rec.position.clone();
-    this.heard = { position: p, time: this.clock, intensity: rec.intensity, surface: rec.surface, distance: rec.distance };
-    if (this.confirmed) return;                       // a confirmed threat outranks ordinary sounds
+    this.heard = { position: p, time: this.clock, intensity: rec.intensity, surface: rec.surface, distance: rec.distance, estimate: p.clone(), uncertainty: 0 };
     this.recent = this.recent.filter(r => this.clock - r.time <= c.repeatWindow);
     const repeats = this.recent.filter(r => Math.hypot(r.position.x - p.x, r.position.z - p.z) <= c.repeatRadius).length;
     this.recent.push({ position: p, time: this.clock });
@@ -83,6 +120,8 @@
     const repeat = Math.min(c.repeatMax, 1 + c.repeatBoost * repeats);
     const gain = lerpTab(c.hearGain, rec.intensity) * close * repeat;
     this.lastGain = gain;
+    if (c.uncertainStates.indexOf(this.state) >= 0) this._estimate(this.heard, rec);
+    if (this.confirmed) { this._alertHeard(this.heard, gain); return; }   // alerted: sounds feed the search
     this.suspicion = Math.min(1, this.suspicion + gain);
     this.lastEvidence = this.clock;
     this._consider('heard', p);
@@ -126,12 +165,15 @@
         this._consider('seen', p);
       }
     }
+    if (v.seen.rate > 0 && v.seen.position) {
+      this.track.push({ position: v.seen.position.clone(), time: this.clock });
+      while (this.track.length && this.clock - this.track[0].time > 2) this.track.shift();
+    }
     if (!this.confirmed && v.meter >= 1) {
       this.confirmed = true; this.confirmedAt = this.clock;
-      this.state = 'CONFIRMED'; this.behavior = 'facing last seen';
-      g.stopMoving(); this.search = null;
+      this._alert('recognised her');
     }
-    if (this.confirmed) { this.suspicion = 1; this._confirmed(); return; }
+    if (this.confirmed) { this.suspicion = 1; this._alerted(); return; }
     if (this.clock - this.lastEvidence > c.holdTime) this.suspicion = Math.max(0, this.suspicion - c.decayRate * dt);
 
     if (this.state === 'NORMAL') {
@@ -201,13 +243,176 @@
     if (this.state === 'NORMAL') this.focus = null;
   };
 
-  // ---------------------------------------------------------------- confirmed threat
-  // Minimal for this stage: he holds still and faces the last place he actually saw
-  // her (tracking her while she's in sight). No chase, combat or stand-down.
-  mv.GuardAwareness.prototype._confirmed = function () {
+  // ---------------------------------------------------------------- alert and evasion
+  mv.GuardAwareness.prototype._alert = function (why) {
     const g = this.guard;
-    this.behavior = g.vision.seen.rate > 0 ? 'watching her' : 'facing last seen';
-    if (this.seen && g.isStill() && Math.hypot(this.seen.position.x - g.position.x, this.seen.position.z - g.position.z) > 0.5) g.faceToward(this.seen.position);
+    this.state = 'ALERT'; this.behavior = 'tracking her'; this.note = why;
+    this.lastContact = this.clock; this.evasion = null; this.search = null;
+    g.stopMoving();
+  };
+
+  // per frame once confirmed
+  mv.GuardAwareness.prototype._alerted = function () {
+    const c = this.cfg, g = this.guard, v = g.vision, visible = v.seen.rate > 0;
+    if (visible) this.lastContact = this.clock;
+    if (this.state !== 'ALERT' && visible && v.meter >= c.reacquireMeter) this._alert('saw her again');
+    if (this.state === 'ALERT') {
+      if (g.moving) g.stopMoving();
+      // track her with his eyes: face where he last saw her (exact while she's in view,
+      // frozen at the last sighting during the grace, never her unseen position)
+      if (this.seen && g.isStill() && Math.hypot(this.seen.position.x - g.position.x, this.seen.position.z - g.position.z) > 0.5) g.faceToward(this.seen.position);
+      this.behavior = visible ? 'tracking her' : 'lost sight…';
+      if (!visible && this.clock - this.lastContact > c.alertGrace) this._startEvasion();
+    } else if (this.state === 'EVASION') {
+      if (this.clock >= this.evasion.end) {
+        this.state = 'HEIGHTENED_PENDING'; this.behavior = 'settling'; this.note = 'search ran out'; this.evasion.plan = [];
+        g.stopMoving();
+      } else this._evasionStep();
+    } else if (this.state === 'HEIGHTENED_PENDING') {
+      this.behavior = g.isStill() ? 'holding (Step 7 next)' : 'settling';
+    }
+  };
+
+  // which way she was going: from the sightings in her last travelWindow seconds in view
+  mv.GuardAwareness.prototype._travel = function () {
+    const c = this.cfg, t = this.track;
+    if (t.length < 2) return null;
+    const last = t[t.length - 1]; let old = t[0];
+    for (const s of t) if (last.time - s.time <= c.travelWindow) { old = s; break; }
+    const dt = last.time - old.time;
+    if (dt < 0.15) return null;
+    return new THREE.Vector3((last.position.x - old.position.x) / dt, 0, (last.position.z - old.position.z) / dt);
+  };
+
+  mv.GuardAwareness.prototype._startEvasion = function () {
+    const c = this.cfg;
+    this.evasions++;
+    this.state = 'EVASION';
+    this.evasion = { start: this.clock, end: this.clock + c.evasionTime, visited: [], plan: [], dest: null, look: null, travel: this._travel(), redirects: 0, reason: '' };
+    this.evasion.plan = this._plan(this.seen.position, this.evasion.travel, 'seen');
+    this.note = 'lost her: Active Search';
+    this._nextSpot();
+  };
+
+  // a search plan around an anchor (where he saw or heard her): the anchor itself, the
+  // way she was heading, then hiding spots near cover he couldn't see into, ranked by
+  // closeness to the area, her heading, and a little random variation
+  mv.GuardAwareness.prototype._plan = function (anchor, travel, kind, wider) {
+    const c = this.cfg, g = this.guard, nav = g.nav, spots = [], visited = this.evasion ? this.evasion.visited : [];
+    const radius = c.hideRadius * (wider || 1);
+    const near = (p, list) => list.some(q => Math.hypot(q.x - p.x, q.z - p.z) < c.spotSpacing);
+    const add = (p, why) => { if (!near(p, spots.map(s => s.p)) && !near(p, visited) && !(nav && nav.inside(p))) spots.push({ p: new THREE.Vector3(p.x, 0, p.z), why }); };
+    add(anchor, kind === 'seen' ? 'the last place he saw her' : 'where he heard her');
+    let centre = anchor, dir = null;
+    if (travel && Math.hypot(travel.x, travel.z) > 0.3) {
+      const sp = Math.hypot(travel.x, travel.z); dir = new THREE.Vector3(travel.x / sp, 0, travel.z / sp);
+      let d = Math.min(sp * c.predictTime, c.predictMax), pred = null;
+      for (; d > 0.5; d -= 0.5) { const q = anchor.clone().addScaledVector(dir, d); if (!nav || !nav.inside(q)) { pred = q; break; } }
+      if (pred) { add(pred, 'where she was heading'); centre = pred; }
+    }
+    if (nav) {
+      const eye = g.eye(new THREE.Vector3()), probe = new THREE.Vector3();
+      // candidate places: the navigation waypoints at cover corners, a spot behind the
+      // middle of each face of nearby cover, and two escape directions off her heading
+      const pool = nav.nodes.slice(), off = g.cfg.radius + 0.45;
+      for (const b of g.world.boxes) {
+        const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
+        if (Math.hypot(cx - centre.x, cz - centre.z) > radius + 4) continue;
+        for (const q of [{ x: cx, z: b.minZ - off }, { x: cx, z: b.maxZ + off }, { x: b.minX - off, z: cz }, { x: b.maxX + off, z: cz }]) if (Math.abs(q.x) < 21.4 && Math.abs(q.z) < 21.4 && !nav.inside(q)) pool.push(q);
+      }
+      if (dir) for (const s of [-1, 1]) { const a = Math.atan2(dir.x, dir.z) + s * c.escapeAngle * Math.PI / 180, q = { x: centre.x + Math.sin(a) * c.escapeDistance, z: centre.z + Math.cos(a) * c.escapeDistance }; if (!nav.inside(q) && nav.plan(centre, q)) pool.push(q); }
+      const ranked = pool.map(n => {
+        const d = Math.hypot(n.x - centre.x, n.z - centre.z);
+        if (d > radius) return null;
+        probe.set(n.x, 1.0, n.z);
+        const hidden = g.world.segmentBlocked(eye, probe);          // somewhere he couldn't see into
+        const ahead = dir ? Math.max(0, ((n.x - anchor.x) * dir.x + (n.z - anchor.z) * dir.z) / Math.max(0.1, Math.hypot(n.x - anchor.x, n.z - anchor.z))) : 0;
+        return { n, score: d - (hidden ? 2 : 0) - 1.5 * ahead + this.rng() * c.searchJitter };
+      }).filter(Boolean).sort((a, b) => a.score - b.score);
+      for (const r of ranked) { if (spots.length >= c.hideCount + 2) break; add(r.n, 'a hiding spot near ' + (kind === 'seen' ? 'where she vanished' : 'the sound')); }
+    }
+    return spots;
+  };
+
+  // head for the next spot in the plan (skipping places already checked or unreachable)
+  mv.GuardAwareness.prototype._nextSpot = function () {
+    const c = this.cfg, g = this.guard, e = this.evasion;
+    for (let tries = 0; tries < 2; tries++) {
+      while (e.plan.length) {
+        const s = e.plan.shift();
+        if (e.visited.some(q => Math.hypot(q.x - s.p.x, q.z - s.p.z) < c.spotSpacing)) continue;
+        if (g.goTo(s.p, c.evasionWithin, c.evasionPush)) { e.dest = s; e.reason = 'checking ' + s.why; e.look = null; this.behavior = 'moving to search spot'; return; }
+        e.visited.push(s.p.clone());                                // unreachable: don't try it again
+      }
+      // plan used up: search wider around the freshest evidence he has
+      const anchor = this.heard && this.heard.time > (this.seen ? this.seen.time : -1) ? this.heard.estimate : this.seen.position;
+      e.wider = (e.wider || 1) * c.widen;
+      e.plan = this._plan(anchor, null, anchor === (this.seen && this.seen.position) ? 'seen' : 'heard', e.wider);
+    }
+    e.dest = null; e.reason = 'nowhere new to check: looking around here'; this._evasionLook();
+  };
+
+  mv.GuardAwareness.prototype._evasionLook = function () {
+    const c = this.cfg, g = this.guard;
+    this.evasion.look = { base: g.yaw, offsets: c.evasionLooks.map(o => o + (this.rng() - 0.5) * 20), i: 0, heldFor: 0, last: null };
+    this.behavior = 'searching here';
+  };
+
+  mv.GuardAwareness.prototype._evasionStep = function () {
+    const c = this.cfg, g = this.guard, e = this.evasion;
+    if (g.moving) { this.behavior = 'moving to search spot'; return; }
+    if (g.navFailed && e.dest) { e.visited.push(e.dest.p.clone()); e.dest = null; g.navFailed = null; this._nextSpot(); return; }
+    if (!g.isStill()) return;                                    // let the walk finish
+    if (!e.look) this._evasionLook();
+    const L = e.look, yaw = L.base + L.offsets[L.i] * Math.PI / 180;
+    g.faceYaw(yaw);
+    if (Math.abs(wrap(g.yaw - yaw)) < 0.09) L.heldFor += this.clock - (L.last == null ? this.clock : L.last);
+    L.last = this.clock;
+    if (L.heldFor >= c.evasionLookHold) {
+      L.heldFor = 0; L.i++;
+      if (L.i >= L.offsets.length) { if (e.dest) e.visited.push(e.dest.p.clone()); else e.visited.push(g.position.clone()); e.look = null; this._nextSpot(); }
+    }
+  };
+
+  // his approximate idea of where a sound came from: the origin moved by a random
+  // offset within a spread that's tighter for strong, close sounds
+  mv.GuardAwareness.prototype._estimate = function (h, rec) {
+    const u = this.cfg.soundUncertainty;
+    const spread = u.base + u.far * Math.min(1, rec.distance / Math.max(0.01, rec.reach)) + u.weak * Math.max(0, 1 - rec.intensity / 3);
+    // a guess on open ground (a guess inside a wall is useless to search); only if no
+    // free point exists anywhere in the spread does he fall back to the origin itself
+    const nav = this.guard.nav;
+    h.estimate = h.position.clone();
+    for (let i = 0; i < 24; i++) {
+      const a = this.rng() * Math.PI * 2, r = spread * Math.sqrt(this.rng());
+      const q = new THREE.Vector3(h.position.x + Math.cos(a) * r, 0, h.position.z + Math.sin(a) * r);
+      if (!nav || !nav.inside(q)) { h.estimate = q; break; }
+    }
+    h.uncertainty = spread;
+  };
+
+  // a sound while alerted: evidence for the search, never an exact fix
+  mv.GuardAwareness.prototype._alertHeard = function (h, gain) {
+    const c = this.cfg, g = this.guard, e = this.evasion;
+    if (this.state === 'ALERT') return;                          // he's watching her (or about to search)
+    const est = h.estimate, gap = this.clock - this.lastRedirect >= c.redirectGap;
+    if (this.state === 'EVASION' && e) {
+      const dest = e.dest ? e.dest.p : g.position;
+      const far = Math.hypot(est.x - dest.x, est.z - dest.z) > c.redirectDistance;
+      if (gain >= c.redirectStrength && far && gap) {
+        this.lastRedirect = this.clock; this.redirects++; e.redirects++;
+        e.end = Math.min(e.start + c.evasionMax, e.end + c.soundExtend);
+        e.plan = this._plan(est, null, 'heard');
+        g.stopMoving(); e.look = null;
+        this.note = `heard ${h.surface} footsteps ~${h.distance.toFixed(0)} m away (strength ${gain.toFixed(2)})`;
+        this._nextSpot();
+        return;
+      }
+      // a weaker or nearby sound: a glance toward it when he's standing, no change of plan
+      if (gap && g.isStill() && e.look) { this.lastRedirect = this.clock; e.look.base = Math.atan2(est.x - g.position.x, est.z - g.position.z); e.look.i = 0; e.look.heldFor = 0; this.note = 'glanced at a faint sound'; }
+    } else if (this.state === 'HEIGHTENED_PENDING' && gap && g.isStill()) {
+      this.lastRedirect = this.clock; g.faceToward(est); this.note = 'turned to a sound';
+    }
   };
 
   // ---------------------------------------------------------------- developer view
@@ -220,6 +425,10 @@
     const ring = (color, r) => { const m = new THREE.Mesh(new THREE.RingGeometry(r * 0.75, r, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false })); m.position.y = 0.035; m.renderOrder = 3; m.visible = false; this.group.add(m); return m; };
     this.seenRing = ring(0xff4dd8, 0.34);
     this.targetRing = ring(0xffffff, 0.24);
+    // once alerted: his approximate estimate of the last sound (radius = its uncertainty)
+    // and the spots still planned in his search (yellow dots)
+    this.estRing = ring(0x4de1ff, 1); this.estRing.material.opacity = 0.35;
+    this.planDots = []; for (let i = 0; i < 8; i++) { const d = new THREE.Mesh(new THREE.CircleGeometry(0.12, 10).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd84d, depthWrite: false })); d.position.y = 0.04; d.visible = false; this.group.add(d); this.planDots.push(d); }
     this.pathLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new Array(32).fill(0).map(() => new THREE.Vector3())), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 }));
     this.pathLine.frustumCulled = false; this.pathLine.visible = false; this.group.add(this.pathLine);
     this.bar = new THREE.Group();
@@ -238,6 +447,11 @@
     this.fill.scale.x = Math.max(0.001, a.suspicion); this.fill.position.x = -0.52 * (1 - a.suspicion);
     this.fill.material.color.setHex(a.confirmed ? 0xff3d3d : 0xff9a3d);
     this.seenRing.visible = !!a.seen; if (a.seen) this.seenRing.position.set(a.seen.position.x, 0.035, a.seen.position.z);
+    const h = a.heard, approx = h && h.uncertainty > 0;
+    this.estRing.visible = !!approx;
+    if (approx) { this.estRing.position.set(h.estimate.x, 0.035, h.estimate.z); this.estRing.scale.setScalar(Math.max(0.3, h.uncertainty)); }
+    const plan = a.evasion && a.state === 'EVASION' ? a.evasion.plan : [];
+    this.planDots.forEach((d, i) => { d.visible = i < plan.length; if (d.visible) d.position.set(plan[i].p.x, 0.04, plan[i].p.z); });
     const moving = g.moving && g.path;
     this.targetRing.visible = !!moving; this.pathLine.visible = !!moving;
     if (moving) {

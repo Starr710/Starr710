@@ -117,8 +117,10 @@
   };
 
   // ---------------------------------------------------------------- movement orders (from the brain)
-  // walk to a point, letting the walk finish once within `within` m; false if no path
-  mv.Guard.prototype.goTo = function (p, within) {
+  // walk to a point, letting the walk finish once within `within` m, at an optional
+  // pace (stick-equivalent push; default the careful investigation walk); false if no path
+  mv.Guard.prototype.goTo = function (p, within, push) {
+    this.push = push || null;
     this.arrived = false; this.navFailed = null;
     const path = this.nav ? this.nav.plan(this.position, p) : [{ x: p.x, z: p.z }];
     if (!path) { this.moving = false; this.path = null; this.navFailed = 'unreachable'; return false; }
@@ -161,7 +163,7 @@
         if (d < this._best - o.stuckProgress) { this._best = d; this._bestAt = this._clock; }
         else if (this._clock - this._bestAt > o.stuckTime) { this.moving = false; this.path = null; this.navFailed = 'stuck'; }
         else {
-          const push = this.path.length === 1 && toGoal < a.slowWithin ? a.slowPush : a.walkPush;
+          const push = this.path.length === 1 && toGoal < a.slowWithin ? a.slowPush : (this.push || a.walkPush);
           this._motorStep(dt, (wp.x - p.x) / d, (wp.z - p.z) / d, push);
         }
       }

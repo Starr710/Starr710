@@ -668,10 +668,12 @@ const CHECKS = {
     return { pass: ok, detail: `${r.n} walking frames: hips within ${r.bodyWorst.toFixed(0)}° of his vision facing, travel within ${r.travelWorst.toFixed(0)}° when walking straight; ${r.checked} spot checks: dead ahead = fastest zone, square to his side = outside the cone: ${r.conesOk}` };
   },
 
-  // 10–13: seeing her to 100% confirms the threat, and it sticks: she goes silent and
-  // vanishes out of his view, sounds come from elsewhere, time passes; he stays
-  // CONFIRMED facing the last place he actually saw her (not where she went, not his
-  // post, not the sounds), and that remembered position doesn't follow her
+  // 10–13 (Step 5, updated for Step 6): seeing her to 100% confirms the threat, and it
+  // sticks: she goes silent and vanishes out of his view, sounds come from elsewhere,
+  // time passes; he never drops back to NORMAL / SUSPICIOUS / INVESTIGATING, his first
+  // search goes to the last place he actually saw her, that remembered position never
+  // follows her, the sounds are remembered separately, and the confirmation outlasts
+  // the vision meter fading
   async aiConfirmed() {
     const page = await simPage();
     const r = await page.evaluate(() => {
@@ -681,17 +683,176 @@ const CHECKS = {
       let t = 0; while (!a.confirmed && t < 15) { sim(1); t += dt; }
       const confirmT = t, seenAt = a.seen ? a.seen.position.clone() : null;
       motor.teleport(-14, -20, 0); sim(2);              // gone: silent, behind him and out of range
-      const toSeen = () => Math.abs(Math.atan2(Math.sin(g.yaw - Math.atan2(seenAt.x - g.position.x, seenAt.z - g.position.z)), Math.cos(g.yaw - Math.atan2(seenAt.x - g.position.x, seenAt.z - g.position.z)))) * 57.3;
-      let worstFace = 0, leftState = false, seenMoved = 0, heardCount = g.hearing.heardCount, yawPost = 0, meterEnd = 0;
+      let lostConfirm = false, fellBack = false, seenMoved = 0, heardCount = g.hearing.heardCount, firstDest = null, states = new Set();
       for (let k = 0; k < 8; k++) {
         noise.emit(3, 'footstep', new THREE.Vector3(g.position.x + 6, 0, g.position.z - 1), 'concrete', 'player');   // sounds off to his right
-        for (let f = 0; f < 150; f++) { sim(1); if (a.state !== 'CONFIRMED') leftState = true; if (f > 60 || k) worstFace = Math.max(worstFace, toSeen()); seenMoved = Math.max(seenMoved, a.seen.position.distanceTo(seenAt)); }
+        for (let f = 0; f < 150; f++) {
+          sim(1); states.add(a.state);
+          if (!a.confirmed) lostConfirm = true;
+          if (['NORMAL', 'SUSPICIOUS', 'INVESTIGATING'].indexOf(a.state) >= 0) fellBack = true;
+          if (!firstDest && a.evasion && a.evasion.dest) firstDest = a.evasion.dest.p.clone();
+          seenMoved = Math.max(seenMoved, a.seen.position.distanceTo(seenAt));
+        }
       }
-      yawPost = Math.abs(Math.atan2(Math.sin(g.yaw - g.postYaw), Math.cos(g.yaw - g.postYaw))) * 57.3; meterEnd = v.meter;
-      return { confirmT, seenAt: seenAt && [seenAt.x, seenAt.z], worstFace, leftState, seenMoved, heardNew: g.hearing.heardCount - heardCount, heardPos: a.heard && [a.heard.position.x, a.heard.position.z], yawPost, meterEnd, moved: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), state: a.state };
+      return { confirmT, seenAt: seenAt && [seenAt.x, seenAt.z], lostConfirm, fellBack, states: [...states], firstDestOff: firstDest ? firstDest.distanceTo(seenAt) : 99, seenMoved, heardNew: g.hearing.heardCount - heardCount, heardPos: !!a.heard, meterEnd: v.meter };
     });
-    const ok = r.confirmT < 15 && r.seenAt && !r.leftState && r.state === 'CONFIRMED' && r.worstFace < 10 && r.seenMoved < 1e-6 && r.heardNew >= 8 && r.heardPos && r.yawPost > 15 && r.meterEnd < 0.05 && r.moved < 1.5;
-    return { pass: ok, detail: `confirmed after ${r.confirmT.toFixed(1)} s in view; then 20 s silent and out of sight with 8 sounds to his right: still ${r.state} (never left: ${!r.leftState}), facing the last place he saw her within ${r.worstFace.toFixed(1)}° (not his post: ${r.yawPost.toFixed(0)}° from it), last-seen position moved ${r.seenMoved.toFixed(2)} m, ${r.heardNew} sounds heard and remembered separately, vision meter faded to ${Math.round(r.meterEnd * 100)}% but the confirmation stayed` };
+    const ok = r.confirmT < 15 && r.seenAt && !r.lostConfirm && !r.fellBack && r.states.indexOf('EVASION') >= 0 && r.firstDestOff < 0.01 && r.seenMoved < 1e-6 && r.heardNew >= 8 && r.heardPos && r.meterEnd < 0.05;
+    return { pass: ok, detail: `confirmed after ${r.confirmT.toFixed(1)} s in view; then 20 s silent and out of sight with 8 sounds to his right: states ${r.states.join(' / ')} (never back to normal/suspicious/investigating: ${!r.fellBack}, confirmation kept: ${!r.lostConfirm}); first search spot ${r.firstDestOff.toFixed(2)} m from the last place he saw her; last-seen position moved ${r.seenMoved.toFixed(2)} m; ${r.heardNew} sounds heard and remembered separately; vision meter faded to ${Math.round(r.meterEnd * 100)}% but the confirmation stayed` };
+  },
+
+
+  // ---- alert and evasion (Step 6). Shared scene helpers live in the page (see setupAlert).
+
+  // 1–3: full recognition → ALERT; he turns to track her while she walks in view; when
+  // she stops he stays ALERT (no search timer, no walk back to his post)
+  async alertTrack() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60;
+      const sim = (n, m, x, z) => { for (let i = 0; i < n; i++) { step(m || 0, 'stand', x, z); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      const bearingErr = () => { const b = Math.atan2(motor.position.x - g.position.x, motor.position.z - g.position.z); return Math.abs(Math.atan2(Math.sin(g.yaw - b), Math.cos(g.yaw - b))) * 57.3; };
+      motor.teleport(2, -10, Math.PI); let t = 0;
+      while (a.state !== 'ALERT' && t < 15) { sim(1); t += dt; }
+      const alertT = t, pos0 = g.position.clone();
+      // she sneaks sideways across his view (6 m away), 5 m to his right
+      let worst = 0, lostView = 0; motor.yaw = Math.PI / 2;
+      for (let f = 0; f < 300 && motor.position.x < 7; f++) { sim(1, 0.3, 1, 0); if (f > 60) worst = Math.max(worst, bearingErr()); if (a.state !== 'ALERT') lostView++; }
+      // then stands still for 10 s
+      let stayed = true, timer = false; for (let f = 0; f < 600; f++) { sim(1); if (a.state !== 'ALERT') stayed = false; if (a.evasion) timer = true; }
+      return { alertT, worst, lostView, stayed, timer, finalErr: bearingErr(), moved: g.position.distanceTo(pos0), still: g.isStill() };
+    });
+    const ok = r.alertT < 15 && r.lostView === 0 && r.worst < 30 && r.stayed && !r.timer && r.finalErr < 8 && r.moved < 0.6 && r.still;
+    return { pass: ok, detail: `ALERT after ${r.alertT.toFixed(1)} s; while she walked across his view his facing stayed within ${r.worst.toFixed(0)}° of her (frames not ALERT: ${r.lostView}); standing still 10 s: still ALERT ${r.stayed}, search timer started ${r.timer}, facing her within ${r.finalErr.toFixed(1)}°, moved ${r.moved.toFixed(2)} m` };
+  },
+
+  // 4–6: losing sight begins EVASION (only after the grace period, which he spends
+  // facing the last sighting, not her); he heads for the last place he truly saw her;
+  // while she sneaks off unheard his search never homes in on where she really is
+  async evasionStart() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60;
+      const sim = (n, m, x, z) => { for (let i = 0; i < n; i++) { step(m || 0, 'stand', x, z); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      motor.teleport(2, -10, Math.PI); let t = 0; while (a.state !== 'ALERT' && t < 15) { sim(1); t += dt; }
+      // she sneaks behind the tall crate
+      const walkTo = (x, z) => { for (let i = 0; i < 900; i++) { const dx = x - motor.position.x, dz = z - motor.position.z, d = Math.hypot(dx, dz); if (d < 0.25) return; sim(1, 0.3, dx / d, dz / d); } };
+      walkTo(-0.6, -8.0); walkTo(-1.0, -6.2); walkTo(-2.4, -5.6);
+      let lostAt = null, evasionAt = null, graceYawErr = 0, t2 = 0;
+      for (let f = 0; f < 240 && evasionAt == null; f++) { sim(1); t2 += dt; if (lostAt == null && g.vision.seen.rate === 0) lostAt = t2; if (a.state === 'EVASION') evasionAt = t2; }
+      const seenAt = a.seen.position.clone();
+      const firstDest = a.evasion && a.evasion.dest ? a.evasion.dest.p.clone() : null;
+      // she slips away silently to the far corner; he can't hear or see her there
+      motor.teleport(-17, 15, 0);
+      let nearest = Infinity, maxFromEvidence = 0, seenMoved = 0, heard0 = g.hearing.heardCount;
+      for (let f = 0; f < 15 * 60; f++) { sim(1); if (g.goal && g.moving) { nearest = Math.min(nearest, Math.hypot(g.goal.x - motor.position.x, g.goal.z - motor.position.z)); maxFromEvidence = Math.max(maxFromEvidence, Math.hypot(g.goal.x - seenAt.x, g.goal.z - seenAt.z)); } seenMoved = Math.max(seenMoved, a.seen.position.distanceTo(seenAt)); }
+      return { grace: a.cfg.alertGrace, lostAt, evasionAt, firstDestOff: firstDest ? firstDest.distanceTo(seenAt) : 99, nearest, maxFromEvidence, seenMoved, heardNew: g.hearing.heardCount - heard0, reach: a.cfg.hideRadius + a.cfg.predictMax + a.cfg.spotSpacing, stillEvasion: a.state };
+    });
+    const graceOk = r.lostAt != null && r.evasionAt != null && r.evasionAt - r.lostAt >= r.grace - 0.2;
+    const ok = graceOk && r.firstDestOff < 0.01 && r.seenMoved < 1e-6 && r.heardNew === 0 && r.maxFromEvidence <= r.reach && r.nearest > 8;
+    return { pass: ok, detail: `out of sight at ${r.lostAt == null ? '?' : r.lostAt.toFixed(2)} s, EVASION at ${r.evasionAt == null ? 'never' : r.evasionAt.toFixed(2)} s (grace ${r.grace} s); first search spot ${r.firstDestOff.toFixed(2)} m from the last place he saw her; then she slipped away unheard (${r.heardNew} sounds): his search stayed within ${r.maxFromEvidence.toFixed(1)} m of his evidence (limit ${r.reach.toFixed(1)}), never nearer than ${r.nearest.toFixed(1)} m to her real position, last-seen moved ${r.seenMoved.toFixed(2)} m` };
+  },
+
+  // 7–9: a strong sound redirects the search (even through walls) toward an approximate
+  // estimate, not the exact spot; a faint one doesn't; a stream of footsteps can't keep
+  // extending the search beyond its cap, and causes no jitter
+  async evasionHearing() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, B = g.bones;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      motor.teleport(2, -10, Math.PI); let t = 0; while (a.state !== 'ALERT' && t < 15) { sim(1); t += dt; }
+      motor.teleport(-17, 15, 0); while (a.state !== 'EVASION') sim(1);
+      sim(120);
+      // faint: a sneak step 2 m from him (heard, weak): no change of plan
+      const destBefore = a.evasion.dest ? a.evasion.dest.p.clone() : g.position.clone(), red0 = a.evasion.redirects;
+      noise.emit(1, 'footstep', new THREE.Vector3(g.position.x + 1.4, 0, g.position.z + 1.4), 'concrete', 'player'); sim(10);
+      const faintRedirected = a.evasion.redirects !== red0;
+      sim(100);
+      // strong: metal jog steps inside the corridor behind a 2.8 m wall
+      const P = new THREE.Vector3(17, 0, -5);
+      const blocked = MV.world.segmentBlocked(g.eye(new THREE.Vector3()), new THREE.Vector3(P.x, 1.2, P.z));
+      noise.emit(3, 'footstep', P, 'metal', 'player'); sim(2);
+      const h = a.heard, est = h.estimate.clone(), err = est.distanceTo(P), spread = h.uncertainty, reason = a.note;
+      const destNow = a.evasion.dest ? a.evasion.dest.p.clone() : null;
+      // a strong close sound is pinned down better than a far one
+      const near = new THREE.Vector3(g.position.x + 3, 0, g.position.z); noise.emit(3, 'footstep', near, 'concrete', 'player'); const nearSpread = a.heard.uncertainty;
+      // a stream of footsteps near P for 14 s: timer capped, no jitter
+      const e = a.evasion, prevQ = {}, lastA = {}; let pops = 0, flips = 0, prevAv = 0, lastFlip = -9, tt = 0, maxEnd = 0;
+      for (let k = 0; k < 28; k++) {
+        noise.emit(3, 'footstep', new THREE.Vector3(17 + (k % 3) * 0.4, 0, -5 + k * 0.1), 'metal', 'player');
+        for (let f = 0; f < 30; f++) {
+          sim(1); tt += dt; if (a.evasion) maxEnd = Math.max(maxEnd, a.evasion.end - a.evasion.start);
+          const av = g.motor.angularVelocity; if (Math.sign(av) !== Math.sign(prevAv) && Math.abs(av) > 0.3 && Math.abs(prevAv) > 0.3) { if (tt - lastFlip < 0.5) flips++; lastFlip = tt; } prevAv = av;
+          const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert();
+          for (const nm of ['spine1', 'chest', 'head', 'leftArm', 'rightArm', 'leftUpLeg', 'rightUpLeg', 'leftLeg', 'rightLeg']) { const q = ri.clone().multiply(B[nm].getWorldQuaternion(new THREE.Quaternion())); if (prevQ[nm]) { const ang = 2 * Math.acos(Math.min(1, Math.abs(q.dot(prevQ[nm])))) * 57.3, leg = nm.endsWith('Leg'); if (leg ? (ang > 12 && ang > 2 * (lastA[nm] || 0)) : ang > 9) pops++; lastA[nm] = ang; } prevQ[nm] = q; }
+        }
+      }
+      return { faintRedirected, blocked, err, spread, nearSpread, reason, destToEst: destNow ? destNow.distanceTo(est) : 99, destToP: destNow ? destNow.distanceTo(P) : 99, maxEnd, cap: a.cfg.evasionMax, redirects: e.redirects, gap: a.cfg.redirectGap, pops, flips };
+    });
+    const ok = !r.faintRedirected && r.blocked && r.err > 0.05 && r.err <= r.spread + 1e-6 && r.nearSpread < r.spread && /metal/.test(r.reason) && r.destToEst < 2.6
+      && r.maxEnd <= r.cap + 1e-6 && r.redirects <= Math.ceil(16 / r.gap) && r.pops === 0 && r.flips === 0;
+    return { pass: ok, detail: `faint sneak step redirected: ${r.faintRedirected}; metal jog behind a wall (sight blocked: ${r.blocked}) → "${r.reason}", his estimate ${r.err.toFixed(2)} m off the real spot (spread ${r.spread.toFixed(1)} m; a close strong sound: ${r.nearSpread.toFixed(1)} m), new search spot ${r.destToEst.toFixed(1)} m from his estimate; 14 s of footsteps: search length peaked at ${r.maxEnd.toFixed(0)} s (cap ${r.cap}), ${r.redirects} redirects, joint pops ${r.pops}, rapid turn reversals ${r.flips}` };
+  },
+
+  // 10, 11, 14: with no further evidence he searches several different places (no
+  // pacing between two), never through obstacles, and after 30 s settles naturally into
+  // HEIGHTENED PENDING; the duration is configurable and the search order varies by seed
+  async evasionSearch() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, world } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, R = g.cfg.radius;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      const intrusion = () => { let w = 0; for (const b of world.boxes) { const dx = Math.max(b.minX - g.position.x, 0, g.position.x - b.maxX), dz = Math.max(b.minZ - g.position.z, 0, g.position.z - b.maxZ); w = Math.max(w, R - Math.hypot(dx, dz)); } for (const c of world.cylinders) if (!c.noSight) w = Math.max(w, c.r + R - Math.hypot(g.position.x - c.x, g.position.z - c.z)); return w; };
+      const run = (seed, evasionTime) => {
+        g.reset(); a.cfg.seed = seed; a.cfg.evasionTime = evasionTime; a.reset();
+        motor.teleport(-2.4, -10.5, Math.PI); motor.yaw = 0; let t = 0; while (a.state !== 'ALERT' && t < 15) { sim(1); t += dt; }
+        // she runs off toward the tall crate (seen moving), then vanishes silently
+        for (let f = 0; f < 30; f++) { motor.position.z += 0.05; sim(1); }
+        motor.teleport(-17, 15, 0);
+        while (a.state !== 'EVASION') sim(1);
+        // the whole planned search (the first two spots are fixed: last seen, then her heading)
+        const planned = [a.evasion.dest].concat(a.evasion.plan).filter(Boolean).map(s => s.p.x.toFixed(1) + ',' + s.p.z.toFixed(1)).join(' ');
+        const t0 = a.clock, dests = [], order = []; let worst = 0, hp = null;
+        for (let f = 0; f < (evasionTime + 6) * 60; f++) {
+          sim(1); worst = Math.max(worst, intrusion());
+          const d = a.evasion && a.evasion.dest; if (d && (!dests.length || dests[dests.length - 1].distanceTo(d.p) > 0.01)) { dests.push(d.p.clone()); order.push(d.why); }
+          if (hp == null && a.state === 'HEIGHTENED_PENDING') hp = a.clock - t0;
+        }
+        let tooClose = 0; for (let i = 0; i < dests.length; i++) for (let j = i + 1; j < dests.length; j++) if (dests[i].distanceTo(dests[j]) < a.cfg.spotSpacing - 0.01) tooClose++;
+        return { spots: dests.length, tooClose, worst, hp, still: g.isStill(), idle: g.animator.weights.idle, state: a.state, order: planned };
+      };
+      const A = run(1337, 30), B = run(4242, 30), C = run(1337, 10);
+      return { A, B, C };
+    });
+    const A = r.A;
+    const ok = A.spots >= 3 && A.tooClose === 0 && A.worst < 0.02 && A.hp != null && Math.abs(A.hp - 30) < 0.5 && A.still && A.idle > 0.9 && A.state === 'HEIGHTENED_PENDING'
+      && r.C.hp != null && Math.abs(r.C.hp - 10) < 0.5 && r.B.order !== A.order;
+    return { pass: ok, detail: `30 s search: ${A.spots} different spots (pairs closer than the spacing: ${A.tooClose}), deepest obstacle overlap ${(Math.max(0, A.worst) * 100).toFixed(1)} cm, HEIGHTENED PENDING after ${A.hp == null ? 'never' : A.hp.toFixed(1) + ' s'}, then standing still ${A.still} with idle weight ${A.idle.toFixed(2)}; a 10 s setting ended at ${r.C.hp == null ? 'never' : r.C.hp.toFixed(1) + ' s'}; another seed planned a different search order: ${r.B.order !== A.order}` };
+  },
+
+  // 12, 13: seeing her again during the search returns him to ALERT; losing her again
+  // starts a fresh 30 s search
+  async evasionReacquire() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      motor.teleport(2, -10, Math.PI); let t = 0; while (a.state !== 'ALERT' && t < 15) { sim(1); t += dt; }
+      motor.teleport(-17, 15, 0); while (a.state !== 'EVASION') sim(1);
+      sim(8 * 60);                                         // 8 s into the search
+      const firstLeft = a.evasion.end - a.clock;
+      // she steps out in front of him, 5 m along his facing, in the open
+      const fw = g.forward(), spot = g.position.clone().addScaledVector(fw, 5);
+      motor.teleport(spot.x, spot.z, g.yaw + Math.PI); let t2 = 0;
+      while (a.state !== 'ALERT' && t2 < 5) { sim(1); t2 += dt; }
+      const reacquired = a.state === 'ALERT', reason = a.note;
+      sim(60);
+      motor.teleport(-17, 15, 0); let t3 = 0; while (a.state !== 'EVASION' && t3 < 5) { sim(1); t3 += dt; }
+      const fresh = a.evasion ? a.evasion.end - a.clock : 0;
+      return { firstLeft, reacquired, t2, reason, evasions: a.evasions, fresh, total: a.cfg.evasionTime };
+    });
+    const ok = r.reacquired && r.t2 < 3 && /again/.test(r.reason) && r.evasions === 2 && Math.abs(r.fresh - r.total) < 0.2;
+    return { pass: ok, detail: `8 s into the search (${r.firstLeft.toFixed(0)} s left) she stepped into view: ${r.reacquired ? 'ALERT again after ' + r.t2.toFixed(2) + ' s ("' + r.reason + '")' : 'not re-alerted'}; she vanished again: search #${r.evasions} with ${r.fresh.toFixed(1)} s on the clock (fresh ${r.total} s)` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
