@@ -138,12 +138,20 @@
   });
   // RESET puts the player back at the start and the guard back at his post, calm
   ui.reset.addEventListener('click', () => { if (cqc) cqc.cancel(); spawn(); if (guard) guard.reset(); if (guard2) guard2.reset(); for (const u of [caption, indicator, caption2, indicator2]) if (u) u.hide(); });
-  ui.statsBtn.addEventListener('click', () => { ui.stats.hidden = !ui.stats.hidden; ui.statsBtn.setAttribute('aria-pressed', String(!ui.stats.hidden)); });
+  // the stats bar leaves room for RESET / STATS in its top-right corner
+  const chipRoom = () => document.documentElement.style.setProperty('--chips-w', document.querySelector('.mv-topright').offsetWidth + 8 + 'px');
+  chipRoom(); window.addEventListener('resize', chipRoom);
+  ui.statsBtn.addEventListener('click', () => {
+    ui.stats.hidden = !ui.stats.hidden; ui.statsBtn.setAttribute('aria-pressed', String(!ui.stats.hidden));
+    if (!ui.stats.hidden) { for (const b of ui.stats.querySelectorAll('b')) b._v = undefined; hudT = 1; }   // shown again: every value rewritten on the next frame
+  });
 
   // ---------------------------------------------------------------- loop
   const clock = new THREE.Clock();
   const fwd = new THREE.Vector3();
   let fps = 60, fpsT = 0, fpsN = 0, hudT = 0, grace = 2;
+  // stats text is written only when it changes (each write re-lays out the bar)
+  const put = (el, v) => { if (el._v !== v) { el._v = v; el.textContent = v; } };
   const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false, thr: false, thrReady: null, thrShown: null };
   function frame() {
     const dt = Math.min(clock.getDelta(), 1 / 20);
@@ -205,37 +213,37 @@
     hudT += dt;
     if (hudT > 0.15 && !ui.stats.hidden) {
       hudT = 0;
-      ui.gait.textContent = motor.gait.label;
-      ui.speed.textContent = motor.speed.toFixed(2) + ' m/s';
+      put(ui.gait, motor.gait.label);
+      put(ui.speed, motor.speed.toFixed(2) + ' m/s');
       const n = noise.last;
-      ui.noise.textContent = n && performance.now() / 1000 - n.time < 1.2 ? `L${n.level} ${n.surface} · ${n.radius.toFixed(1)} m` : '–';
+      put(ui.noise, n && performance.now() / 1000 - n.time < 1.2 ? `L${n.level} ${n.surface} · ${n.radius.toFixed(1)} m` : '–');
       if (guard) {
         const s = guard.vision.seen;
-        ui.guard.textContent = (s.zone ? s.zone.toUpperCase() : '—') + ' · ' + (isFinite(s.distance) ? s.distance.toFixed(1) + ' m' : '–') + (s.zone ? ' · ' + Math.round(s.exposure * 100) + '% exposed' : '');
-        ui.detect.textContent = Math.round(guard.vision.meter * 100) + '% ' + guard.vision.state();
+        put(ui.guard, (s.zone ? s.zone.toUpperCase() : '—') + ' · ' + (isFinite(s.distance) ? s.distance.toFixed(1) + ' m' : '–') + (s.zone ? ' · ' + Math.round(s.exposure * 100) + '% exposed' : ''));
+        put(ui.detect, Math.round(guard.vision.meter * 100) + '% ' + guard.vision.state());
         const h = guard.hearing.last;
-        ui.hear.textContent = h ? `${h.heard ? 'HEARD' : 'IGNORED'} ${h.type} L${h.level} ${h.surface} i${h.intensity.toFixed(1)} · ${h.distance.toFixed(1)}/${h.reach.toFixed(1)} m` : 'LISTENING';
+        put(ui.hear, h ? `${h.heard ? 'HEARD' : 'IGNORED'} ${h.type} L${h.level} ${h.surface} i${h.intensity.toFixed(1)} · ${h.distance.toFixed(1)}/${h.reach.toFixed(1)} m` : 'LISTENING');
         const a = guard.awareness, xz = p => p ? `(${p.x.toFixed(1)}, ${p.z.toFixed(1)})` : '—';
         const left = a.state === 'EVASION' && a.evasion ? ` · ${Math.max(0, a.evasion.end - a.clock).toFixed(0)} s left` : a.state === 'HEIGHTENED' && a.hs ? ` · ${Math.max(0, a.hs.end - a.clock).toFixed(0)} s left` : '';
         const label = { HEIGHTENED: 'HEIGHTENED SECURITY', RETURNING: 'RETURN TO POST' }[a.state] || a.state;
-        ui.aware.textContent = `${label}${left} · ${Math.round(a.suspicion * 100)}% · ${a.behavior}` + (guard.moving ? ' → ' + xz(guard.goal) : '');
+        put(ui.aware, `${label}${left} · ${Math.round(a.suspicion * 100)}% · ${a.behavior}` + (guard.moving ? ' → ' + xz(guard.goal) : ''));
         const ago = t => t == null ? '' : ` ${(a.clock - t).toFixed(0)} s ago`;
-        ui.memory.textContent = `seen ${xz(a.seen && a.seen.position)}${a.seen ? ago(a.seen.time) : ''} · heard ${a.heard && a.heard.uncertainty ? '≈' + xz(a.heard.estimate) + ' ±' + a.heard.uncertainty.toFixed(1) + ' m' : xz(a.heard && a.heard.position)} · ${a.confirmed ? (guard.vision.seen.rate > 0 ? 'CONFIRMED · in sight' : 'CONFIRMED · no contact') : 'not confirmed'}`;
-        ui.reason.textContent = (a.evasion && a.state === 'EVASION' ? a.evasion.reason + (a.note ? ' · ' + a.note : '') : a.hs && a.state === 'HEIGHTENED' ? a.hs.reason + (a.note ? ' · ' + a.note : '') : a.note) || '–';
-        ui.voice.textContent = voice ? voice.status() : '–';
-        ui.patrol.textContent = guard.patrol.status();
-        ui.persona.textContent = guard.personality.status();
-        ui.startle.textContent = guard.awareness.startleStatus();
-        ui.cqcstat.textContent = cqc.status();
-        ui.throwstat.textContent = cqc.throwStatus();
-        ui.ko.textContent = guard.ko.status() + (guard.awareness.attack ? ` · remembers attack at ${xz(guard.awareness.attack.position)}` : '');
+        put(ui.memory, `seen ${xz(a.seen && a.seen.position)}${a.seen ? ago(a.seen.time) : ''} · heard ${a.heard && a.heard.uncertainty ? '≈' + xz(a.heard.estimate) + ' ±' + a.heard.uncertainty.toFixed(1) + ' m' : xz(a.heard && a.heard.position)} · ${a.confirmed ? (guard.vision.seen.rate > 0 ? 'CONFIRMED · in sight' : 'CONFIRMED · no contact') : 'not confirmed'}`);
+        put(ui.reason, (a.evasion && a.state === 'EVASION' ? a.evasion.reason + (a.note ? ' · ' + a.note : '') : a.hs && a.state === 'HEIGHTENED' ? a.hs.reason + (a.note ? ' · ' + a.note : '') : a.note) || '–');
+        put(ui.voice, voice ? voice.status() : '–');
+        put(ui.patrol, guard.patrol.status());
+        put(ui.persona, guard.personality.status());
+        put(ui.startle, guard.awareness.startleStatus());
+        put(ui.cqcstat, cqc.status());
+        put(ui.throwstat, cqc.throwStatus());
+        put(ui.ko, guard.ko.status() + (guard.awareness.attack ? ` · remembers attack at ${xz(guard.awareness.attack.position)}` : ''));
         if (guard2) { const b = guard2.awareness, tr = `${guard2.personality.traits.primary}/${guard2.personality.traits.secondary}`;
-          ui.g2.textContent = guard2.isDown() ? `${guard2.ko.status()} · ${tr}${b.attack ? ' · remembers attack at ' + xz(b.attack.position) : ''}`
-            : `${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${tr} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}${guard2.ko.knockouts ? ' · ' + guard2.ko.status() : ''}`; }
-        ui.post.textContent = `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`;
+          put(ui.g2, guard2.isDown() ? `${guard2.ko.status()} · ${tr}${b.attack ? ' · remembers attack at ' + xz(b.attack.position) : ''}`
+            : `${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${tr} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}${guard2.ko.knockouts ? ' · ' + guard2.ko.status() : ''}`); }
+        put(ui.post, `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`);
       }
-      ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
-      ui.fps.textContent = fps.toFixed(0) + ' · ' + renderer.info.render.calls + ' draws';
+      put(ui.rate, animator ? animator.playRate.toFixed(2) + '×' : '–');
+      put(ui.fps, fps.toFixed(0) + ' · ' + renderer.info.render.calls + ' draws');
     }
   }
   renderer.setAnimationLoop(frame);

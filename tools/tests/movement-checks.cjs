@@ -1612,7 +1612,9 @@ const CHECKS = {
     await page.waitForFunction(() => MV.guard.patrol.state === 'walking' && MV.guard.patrol.index === 1 && Math.hypot(MV.guard.position.x - 2, MV.guard.position.z + 16) > 3, null, { timeout: 60000 }).catch(() => {});
     const spawnMeter = await page.evaluate(() => { window.__stopPm = true; return window.__pm; });
     await page.evaluate(() => { const g = MV.guard, b = g.position.clone().addScaledVector(g.forward(), -3); MV.motor.teleport(b.x, b.z, g.yaw + Math.PI); MV.cam.snap(MV.motor); });
-    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 236, id: 1 }]); await page.waitForTimeout(900); await Tc('touchEnd', []);
+    // 0.9 s of game time jogging (frames are capped at 1/20 s, so a slow container would otherwise give her less)
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 236, id: 1 }]);
+    { const t0 = await page.evaluate(() => MV.guard.awareness.clock); await page.waitForFunction(t0 => MV.guard.awareness.clock >= t0 + 0.9, t0, { timeout: 20000, polling: 'raf' }); } await Tc('touchEnd', []);
     await page.waitForFunction(() => MV.guard.awareness.reactions >= 1, null, { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(800);
     const before = await page.evaluate(() => ({ patrol: MV.guard.patrol.state, reactions: MV.guard.awareness.reactions, state: MV.guard.awareness.state, heard: MV.guard.hearing.heardCount }));
@@ -2488,7 +2490,7 @@ const CHECKS = {
   async cqcTouch() {
     const page = await patrolPage(true), Tc = page.touch;
     const btn = async () => { const b = await page.locator('#mv-cqc').boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
-    const tap = async (ms) => { const c = await btn(); await Tc('touchStart', [{ x: c.x, y: c.y, id: 7 }]); await page.waitForTimeout(ms || 80); await Tc('touchEnd', []); await page.waitForTimeout(150); };
+    const tap = async (ms) => { const c = await btn(); { const down = Tc('touchStart', [{ x: c.x, y: c.y, id: 7 }]); await page.waitForTimeout(ms || 80); const up = Tc('touchEnd', []); await down; await up; /* finger-up on time, not after the page acknowledges finger-down */ } await page.waitForTimeout(150); };
     await page.evaluate(() => { const g = MV.guard; g.patrol.enabled = false; g.reset(); const b = g.position.clone().addScaledVector(g.forward(), -2.2); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; } });
     // walk up behind him (sneak) until in reach
     await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 276, id: 1 }]);
@@ -2610,7 +2612,7 @@ const CHECKS = {
   // thumb turns the camera: each moves the pair along the stick; RELEASE frees him
   async cqcPullTouch() {
     const page = await patrolPage(true), Tc = page.touch, X = 150, Y = 300;
-    const tapCqc = async () => { const b = await page.locator('#mv-cqc').boundingBox(); await Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(80); await Tc('touchEnd', []); };
+    const tapCqc = async () => { const b = await page.locator('#mv-cqc').boundingBox(); { const down = Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(80); const up = Tc('touchEnd', []); await down; await up; /* finger-up on time, not after the page acknowledges finger-down */ } };
     await page.evaluate(() => { const g = MV.guard; g.patrol.enabled = false; g.reset(); g.motor.teleport(0, -4, 0); g.place(); const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, 0); MV.cam.snap(MV.motor); });
     await page.waitForTimeout(300); await tapCqc();
     await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {});
@@ -2772,7 +2774,7 @@ const CHECKS = {
   async guard2Touch() {
     const page = await touchPage(), Tc = page.touch;
     const btn = async () => { const b = await page.locator('#mv-cqc').boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
-    const tap = async () => { const c = await btn(); await Tc('touchStart', [{ x: c.x, y: c.y, id: 7 }]); await page.waitForTimeout(80); await Tc('touchEnd', []); await page.waitForTimeout(150); };
+    const tap = async () => { const c = await btn(); { const down = Tc('touchStart', [{ x: c.x, y: c.y, id: 7 }]); await page.waitForTimeout(80); const up = Tc('touchEnd', []); await down; await up; /* finger-up on time, not after the page acknowledges finger-down */ } await page.waitForTimeout(150); };
     await page.evaluate(() => { MV.guard.patrol.enabled = true; MV.guard.reset(); const g = MV.guard2; g.reset(); const b = g.position.clone().addScaledVector(g.forward(), -2.4); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; } document.getElementById('mv-stats').hidden = false; });
     await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 276, id: 1 }]);
     await page.waitForFunction(() => Math.hypot(MV.guard2.position.x - MV.motor.position.x, MV.guard2.position.z - MV.motor.position.z) < 1.2, null, { timeout: 10000, polling: 30 }).catch(() => {});
@@ -3062,7 +3064,7 @@ const CHECKS = {
   async throwTouch() {
     const page = await touchPage(), Tc = page.touch;
     const box = async sel => page.locator(sel).boundingBox();
-    const tapAt = async (b, ms) => { await Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(ms || 80); await Tc('touchEnd', []); await page.waitForTimeout(120); };
+    const tapAt = async (b, ms) => { { const down = Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(ms || 80); const up = Tc('touchEnd', []); await down; await up; /* finger-up on time, not after the page acknowledges finger-down */ } await page.waitForTimeout(120); };
     const behind = async () => { await page.evaluate(() => { const g = MV.guard2; const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); }); await page.waitForTimeout(250); };
     const grab = async () => { await tapAt(await box('#mv-cqc')); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(300); };
     await page.evaluate(() => { MV.guard2.reset(); document.getElementById('mv-stats').hidden = false; });
@@ -3109,13 +3111,15 @@ const CHECKS = {
     return { pass: ok, detail: `free: THROW hidden ${hiddenFree}; holding him: shown ${!shown.hidden}, lit ${shown.ready}, CQC reads "${shown.cqc}", overlaps CQC/CROUCH ${layout.overlap}, on the camera side ${layout.right}; 2 s of pulling: ${pulled.state}, throws ${pulled.throws}; RELEASE: ${released.state}, he's ${released.aware}, down ${released.down}; THROW tapped with the stick held: ${mid.state} (${mid.phase}), button hidden ${mid.hidden}; after a held press and a second request: throws ${after.throws}, impacts ${after.impacts}, he's ${after.ko}, stats "${after.stat}"; RESET while unconscious: ${resetKO.cqc}, guards ${resetKO.g.map(g => g.ko + '/' + g.aware + ' ' + g.post.toFixed(2) + ' m').join(', ')}; RESET mid-throw (${during}): ${resetMid.cqc}, stance ${resetMid.stance}, guards ${resetMid.g.map(g => g.ko + '/' + g.aware + ' ' + g.post.toFixed(2) + ' m').join(', ')}, colliders ${resetMid.cyl}; page errors ${page.errors.length}` };
   },
 
-  // HUD: the developer stats are a bar across the top on iPhone landscape (844×390, 667×375,
-  // 932×430): fully on screen (every value inside it, nothing past the right edge), wide
-  // (≥ 85% of the width) and short (≤ 40% of the height), positioned from the safe-area
-  // insets, clear of the title, RESET, STATS, CROUCH and CQC, and over nothing the player
-  // must tap (RESET, STATS and, while holding a guard, THROW and RELEASE get the touch at
-  // their centres). Every category shows a value. Values far longer than any real one stay
-  // inside the bar (cut short). STATS hides it and shows it again
+  // HUD: the developer stats are a bar along the top edge on iPhone landscape (844×390,
+  // 667×375, 932×430): starting within 12 px of the top, fully on screen (every value inside
+  // it, nothing past the right edge), wide (≥ 85% of the width) and short (≤ 35% of the
+  // height), positioned from the safe-area insets. While it's open the title is hidden and
+  // RESET / STATS sit in its top-right corner: no value overlaps them, CROUCH or CQC, and it
+  // ends above the THROW button. RESET, STATS and, while holding a guard, THROW and RELEASE
+  // get the touch at their centres. Every category shows a value. Values far longer than
+  // any real one stay inside the bar (cut short). STATS hides it (the title comes back)
+  // and shows it again
   async statsBar() {
     const out = [];
     let errors = 0;
@@ -3128,10 +3132,12 @@ const CHECKS = {
       await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(500);
       const geo = () => page.evaluate(() => {
         const bar = document.getElementById('mv-stats'), R = bar.getBoundingClientRect(), W = innerWidth, H = innerHeight;
-        const vals = [...bar.querySelectorAll('b')], cells = [...bar.children];
+        const vals = [...bar.querySelectorAll('b')], cells = [...bar.querySelectorAll('.mv-sec > div')];
         const rect = id => document.getElementById(id).getBoundingClientRect();
         const over = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
-        const clear = ['mv-reset', 'mv-stats-btn', 'mv-crouch', 'mv-cqc'].map(rect).concat([document.querySelector('.mv-head').getBoundingClientRect()]).every(b => !over(R, b));
+        const cellRects = cells.map(c => c.getBoundingClientRect());
+        const clear = ['mv-reset', 'mv-stats-btn', 'mv-crouch', 'mv-cqc', 'mv-throw'].map(rect).every(b => cellRects.every(c => !over(c, b))) && R.bottom <= rect('mv-throw').top
+          && getComputedStyle(document.querySelector('.mv-head')).display === 'none';
         const hit = ['mv-reset', 'mv-stats-btn', 'mv-throw', 'mv-cqc'].every(id => { const b = rect(id); return document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) === document.getElementById(id); });
         const rule = [...document.styleSheets].flatMap(s => { try { return [...s.cssRules]; } catch (e) { return []; } }).find(r => r.selectorText === '.mv-panel');
         const safe = !!rule && /safe-area-inset-top/.test(rule.cssText) && /safe-area-inset-left/.test(rule.cssText) && /safe-area-inset-right/.test(rule.cssText);
@@ -3144,13 +3150,13 @@ const CHECKS = {
       const long = await page.evaluate(() => { for (const id of ['mv-g2', 'mv-cqcstat', 'mv-memory', 'mv-aware']) document.getElementById(id).textContent = 'VERY LONG DEBUG STATE · '.repeat(20); return true; }) && await geo();
       // STATS toggle
       await page.tap('#mv-stats-btn'); await page.waitForTimeout(200);
-      const off = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed') }));
+      const off = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), title: getComputedStyle(document.querySelector('.mv-head')).display !== 'none' }));
       await page.tap('#mv-stats-btn'); await page.waitForTimeout(400);
       const on = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), g2: document.getElementById('mv-g2').textContent }));
-      const ok = g.left >= 0 && g.right <= g.W && g.top >= 40 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.4 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 22 && g.fontPx >= 9.5
-        && long.inside && long.right <= long.W && long.height <= 0.4 * long.H && off.hidden && off.pressed === 'false' && !on.hidden && on.pressed === 'true' && !/VERY LONG/.test(on.g2) && errs.length === 0;
+      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 22 && g.fontPx >= 9.5
+        && long.inside && long.right <= long.W && long.height <= 0.4 * long.H && off.hidden && off.pressed === 'false' && off.title && !on.hidden && on.pressed === 'true' && !/VERY LONG/.test(on.g2) && errs.length === 0;
       if (!ok) errors++;
-      out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside}, clear of title/RESET/STATS/CROUCH/CQC ${g.clear}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside}, ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden}, on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
+      out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside}, title hidden and no value over RESET/STATS/CROUCH/CQC/THROW ${g.clear}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside}, ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden} (title back ${off.title}), on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
       await ctx.close();
     }
     return { pass: errors === 0, detail: out.join(' | ') };

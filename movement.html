@@ -21,22 +21,16 @@
 <div class="mv-indicator" id="mv-indicator" aria-hidden="true" hidden></div>  <!-- TEMPORARY awareness symbol above the guard (guard-indicator.js) -->
 <div class="mv-trait" id="mv-trait" aria-hidden="true" hidden><div class="mv-trait-primary"></div><div class="mv-trait-secondary"></div></div>  <!-- personality card beside the guard (guard-traitcard.js) -->
 
-<header class="mv-head">
-  <div class="mv-title">SHADOW CELL</div>
-  <div class="mv-sub">MOVEMENT LAB · STAGE 1</div>
-</header>
-
-<div class="mv-topright">
-  <button type="button" class="mv-chip" id="mv-reset">RESET</button>
-  <button type="button" class="mv-chip" id="mv-stats-btn" aria-pressed="true">STATS</button>
-</div>
-<!-- developer stats: a bar across the top, one flowing line-up of cells, most important first; STATS toggles it -->
+<!-- developer stats: a bar along the top edge, one flowing line-up of cells, most important first; STATS toggles it (the title hides while it's open) -->
 <div class="mv-panel mv-statbar" id="mv-stats">
+  <div class="mv-sec mv-first">
   <div><i class="g0">YOU</i><span>GAIT</span><b id="mv-gait">IDLE</b></div>
   <div><span>SPD</span><b id="mv-speed">0.00 m/s</b></div>
   <div><span>NOISE</span><b id="mv-noise">–</b></div>
   <div><span>CQC</span><b id="mv-cqcstat">–</b></div>
   <div><span>THROW</span><b id="mv-throwstat">–</b></div>
+  </div>
+  <div class="mv-sec">
   <div><i class="g1">G1</i><span>SEEN</span><b id="mv-guard">–</b></div>
   <div><span>DET</span><b id="mv-detect">–</b></div>
   <div><span>AWARE</span><b id="mv-aware">–</b></div>
@@ -54,8 +48,18 @@
   <div class="minor"><span>CLIP</span><b id="mv-rate">–</b></div>
   <div class="minor"><span>STRIDE</span><b id="mv-calib">–</b></div>
   <div class="minor"><span>VOICE</span><b id="mv-voice">–</b></div>
+  </div>
 </div>
 
+<header class="mv-head">
+  <div class="mv-title">SHADOW CELL</div>
+  <div class="mv-sub">MOVEMENT LAB · STAGE 1</div>
+</header>
+
+<div class="mv-topright">
+  <button type="button" class="mv-chip" id="mv-reset">RESET</button>
+  <button type="button" class="mv-chip" id="mv-stats-btn" aria-pressed="true">STATS</button>
+</div>
 <div id="mv-joy-hint">MOVE</div>
 <div id="mv-joy-base"></div>
 <div id="mv-joy-knob"></div>

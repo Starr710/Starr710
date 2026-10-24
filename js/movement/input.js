@@ -24,6 +24,10 @@
   };
 
   const P = mv.Input.prototype;
+  // when an event actually happened (its own timestamp), not when the page got round to it:
+  // a slow frame must not stretch a quick tap into a hold. Falls back to now if a browser's
+  // timestamps aren't on the performance clock
+  const when = e => { const n = performance.now(), t = e && e.timeStamp; return t > 0 && t <= n + 50 && t > n - 5000 ? t : n; };
 
   // CROUCH toggles
   P.setCrouch = function (on) {
@@ -70,7 +74,7 @@
     for (const t of e.changedTouches) {
       const el = document.elementFromPoint(t.clientX, t.clientY);
       if (el && el.closest && el.closest('#mv-crouch')) { this.btn.set(t.identifier, 'crouch'); this.setCrouch(!this.crouch); continue; }
-      if (el && el.closest && el.closest('#mv-cqc')) { this.btn.set(t.identifier, 'cqc'); this._cqcDown = performance.now(); this.els.cqc.classList.add('down'); continue; }
+      if (el && el.closest && el.closest('#mv-cqc')) { this.btn.set(t.identifier, 'cqc'); this._cqcDown = when(e); this.els.cqc.classList.add('down'); continue; }
       if (el && el.closest && el.closest('#mv-throw')) { this.btn.set(t.identifier, 'throw'); this.throwTapped = true; this.els.throw.classList.add('down'); continue; }
       if (el && el.closest && el.closest('button, .mv-panel')) { allow = true; continue; }
       if (!this.joy && t.clientX < window.innerWidth * 0.45) {
@@ -110,7 +114,7 @@
         this.joy = null; this.move.x = this.move.y = 0;
         this.els.root.classList.remove('stick-on');
       } else if (this.lookT && t.identifier === this.lookT.id) this.lookT = null;
-      if (this.btn.get(t.identifier) === 'cqc') this._cqcUp();
+      if (this.btn.get(t.identifier) === 'cqc') this._cqcUp(when(e));
       if (this.btn.get(t.identifier) === 'throw' && this.els.throw) this.els.throw.classList.remove('down');
       this.btn.delete(t.identifier);
     }
@@ -123,7 +127,7 @@
     const k = e.code;
     if (down) this.keys.add(k); else this.keys.delete(k);
     if (k === 'KeyC' && down && !e.repeat) this.setCrouch(!this.crouch);
-    if (k === 'KeyF' && !e.repeat) { if (down) this._cqcDown = performance.now(); else this._cqcUp(); }
+    if (k === 'KeyF' && !e.repeat) { if (down) this._cqcDown = when(e); else this._cqcUp(when(e)); }
     if (k === 'KeyT' && down && !e.repeat) this.throwTapped = true;   // THROW (Step 14)
     let x = 0, y = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1;
@@ -137,9 +141,9 @@
   };
 
   // the CQC button let go: TAP or HOLD by how long it was pressed
-  P._cqcUp = function () {
+  P._cqcUp = function (at) {
     if (this._cqcDown == null) return;
-    const held = (performance.now() - this._cqcDown) / 1000; this._cqcDown = null;
+    const held = ((at != null ? at : performance.now()) - this._cqcDown) / 1000; this._cqcDown = null;
     if (this.els.cqc) this.els.cqc.classList.remove('down');
     if (held < this.cqcHoldTime) this.cqcTapped = true; else this.cqcHeld = true;
   };
