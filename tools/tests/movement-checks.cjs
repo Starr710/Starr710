@@ -1258,6 +1258,55 @@ const CHECKS = {
     return { pass: ok, detail: runs.map(x => `${x.label}: ${x.heard} steps heard (${Object.entries(x.surfaces).map(([k, n]) => k + ' ' + n).join(', ')}) → ${x.voice} vocal reaction, ${x.incidents} incident, ${x.state}`).join('; ') + `; floating ?/! glyphs ${glyphs}, sprites/text/icons on him ${sprites}; bones shared with the player ${shared}; page errors ${page.errors.length}` };
   },
 
+  // Step 8.1: the TEMPORARY "Huh" caption, on an iPhone-landscape page with the frame loop
+  // running. Ten footsteps in one incident: it appears once (never re-shown or restarted;
+  // its opacity rises, holds about 1 s and falls once), reads "Huh" in small text, sits
+  // above his head and follows it; it's hidden behind solid cover and when he's too far
+  // away; a new incident that turns into ALERT dismisses it at once; the guard's reaction
+  // itself is unchanged (one vocal request per incident)
+  async reactCaption() {
+    const page = await touchPage();
+    await page.evaluate(() => {
+      const g = MV.guard; g.reset(); MV.caption.hide();
+      MV.motor.teleport(2, -19.5, 0); MV.cam.snap(MV.motor);
+      window.__cap = []; const cap = MV.caption;
+      (function f() { const el = document.getElementById('mv-caption'), b = el.getBoundingClientRect(), hp = MV.guard.head.getWorldPosition(new THREE.Vector3()).setY(MV.guard.head.getWorldPosition(new THREE.Vector3()).y + cap.cfg.height).project(MV.camera);
+        window.__cap.push({ t: MV.guard.awareness.clock, shown: cap.shown, active: cap.active, hidden: el.hidden, op: +el.style.opacity, text: el.textContent, h: b.height, fs: parseFloat(getComputedStyle(el).fontSize), cx: b.left + b.width / 2, by: b.bottom, hx: (hp.x + 1) / 2 * innerWidth, hy: (1 - hp.y) / 2 * innerHeight, state: MV.guard.awareness.state, reactions: MV.guard.awareness.reactions });
+        if (window.__cap.length < 4000) requestAnimationFrame(f); })();
+    });
+    await page.waitForTimeout(300);
+    // ten stealth-walk steps to his right, 0.35 s apart (he turns away from her to listen)
+    for (let k = 0; k < 10; k++) { await page.evaluate(k => MV.noise.emit(2, 'footstep', new THREE.Vector3(5 + (k % 2) * 0.3, 0, -16 + k * 0.1), 'concrete', 'player'), k); await page.waitForTimeout(350); }
+    await page.waitForTimeout(1500);
+    const A = await page.evaluate(() => {
+      const L = window.__cap, on = L.filter(x => !x.hidden && x.op > 0);
+      let ups = 0, phase = 'in', restarts = 0; for (let i = 1; i < on.length; i++) { const d = on[i].op - on[i - 1].op; if (phase === 'in' && d < -1e-3) phase = 'out'; else if (phase === 'out' && d > 1e-3) restarts++; }
+      const first = on[0], last = on[on.length - 1], full = on.filter(x => x.op >= 0.999);
+      const anchor = Math.max(...on.map(x => Math.hypot(x.cx - x.hx, x.by - x.hy)));
+      return { shown: L[L.length - 1].shown, reactions: L[L.length - 1].reactions, restarts, span: on.length ? last.t - first.t : 0, full: full.length ? full[full.length - 1].t - full[0].t : 0, text: first ? first.text : '', h: first ? first.h : 0, fs: first ? first.fs : 0, anchor, endHidden: L[L.length - 1].hidden, state: L[L.length - 1].state };
+    });
+    // hidden behind solid cover and when far away (a separate camera; nothing else moves)
+    const B = await page.evaluate(() => {
+      const cap = MV.caption, g = MV.guard, cam = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 80), head = g.head.getWorldPosition(new THREE.Vector3());
+      const at = (x, y, z) => { cam.position.set(x, y, z); cam.lookAt(head); cam.updateMatrixWorld(true); cap.show(); cap.update(0.2, cam, innerWidth, innerHeight); const w = cap.why, hid = document.getElementById('mv-caption').hidden; cap.hide(); return { w, hid }; };
+      // the 2 m tall crate at (-2, -8) sits between a camera at (-4, -4) and his head
+      return { clear: at(2, 2.2, -12.5), wall: at(-4, 1.6, -4), far: at(2, 2.2, 12) };
+    });
+    // a new incident that becomes ALERT: the caption goes at once
+    await page.evaluate(() => { const g = MV.guard; g.reset(); MV.caption.hide(); MV.motor.teleport(-12, -18, 0); MV.cam.snap(MV.motor); window.__cap.length = 0; });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => MV.noise.emit(2, 'footstep', new THREE.Vector3(MV.guard.position.x + 3, 0, MV.guard.position.z), 'concrete', 'player'));
+    await page.waitForFunction(() => MV.caption.active && MV.guard.awareness.reactions === 1, null, { timeout: 10000 }).catch(() => {});
+    await page.evaluate(() => { const g = MV.guard, p = g.position.clone().addScaledVector(g.forward(), 1.6); MV.motor.teleport(p.x, p.z, g.yaw + Math.PI); MV.cam.snap(MV.motor); });
+    await page.waitForFunction(() => MV.guard.awareness.state === 'ALERT', null, { timeout: 10000 }).catch(() => {});
+    const C = await page.evaluate(() => { const L = window.__cap, i = L.findIndex(x => x.state === 'ALERT'); return { alerted: i >= 0, shownBefore: L.some(x => x.active), visibleOnAlert: i >= 0 && L.slice(i).some(x => !x.hidden && x.op > 0), dismissed: MV.caption.dismissed, why: MV.caption.why }; });
+    await page.evaluate(() => { MV.guard.reset(); MV.caption.hide(); });
+    const ok = A.shown === 1 && A.reactions === 1 && A.restarts === 0 && A.text === 'Huh' && A.span > 1.2 && A.span < 1.9 && A.full > 0.8 && A.full < 1.2 && A.fs <= 14 && A.h < 24 && A.anchor < 12 && A.endHidden
+      && B.clear.w === 'showing' && !B.clear.hid && B.wall.w === 'behind cover' && B.wall.hid && B.far.w === 'too far' && B.far.hid
+      && C.alerted && C.shownBefore && !C.visibleOnAlert && C.dismissed >= 1 && page.errors.length === 0;
+    return { pass: ok, detail: `10 footsteps, one incident: shown ${A.shown}× ("${A.text}", ${A.fs}px, ${A.h.toFixed(0)}px tall), ${A.reactions} vocal reaction, restarted ${A.restarts}×; on screen ${A.span.toFixed(2)} s (fully shown ${A.full.toFixed(2)} s, then faded), within ${A.anchor.toFixed(1)} px of the point above his head, gone afterwards ${A.endHidden}; clear view: ${B.clear.w}; behind the tall crate: ${B.wall.w}; from 30 m: ${B.far.w}; a new incident turned ALERT: caption on screen after the alert ${C.visibleOnAlert} (${C.why}); page errors ${page.errors.length}` };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();

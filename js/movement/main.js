@@ -66,7 +66,7 @@
   const footAudio = new mv.FootstepAudio(noise);
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
-  let footsteps = null, voice = null, guard = null, guardView = null, awareView = null, seeTarget = null;
+  let footsteps = null, voice = null, caption = null, guard = null, guardView = null, awareView = null, seeTarget = null;
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
@@ -96,7 +96,12 @@
     awareView = new mv.GuardAwarenessView(scene, guard);
     // his voice: a quiet "huh" once per suspicious incident (a hook until a recording is added)
     voice = new mv.GuardVoice(() => footAudio.ctx);
-    guard.awareness.onVocal = line => voice.say(line, guard.position, motor.position);
+    // caption: a TEMPORARY "Huh" above his head while no recording exists (guard-caption.js)
+    caption = new mv.GuardCaption($('mv-caption'), guard, world);
+    guard.awareness.onVocal = line => {
+      const rec = voice.say(line, guard.position, motor.position);
+      if (caption && !(rec.played && caption.cfg.onlyWithoutRecording)) caption.show();   // caption
+    };
     seeTarget = mv.visionTarget(visual, motor);
     const s = animator.stride;
     ui.calib.textContent = `walk ${s.walk.speed.toFixed(2)} · run ${s.run.speed.toFixed(2)} m/s`;
@@ -114,7 +119,7 @@
     document.body.classList.add('playing');
   });
   // RESET puts the player back at the start and the guard back at his post, calm
-  ui.reset.addEventListener('click', () => { spawn(); if (guard) guard.reset(); });
+  ui.reset.addEventListener('click', () => { spawn(); if (guard) guard.reset(); if (caption) caption.hide(); });
   ui.statsBtn.addEventListener('click', () => { ui.stats.hidden = !ui.stats.hidden; ui.statsBtn.setAttribute('aria-pressed', String(!ui.stats.hidden)); });
 
   // ---------------------------------------------------------------- loop
@@ -148,6 +153,7 @@
     }
     noise.update(dt);
     cam.update(dt, motor, input.look, input.mouse);
+    if (caption) caption.update(dt, camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);   // caption
     sun.position.set(motor.position.x + 6, 14, motor.position.z + 5);
     sun.target.position.copy(motor.position);
     renderer.render(scene, camera);
@@ -188,5 +194,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);
