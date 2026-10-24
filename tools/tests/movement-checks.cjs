@@ -1086,6 +1086,178 @@ const CHECKS = {
     return { pass: ok, detail: `${r.seq}; Heightened Security ${r.hs.toFixed(1)} s; she hid at (${r.at[0].toFixed(1)}, ${r.at[1].toFixed(1)}), seen while hidden ${r.seenHidden} frames; NORMAL while seeing her after the alert ${r.normalSeen} frames; stood down ${r.post.toFixed(2)} m / ${r.facing.toFixed(1)}° from his post; largest per-frame move ${(r.maxStep * 100).toFixed(1)} cm; page errors ${page.errors.length}` };
   },
 
+  // Step 8, 1, 4, 6, 7: the first meaningful sound of a new incident. He pauses (the body
+  // doesn't move before reactDelay), then reacts once (one vocal request), his head and
+  // body turn toward it at limited rates, and even when the sound is enough to investigate
+  // he assesses before walking (not before reactDelay + assessTime); no joint pops
+  async reactFirst() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, B = g.bones, c = a.cfg, bl = g.cfg.bodyLanguage;
+      const sim = () => { step(0, 'stand'); noise.update(dt); g.update(dt, T); };
+      motor.teleport(-12, -18, 0); for (let f = 0; f < 60; f++) step(0, 'stand');
+      const v0 = MV.voice.log.length, yaw0 = g.yaw;
+      // three jog steps 4 m behind-right, close together: enough to investigate at once
+      const P = new THREE.Vector3(g.position.x + 2.8, 0, g.position.z - 2.8);
+      for (let k = 0; k < 3; k++) { noise.emit(3, 'footstep', P.clone().add(new THREE.Vector3(k * 0.3, 0, 0)), 'concrete', 'player'); sim(); }
+      const t0 = a.clock - 2 * dt, susp0 = a.suspicion;
+      let reactT = null, bodyT = null, headT = null, moveT = null, maxHead = 0, maxYaw = 0, prevHead = g.headYaw, prevYaw = g.yaw, pops = 0; const prevQ = {}, lastA = {};
+      for (let f = 0; f < 6 * 60; f++) {
+        sim(); const t = a.clock - t0;
+        if (reactT == null && a.reactions > 0) reactT = t;
+        if (bodyT == null && Math.abs(Math.atan2(Math.sin(g.yaw - yaw0), Math.cos(g.yaw - yaw0))) > 0.01) bodyT = t;
+        if (headT == null && Math.abs(g.headYaw) > 0.01) headT = t;
+        if (moveT == null && g.moving && Math.abs(g.motor.speed) > 0.05) moveT = t;
+        maxHead = Math.max(maxHead, Math.abs(g.headYaw - prevHead)); prevHead = g.headYaw;
+        maxYaw = Math.max(maxYaw, Math.abs(Math.atan2(Math.sin(g.yaw - prevYaw), Math.cos(g.yaw - prevYaw)))); prevYaw = g.yaw;
+        const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert();
+        for (const nm of ['spine1', 'chest', 'neck', 'head', 'leftArm', 'rightArm', 'leftUpLeg', 'rightUpLeg', 'leftLeg', 'rightLeg']) { const q = ri.clone().multiply(B[nm].getWorldQuaternion(new THREE.Quaternion())); if (prevQ[nm]) { const ang = 2 * Math.acos(Math.min(1, Math.abs(q.dot(prevQ[nm])))) * 57.3, leg = nm.endsWith('Leg'); if (leg ? (ang > 12 && ang > 2 * (lastA[nm] || 0)) : ang > 9) pops++; lastA[nm] = ang; } prevQ[nm] = q; }
+      }
+      return { reactT, bodyT, headT, moveT, react: c.reactDelay, assess: c.assessTime, susp0, invAt: c.investigateAt, reactions: a.reactions, voice: MV.voice.log.length - v0, why: MV.voice.log.length ? MV.voice.log[MV.voice.log.length - 1].why : '',
+        maxHead: maxHead / dt, headRate: bl.headRate, maxYaw: maxYaw / dt, turnRate: g.cfg.turn.maxRate, pops, state: a.state };
+    });
+    const ok = r.susp0 >= r.invAt && r.reactions === 1 && r.voice === 1 && r.reactT != null && Math.abs(r.reactT - r.react) < 0.05
+      && r.bodyT >= r.react - 0.02 && r.headT >= r.react - 0.02 && r.moveT != null && r.moveT >= r.react + r.assess - 0.02
+      && r.maxHead <= r.headRate + 0.01 && r.maxYaw <= r.turnRate + 0.05 && r.pops === 0;
+    return { pass: ok, detail: `3 jog steps behind him (suspicion ${(r.susp0 * 100).toFixed(0)}%, enough to investigate): paused, reacted once at ${r.reactT == null ? 'never' : r.reactT.toFixed(2) + ' s'} (delay ${r.react}), ${r.voice} vocal request ("${r.why || 'played'}"); head started turning at ${r.headT == null ? 'never' : r.headT.toFixed(2) + ' s'} (≤ ${r.maxHead.toFixed(2)} rad/s, limit ${r.headRate}), body at ${r.bodyT == null ? 'never' : r.bodyT.toFixed(2) + ' s'} (≤ ${r.maxYaw.toFixed(2)} rad/s, limit ${r.turnRate}); first investigation step at ${r.moveT == null ? 'never' : r.moveT.toFixed(2) + ' s'} (not before ${(r.react + r.assess).toFixed(1)}); joint pops ${r.pops}; ${r.state}` };
+  },
+
+  // Step 8, 2, 3, 7, 9: ten footsteps in succession (sneak steps 0.6 s apart, then a run of
+  // stealth-walk steps while he walks): one incident, one vocal reaction; suspicion still
+  // builds step by step; the pause isn't restarted, the head and body turns aren't
+  // restarted (no reversals) and his walk isn't interrupted by the steps
+  async reactRepeat() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
+      motor.teleport(-12, -18, 0); for (let f = 0; f < 60; f++) step(0, 'stand');
+      const v0 = MV.voice.log.length, P = new THREE.Vector3(g.position.x + 1.4, 0, g.position.z - 1);
+      const susp = [], reactAts = new Set(); let headRev = 0, prevDh = 0, flips = 0, prevAv = 0, lastFlip = -9, t = 0;
+      const watch = n => { for (let i = 0; i < n; i++) { sim(1); t += dt; if (a.incident) reactAts.add(a.incident.reactAt.toFixed(3));
+        const av = g.motor.angularVelocity; if (Math.sign(av) !== Math.sign(prevAv) && Math.abs(av) > 0.3 && Math.abs(prevAv) > 0.3) { if (t - lastFlip < 0.5) flips++; lastFlip = t; } prevAv = av;
+        // a fresh head turn: from near neutral (< 5°) out past 20° (leading the body, then easing back as it catches up, is one turn)
+        const hd = Math.abs(g.headYaw) * 57.3; if (hd < 5) watch.armed = true; else if (hd > 20 && watch.armed !== false) { headRev++; watch.armed = false; } } };
+      for (let k = 0; k < 10; k++) { noise.emit(1, 'footstep', P.clone().add(new THREE.Vector3((k % 2) * 0.3, 0, k * 0.15)), 'concrete', 'player'); susp.push(a.suspicion); watch(36); }
+      const after10 = { reactions: a.reactions, voice: MV.voice.log.length - v0, state: a.state, incidents: a.incidents };
+      let rising = 0, below = 0; for (let i = 1; i < susp.length; i++) if (susp[i - 1] < 1) { below++; if (susp[i] > susp[i - 1] + 1e-6) rising++; }
+      // he's walking to investigate: ten more stealth-walk steps near the spot
+      let w = 0; while (!(g.moving && Math.abs(g.motor.speed) > 0.3) && w < 600) { sim(1); w++; }
+      let stops = 0, wasMoving = g.moving; const v1 = MV.voice.log.length;
+      for (let k = 0; k < 10; k++) { noise.emit(2, 'footstep', P.clone().add(new THREE.Vector3(k * 0.1, 0, 0)), 'concrete', 'player'); for (let f = 0; f < 18; f++) { sim(1); if (wasMoving && !g.moving && !g.arrived) stops++; wasMoving = g.moving; } }
+      return { after10, rising, below, reactAts: reactAts.size, headRev, flips, walkedAt: w, stops, moreVoice: MV.voice.log.length - v1, reactions: a.reactions, susp: susp.map(x => Math.round(x * 100)).join(' → ') };
+    });
+    const A = r.after10;
+    const ok = A.reactions === 1 && A.voice === 1 && A.incidents === 1 && r.below >= 3 && r.rising === r.below && r.reactAts === 1 && r.headRev === 1 && r.flips === 0 && r.stops === 0 && r.moreVoice === 0 && r.reactions === 1;
+    return { pass: ok, detail: `10 sneak steps: ${A.voice} vocal reaction(s), ${A.incidents} incident, suspicion ${r.susp}% (rose on ${r.rising} of the ${r.below} steps below its 100% cap), now ${A.state}; reaction time set ${r.reactAts} time(s) (never restarted), head turns started ${r.headRev}, rapid body-turn reversals ${r.flips}; then 10 stealth-walk steps while he walks: interrupted his walk ${r.stops} times, more vocal reactions ${r.moreVoice}` };
+  },
+
+  // Step 8, 5, 10: sight comes first. A sound starts the pause, then she's right in front
+  // of him in plain view: ALERT on exactly the same frame as without the sound, and the
+  // vocal reaction is cancelled. Once alerted, sounds through EVASION, HEIGHTENED SECURITY
+  // and RETURN TO POST never start a new reaction, and the whole cycle still completes
+  async reactSight() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
+      const framesToAlert = withSound => {
+        g.reset(); motor.teleport(-12, -18, 0); for (let f = 0; f < 30; f++) step(0, 'stand'); sim(30);
+        if (withSound) noise.emit(2, 'footstep', new THREE.Vector3(g.position.x + 3, 0, g.position.z - 2), 'concrete', 'player');
+        sim(6);                                                     // same frames either way (his 10 Hz look stays in step)
+        const pausing = a.incident && a.clock < a.incident.reactAt;
+        const fw = g.forward(), p = g.position.clone().addScaledVector(fw, 1.6); motor.teleport(p.x, p.z, g.yaw + Math.PI); for (let f = 0; f < 2; f++) step(0, 'stand');
+        let n = 0; while (a.state !== 'ALERT' && n < 600) { sim(1); n++; }
+        return { n, pausing, reactions: a.reactions };
+      };
+      const quiet = framesToAlert(false), noisy = framesToAlert(true);
+      // the rest of the cycle, quickly: he loses her, sounds come during each phase
+      a.cfg.evasionTime = 6; a.cfg.heightenedTime = 8; const r0 = a.reactions, seq = [a.state];
+      motor.teleport(-17, 15, 0);
+      let t = 0, duringReturn = 0; const Q = new THREE.Vector3(9, 0, -12);
+      while (a.standDowns === 0 && t < 120) {
+        sim(1); t += dt; if (seq[seq.length - 1] !== a.state) seq.push(a.state);
+        // a sound every 2.5 s; only one during the walk back (each would rightly interrupt it)
+        if (Math.round(t * 60) % 150 === 0 && (a.state !== 'RETURNING' || duringReturn++ === 0)) noise.emit(2, 'footstep', Q, 'metal', 'player');
+      }
+      return { quiet, noisy, seq: seq.join(' → '), after: a.reactions - r0, state: a.state };
+    });
+    const ok = r.noisy.pausing && r.noisy.n === r.quiet.n && r.noisy.reactions === 0 && r.quiet.reactions === 0 && r.after === 0
+      && /ALERT → EVASION → HEIGHTENED → (RETURNING → )?(HEIGHTENED → RETURNING → )*NORMAL$/.test(r.seq) && r.state === 'NORMAL';
+    return { pass: ok, detail: `in plain view: ALERT after ${r.quiet.n} frames without a sound, ${r.noisy.n} frames when a sound had just started his pause (pausing: ${r.noisy.pausing}); vocal reactions ${r.noisy.reactions} (cancelled by the sighting); then ${r.seq} with sounds every 2.5 s: ${r.after} new reactions` };
+  },
+
+  // Step 8, 8: the reaction comes back only after a genuine calm. One sneak step → one
+  // reaction; he settles to NORMAL; another step straight away (still within the calm
+  // time) → no new reaction; after he's been calm for incidentCalmTime, a new step is a
+  // new incident with its own reaction
+  async reactRecalm() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
+      motor.teleport(-12, -18, 0); for (let f = 0; f < 30; f++) step(0, 'stand');
+      const P = new THREE.Vector3(g.position.x + 1.4, 0, g.position.z - 1), snd = () => noise.emit(1, 'footstep', P, 'concrete', 'player');
+      snd(); sim(120); const first = a.reactions;
+      let t = 0; while (!(a.state === 'NORMAL' && a.suspicion < a.cfg.calmAt) && t < 60) { sim(1); t += dt; }
+      snd(); sim(120); const soon = a.reactions;
+      t = 0; while (a.incident && t < 60) { sim(1); t += dt; }
+      const calmFor = a.cfg.incidentCalmTime, ended = !a.incident;
+      snd(); sim(120); const later = a.reactions;
+      return { first, soon, later, ended, calmFor, incidents: a.incidents };
+    });
+    const ok = r.first === 1 && r.soon === 1 && r.ended && r.later === 2 && r.incidents === 2;
+    return { pass: ok, detail: `first step: ${r.first} reaction; a step just after he settled (within ${r.calmFor} s of calm): still ${r.soon}; after a genuine calm (incident ended: ${r.ended}) a new step: ${r.later} reactions, ${r.incidents} incidents` };
+  },
+
+  // Step 8, 2, 11, 12: real iPhone touches. She walks across the surface strips behind him
+  // at sneak, stealth walk and jog (concrete, metal and grass under her feet): each run is
+  // one incident with at most one vocal reaction, however many steps he hears. No floating
+  // "?" / "!" or any sprite, text or icon appears on him or in the scene; the player's
+  // bones are untouched by his body language
+  async reactTouch() {
+    const page = await touchPage(), Tc = page.touch, X = 150, Y = 300, runs = [];
+    const steer = async (tx, tz, px, max) => {
+      const t0 = Date.now(); let first = true;
+      while (Date.now() - t0 < max) {
+        const st = await page.evaluate(([tx, tz]) => { const f = MV.cam.forward(new THREE.Vector3()), p = MV.motor.position, wx = tx - p.x, wz = tz - p.z, l = Math.hypot(wx, wz); return { mx: (wx * -f.z + wz * f.x) / l, my: (wx * f.x + wz * f.z) / l, d: l }; }, [tx, tz]);
+        if (st.d < 0.4) break;
+        if (first) { await Tc('touchStart', [{ x: X, y: Y, id: 1 }]); first = false; }
+        await Tc('touchMove', [{ x: X + st.mx * px, y: Y - st.my * px, id: 1 }]); await page.waitForTimeout(250);
+      }
+      await Tc('touchEnd', []);
+    };
+    let glyphs = 0, sprites = 0;
+    const scan = () => page.evaluate(() => {
+      let sp = 0; MV.scene.traverse(o => { if (o.isSprite || o.isPoints || (o.geometry && o.geometry.type === 'TextGeometry')) sp++; });
+      const g = MV.guard; [g.root].forEach(root => root.traverse(o => { const m = o.material; if (m && [].concat(m).some(x => x.map && x.map.image && x.map.image.getContext)) sp++; }));
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let gl = 0, n;
+      while ((n = walker.nextNode())) { const s = n.textContent.trim(); const el = n.parentElement; if (/^[!?¿¡]+$/.test(s) && el && el.offsetParent !== null) gl++; }
+      return { sp, gl };
+    });
+    for (const [label, px] of [['sneak', 25], ['stealth walk', 50], ['jog', 64]]) {
+      await page.evaluate(() => {
+        const g = MV.guard; g.post.set(0, 0, 1.5); g.postYaw = Math.PI; g.reset();
+        MV.motor.teleport(-4.6, 5.2, Math.PI / 2); MV.cam.snap(MV.motor);
+        window.__r = { heard: 0, surfaces: {}, v0: MV.voice.log.length };
+        if (!window.__hooked) { window.__hooked = true; MV.noise.on(e => { if (e.source === 'player' && window.__r) setTimeout(() => { const h = MV.guard.hearing.heard; if (h && h.position.distanceTo(e.position) < 1e-6) { window.__r.heard++; window.__r.surfaces[e.surface] = (window.__r.surfaces[e.surface] || 0) + 1; } }, 0); }); }
+      });
+      await page.waitForTimeout(400);
+      await steer(4.6, 5.2, px, 12000);
+      const s1 = await scan(); glyphs += s1.gl; sprites += s1.sp;
+      await page.waitForTimeout(1500);
+      const s2 = await scan(); glyphs += s2.gl; sprites += s2.sp;
+      const r = await page.evaluate(() => ({ heard: window.__r.heard, surfaces: window.__r.surfaces, voice: MV.voice.log.length - window.__r.v0, reactions: MV.guard.awareness.reactions, incidents: MV.guard.awareness.incidents, state: MV.guard.awareness.state, gait: MV.motor.gait.label }));
+      runs.push(Object.assign({ label }, r));
+    }
+    // his body language moves only his own bones: the player's skeleton shares none of them
+    const shared = await page.evaluate(() => { const g = MV.guard, pb = new Set(Object.values(MV.visual.bones)); return Object.values(g.bones).filter(b => pb.has(b)).length; });
+    await page.evaluate(() => { const g = MV.guard; g.post.set(2, 0, -16); g.postYaw = 0; g.reset(); });
+    const ok = runs.every(x => x.heard >= 3 && x.voice <= 1 && x.reactions <= 1 && x.incidents <= 1 && x.voice === x.reactions) && runs.filter(x => x.reactions === 1).length >= 2
+      && runs.some(x => Object.keys(x.surfaces).length >= 2) && glyphs === 0 && sprites === 0 && shared === 0 && page.errors.length === 0;
+    return { pass: ok, detail: runs.map(x => `${x.label}: ${x.heard} steps heard (${Object.entries(x.surfaces).map(([k, n]) => k + ' ' + n).join(', ')}) → ${x.voice} vocal reaction, ${x.incidents} incident, ${x.state}`).join('; ') + `; floating ?/! glyphs ${glyphs}, sprites/text/icons on him ${sprites}; bones shared with the player ${shared}; page errors ${page.errors.length}` };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();

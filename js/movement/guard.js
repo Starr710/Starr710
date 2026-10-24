@@ -33,6 +33,17 @@
     waypointWithin: 0.6,   // m: a path waypoint counts as reached
     stuckTime: 2.5,        // s without getting this much…
     stuckProgress: 0.25,   // …(m) closer to the next waypoint means he's stuck: stop safely
+    // Step 8 body language: small procedural adjustments layered on his clips (his own
+    // bones only). The head and neck turn toward what he's attending to; tension leans
+    // the upper body slightly forward with the head kept level
+    bodyLanguage: {
+      headMax: 65,         // ° the head and neck together turn from the body at most…
+      neckShare: 0.4,      // …this share in the neck, the rest in the head
+      headRate: 2.6,       // rad/s at most (a turn of the head, not a snap)
+      headSmoothing: 7,    // 1/s easing toward the wanted head turn
+      lean: 5,             // ° forward lean of the upper body at full tension (ALERT)…
+      tensionSmoothing: 1.5,   // …eased in and out at this rate (1/s)
+    },
   };
 
   // Copy a skinned model: new bones and skinned meshes bound to them, sharing
@@ -101,6 +112,7 @@
     this.vision = new mv.GuardVision(this, o.vision);
     this.hearing = noise && mv.GuardHearing ? new mv.GuardHearing(this, noise, o.hearing) : null;
     this.awareness = mv.GuardAwareness ? new mv.GuardAwareness(this) : null;
+    this.headYaw = 0; this.tension = 0; this._blBase = new Map();
     if (this.hearing && this.awareness) this.hearing.onHeard = rec => this.awareness.onHeard(rec);
     this.place();
   };
@@ -114,6 +126,7 @@
     this.vision.meter = 0; this.vision.sinceSeen = Infinity; this.vision.acc = Infinity;
     if (this.hearing) { this.hearing.last = null; this.hearing.heard = null; }
     if (this.awareness) this.awareness.reset();
+    this.headYaw = 0; this.tension = 0;
     this.place();
   };
 
@@ -217,6 +230,39 @@
     return out.addScaledVector(this.forward(new THREE.Vector3()), 0.1);
   };
 
+  // ---------------------------------------------------------------- body language (Step 8)
+  // After the mixer has posed him: turn the neck and head about the world vertical toward
+  // what he's attending to, and lean the spine a little forward when tense (the head
+  // tilting back to stay level). Rate-limited and eased, so it never snaps. Bones the
+  // clips don't drive are restored to their own pose first, so nothing accumulates.
+  const _up = new THREE.Vector3(0, 1, 0), _ax = new THREE.Vector3(), _pq = new THREE.Quaternion(), _dq = new THREE.Quaternion();
+  mv.Guard.prototype._bodyLanguage = function (dt) {
+    const o = this.cfg.bodyLanguage, B = this.bones, att = this.awareness ? this.awareness.attention() : { point: null, tension: 0 };
+    if (!o || !B.neck || !B.head) return;
+    let want = 0;
+    if (att.point) want = wrap(Math.atan2(att.point.x - this.position.x, att.point.z - this.position.z) - this.yaw);
+    const max = o.headMax * Math.PI / 180; want = Math.max(-max, Math.min(max, want));
+    const ease = (want - this.headYaw) * (1 - Math.exp(-o.headSmoothing * dt)), lim = o.headRate * dt;
+    this.headYaw += Math.max(-lim, Math.min(lim, ease));
+    this.tension += (att.tension - this.tension) * (1 - Math.exp(-o.tensionSmoothing * dt));
+    const lean = o.lean * Math.PI / 180 * this.tension, right = _ax.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)).clone();
+    const turns = [[B.spine1, _up, 0, right, lean * 0.5], [B.chest, _up, 0, right, lean * 0.5],
+      [B.neck, _up, this.headYaw * o.neckShare, right, -lean * 0.4], [B.head, _up, this.headYaw * (1 - o.neckShare), right, -lean * 0.6]];
+    for (const [bone, yAxis, yaw, pAxis, pitch] of turns) {
+      if (!bone) continue;
+      const kept = this._blBase.get(bone);
+      if (kept && bone.quaternion.equals(kept.written)) bone.quaternion.copy(kept.base);   // not re-posed by the mixer
+      const base = bone.quaternion.clone();
+      if (Math.abs(yaw) > 1e-5 || Math.abs(pitch) > 1e-5) {
+        bone.parent.getWorldQuaternion(_pq).invert();
+        if (Math.abs(yaw) > 1e-5) bone.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(yAxis).applyQuaternion(_pq), yaw));
+        if (Math.abs(pitch) > 1e-5) bone.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(pAxis).applyQuaternion(_pq), pitch));
+        bone.updateMatrixWorld(true);
+      }
+      this._blBase.set(bone, { base, written: bone.quaternion.clone() });
+    }
+  };
+
   // target: what the guard can look at (see mv.visionTarget)
   mv.Guard.prototype.update = function (dt, target) {
     if (this.hearing) this.hearing.update(dt);
@@ -226,6 +272,7 @@
     // the idle stance is squared to his facing; walking clips already face forward
     this.pivot.rotation.y = this.pivotYaw - this.squareYaw * this.animator.weights.idle;
     this.root.updateMatrixWorld(true);
+    this._bodyLanguage(dt);
     if (target) this.vision.update(dt, target);
     if (this.awareness) this.awareness.update(dt, target);
   };

@@ -1,7 +1,7 @@
 # Movement regression checks
 
 ```
-node tools/tests/movement-checks.cjs              # all checks (about 5 minutes; `hsTouchCycle` alone runs about 2)
+node tools/tests/movement-checks.cjs              # all checks (about 6 minutes; `hsTouchCycle` alone runs about 2)
 node tools/tests/movement-checks.cjs zones stops  # only some
 ```
 
@@ -41,6 +41,11 @@ Run from the repo root. The script starts its own local server, opens `movement.
 | `spawnSafe` | The spawn: every one of the 9 vision body points is beyond his range or outside his cone; standing still there 20 s with him watching and listening gives a meter of 0, NORMAL only and no footsteps; ≥ 1.5 m clear of every obstacle, ≥ 3 m from him, inside the yard; the camera starts behind her along her facing, looking into the yard |
 | `resetClean` | Real touches on an iPhone-landscape screen: after he's alerted and searching, she's crouched and moving and he's heard a sound, RESET puts her at the spawn (position and facing exact), standing, not crouched, camera behind her; him at his post facing it, NORMAL, suspicion 0, no memory/search/investigation/sound left, meter 0. Only the step she was taking may finish (≤ 2 settle steps in 2 s, unheard by him), then nothing for 3 s; she's in idle and he's still |
 | `hsTouchCycle` | Real touches, frame loop running (about 2 minutes): from the spawn she stealth-walks into view until he's alerted, jogs back out of range and north along the west wall, and hides. He runs the whole cycle ALERT → EVASION → HEIGHTENED (60 s ± 1) → RETURNING → NORMAL, stands down ≤ 0.4 m and ≤ 4° from his post, never sees her while she's hidden, is never NORMAL while seeing her, and never jumps (< 15 cm per frame) |
+| `reactFirst` | Step 8: three jog steps behind a calm guard (enough to investigate at once): no head or body movement before `reactDelay`, then exactly one reaction and one vocal request at `reactDelay` (± 0.05 s); the head (≤ its 2.6 rad/s rate) and body (≤ turn rate) start turning after it; his first investigation step comes no earlier than `reactDelay + assessTime`; no guard joint pops |
+| `reactRepeat` | Ten sneak steps 0.6 s apart: one incident, one vocal reaction, suspicion rising on every step below its 100% cap, the reaction time set once (never restarted), one head turn (not restarted), no rapid body-turn reversals; then ten stealth-walk steps while he walks: his walk is never interrupted and there are no more reactions |
+| `reactSight` | A sound starts his pause, then she's 1.6 m in front of him in plain view: ALERT on exactly the same frame as with no sound, and the vocal reaction cancelled. Then EVASION → HEIGHTENED → RETURNING → NORMAL still completes with sounds throughout, and no new reaction |
+| `reactRecalm` | One sneak step: one reaction. Another just after he settles (inside the calm time): none. After a genuine calm (incident over): a new incident with its own reaction |
+| `reactTouch` | Real iPhone touches: she crosses the concrete / metal / grass strips behind him at sneak, stealth walk and jog. Each run: ≥ 3 steps heard, at most one incident and one vocal reaction. No floating ?/! text, sprites or icons anywhere (scene and page); his bones are not shared with the player's |
 | `groundContact` | In the crouch idle both feet touch the ground (lowest skinned vertex ≤ 3 cm) |
 | `clearance` | Limbs stay out of the body: hand to shin ≥ 15 cm in the crouch idle (≥ 12 cm during the crouch-walk arm swing), thigh to spine ≥ 15 cm |
 

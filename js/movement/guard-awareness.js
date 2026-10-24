@@ -39,7 +39,9 @@
     holdTime: 3,           // s without new evidence before suspicion starts to fall…
     decayRate: 0.04,       // …per second
     // reactions
-    reactDelay: 0.35,      // s between noticing something and turning to it
+    reactDelay: 0.5,       // s a calm guard pauses on the first sound of a new incident before he reacts (head, body, voice)
+    assessTime: 0.6,       // s after reacting that he stands and assesses before he may walk off to investigate
+    incidentCalmTime: 4,   // s back in NORMAL with suspicion below calmAt before a new incident (and a new vocal reaction) can begin
     retargetAngle: 12,     // a new sound only redirects his look if this far (°) from the current one…
     retargetGap: 0.8,      // …and this long (s) after the last redirect
     retargetDistance: 3,   // m: while investigating, a sound this far from his target re-targets him
@@ -125,6 +127,8 @@
     this.lastContact = -Infinity;
     this.evasion = null; this.evasions = 0;
     this.hs = null; this.standDowns = 0; this.stoodDownAt = null; this.interrupted = '';
+    // Step 8: one suspicious incident at a time: { start, kind, reactAt, assessUntil, voiced }
+    this.incident = null; this.incidents = 0; this.reactions = 0; this.calmSince = null;
     this.rng = mulberry(this.cfg.seed);
   };
   function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -194,19 +198,64 @@
       this.confirmed = true; this.confirmedAt = this.clock;
       this._alert('recognised her');
     }
+    this._incidentUpdate(v.seen.rate > 0);
     if (this.confirmed) { this.suspicion = 1; this._alerted(); return; }
     if (this.clock - this.lastEvidence > c.holdTime) this.suspicion = Math.max(0, this.suspicion - c.decayRate * dt);
 
     if (this.state === 'NORMAL') {
       this.behavior = g.atPost() ? 'idle' : 'off post';
-      if (this.suspicion >= c.suspiciousAt && this.focus) this.state = 'SUSPICIOUS';
+      if (this.suspicion >= c.suspiciousAt && this.focus) { this.state = 'SUSPICIOUS'; if (!this.incident) this._beginIncident(this.focus.kind); }
     }
     if (this.state === 'SUSPICIOUS') {
-      this.behavior = 'assessing';
-      if (this.focus && this.clock - this.focus.at >= c.reactDelay && g.isStill()) g.faceToward(this.focus.position);
-      if (this.suspicion >= c.investigateAt) this._investigate();
+      const inc = this.incident, reacting = inc ? this.clock >= inc.reactAt : this.focus && this.clock - this.focus.at >= c.reactDelay;
+      this.behavior = reacting ? 'assessing' : 'pausing (heard something)';
+      if (this.focus && reacting && g.isStill()) g.faceToward(this.focus.position);
+      if (this.suspicion >= c.investigateAt && (!inc || this.clock >= inc.assessUntil)) this._investigate();
       else if (this.suspicion < c.calmAt) { this.state = 'NORMAL'; this.focus = null; g.faceYaw(g.postYaw); }
     } else if (this.state === 'INVESTIGATING') this._investigating();
+  };
+
+  // ---------------------------------------------------------------- incidents (Step 8)
+  // A calm guard's first suspicious evidence opens an incident. On a sound he pauses
+  // (reactDelay), then reacts once: a quiet vocal "huh", his head and body turn to it,
+  // and he assesses (assessTime) before he may walk off. Further sounds in the same
+  // incident build suspicion and steer his attention as before, but never restart the
+  // pause or the reaction. The incident ends only once he's been calm for incidentCalmTime.
+  mv.GuardAwareness.prototype._beginIncident = function (kind) {
+    const c = this.cfg, heard = kind === 'heard';
+    this.incident = { start: this.clock, kind, reactAt: this.clock + (heard ? c.reactDelay : 0), assessUntil: this.clock + (heard ? c.reactDelay + c.assessTime : 0), voiced: !heard };
+    this.incidents++; this.calmSince = null;
+  };
+
+  mv.GuardAwareness.prototype._incidentUpdate = function (seeing) {
+    const c = this.cfg, inc = this.incident;
+    if (!inc) return;
+    if (this.confirmed || seeing) {
+      // sight comes first: no hesitation, and seeing her replaces the vocal reaction to a sound
+      if (!inc.voiced && this.clock < inc.reactAt) inc.voiced = true;
+      inc.reactAt = Math.min(inc.reactAt, this.clock); inc.assessUntil = Math.min(inc.assessUntil, this.clock);
+    }
+    if (!inc.voiced && this.clock >= inc.reactAt) {
+      inc.voiced = true; this.reactions++;
+      if (this.onVocal) this.onVocal('huh', this.focus ? this.focus.position : null);
+    }
+    if (this.state === 'NORMAL' && this.suspicion < c.calmAt) {
+      if (this.calmSince == null) this.calmSince = this.clock;
+      if (this.clock - this.calmSince >= c.incidentCalmTime) { this.incident = null; this.calmSince = null; }
+    } else this.calmSince = null;
+  };
+
+  // what he's paying attention to, for his body language (guard.js): a point to turn
+  // his head to (or null) and how tense he is (0 relaxed … 1 alert)
+  mv.GuardAwareness.prototype.attention = function () {
+    const s = this.state, inc = this.incident;
+    if (s === 'ALERT') return { point: this.seen ? this.seen.position : null, tension: 1 };
+    if (s === 'SUSPICIOUS') return { point: this.focus && (!inc || this.clock >= inc.reactAt) ? this.focus.position : null, tension: 0.45 };
+    if (s === 'INVESTIGATING') return { point: this.behavior === 'approach' && this.focus ? this.focus.position : null, tension: this.behavior === 'return' ? 0.3 : 0.6 };
+    if (s === 'EVASION') return { point: null, tension: 0.7 };
+    if (s === 'HEIGHTENED') return { point: null, tension: 0.5 };
+    if (s === 'RETURNING') return { point: null, tension: 0.25 };
+    return { point: null, tension: 0 };
   };
 
   // ---------------------------------------------------------------- investigation
@@ -270,6 +319,7 @@
     if (this.state === 'HEIGHTENED' || this.state === 'RETURNING') this.interrupted = (this.state === 'HEIGHTENED' ? 'Heightened Security' : 'return to post') + ' interrupted: ' + why;
     this.state = 'ALERT'; this.behavior = 'tracking her'; this.note = why;
     this.lastContact = this.clock; this.evasion = null; this.search = null; this.hs = null;   // a sighting cancels the stand-down
+    if (!this.incident) this._beginIncident('seen');             // part of an incident until he's genuinely calm again
     g.stopMoving();
   };
 
