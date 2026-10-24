@@ -205,15 +205,19 @@
     if (this.clock - this.lastEvidence > c.holdTime) this.suspicion = Math.max(0, this.suspicion - c.decayRate * dt);
 
     if (this.state === 'NORMAL') {
-      this.behavior = g.atPost() ? 'idle' : 'off post';
-      if (this.suspicion >= c.suspiciousAt && this.focus) { this.state = 'SUSPICIOUS'; if (!this.incident) this._beginIncident(this.focus.kind); }
+      const pat = this._patrolling();
+      this.behavior = pat ? 'patrol' : g.atPost() ? 'idle' : 'off post';
+      if (this.suspicion >= c.suspiciousAt && this.focus) {
+        this.state = 'SUSPICIOUS'; if (!this.incident) this._beginIncident(this.focus.kind);
+        if (pat) pat.interrupt(this.focus.kind === 'heard' ? 'heard something' : 'saw something');   // patrol gives way
+      } else if (pat) pat.update(dt);
     }
     if (this.state === 'SUSPICIOUS') {
       const inc = this.incident, reacting = inc ? this.clock >= inc.reactAt : this.focus && this.clock - this.focus.at >= c.reactDelay;
       this.behavior = reacting ? 'assessing' : 'pausing (heard something)';
       if (this.focus && reacting && g.isStill()) g.faceToward(this.focus.position);
       if (this.suspicion >= c.investigateAt && (!inc || this.clock >= inc.assessUntil)) this._investigate();
-      else if (this.suspicion < c.calmAt) { this.state = 'NORMAL'; this.focus = null; g.faceYaw(g.postYaw); }
+      else if (this.suspicion < c.calmAt) { this.state = 'NORMAL'; this.focus = null; if (!this._patrolling()) g.faceYaw(g.postYaw); }
     } else if (this.state === 'INVESTIGATING') this._investigating();
   };
 
@@ -264,7 +268,8 @@
     if (s === 'EVASION') return { point: null, tension: 0.7 };
     if (s === 'HEIGHTENED') return { point: null, tension: 0.5 };
     if (s === 'RETURNING') return { point: null, tension: 0.25 };
-    return { point: null, tension: 0 };
+    const pat = this._patrolling();
+    return { point: pat ? pat.lookPoint : null, tension: 0 };     // NORMAL: relaxed (a patrol's look leads with the head)
   };
 
   // ---------------------------------------------------------------- investigation
@@ -305,14 +310,16 @@
       }
     } else if (this.behavior === 'return') {
       if (g.navFailed) { this.note = 'path to post ' + g.navFailed + ': waiting here'; this._settle(); }
-      else if (g.arrived && g.isStill()) { g.faceYaw(g.postYaw); this._settle(); }
+      else if (g.arrived && g.isStill()) { if (!this._patrolling()) g.faceYaw(g.postYaw); this._settle(); }
     }
   };
 
   mv.GuardAwareness.prototype._return = function () {
     const g = this.guard;
     this.behavior = 'return'; this.search = null;
-    if (!g.goTo(g.post, 0.5)) { this.note = 'post unreachable: waiting here'; this._settle(); }
+    // a patrolling guard heads back to his route (the waypoint he was walking to), a stationary one to his post
+    const pat = this._patrolling(), to = pat ? pat.rejoinPoint() : g.post;
+    if (!g.goTo(to, 0.5)) { this.note = (pat ? 'route' : 'post') + ' unreachable: waiting here'; this._settle(); }
   };
 
   // back (or stuck): calm down at his post, still wary if suspicion hasn't gone
@@ -322,9 +329,13 @@
     if (this.state === 'NORMAL') this.focus = null;
   };
 
+  // his patrol routine, if he has one and it's on (Step 9)
+  mv.GuardAwareness.prototype._patrolling = function () { const p = this.guard.patrol; return p && p.enabled ? p : null; };
+
   // ---------------------------------------------------------------- alert and evasion
   mv.GuardAwareness.prototype._alert = function (why) {
     const g = this.guard;
+    if (this._patrolling()) this._patrolling().interrupt('ALERT: ' + why);
     if (this.state === 'HEIGHTENED' || this.state === 'RETURNING') this.interrupted = (this.state === 'HEIGHTENED' ? 'Heightened Security' : 'return to post') + ' interrupted: ' + why;
     this.state = 'ALERT'; this.behavior = 'tracking her'; this.note = why;
     this.lastContact = this.clock; this.evasion = null; this.search = null; this.hs = null;   // a sighting cancels the stand-down

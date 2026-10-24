@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -66,7 +66,7 @@
   const footAudio = new mv.FootstepAudio(noise);
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
-  let footsteps = null, voice = null, caption = null, guard = null, guardView = null, awareView = null, seeTarget = null;
+  let footsteps = null, voice = null, caption = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
@@ -94,6 +94,7 @@
     guard = new mv.Guard(scene, world, visual, Object.assign({ vision: 'regular', hearing: 'regular' }, area.guard), noise);
     guardView = new mv.GuardDebugView(scene, guard);
     awareView = new mv.GuardAwarenessView(scene, guard);
+    patrolView = new mv.GuardPatrolView(scene, guard.patrol);
     // his voice: a quiet "huh" once per suspicious incident (a hook until a recording is added)
     voice = new mv.GuardVoice(() => footAudio.ctx);
     // caption: a TEMPORARY "Huh" above his head while no recording exists (guard-caption.js)
@@ -150,6 +151,7 @@
       guardView.update(camera, seeTarget);
       guard.hearing.updateDebug(scene);
       awareView.update(camera);
+      patrolView.update(guard.awareness.cfg.debug);
     }
     noise.update(dt);
     cam.update(dt, motor, input.look, input.mouse);
@@ -182,6 +184,7 @@
         ui.memory.textContent = `seen ${xz(a.seen && a.seen.position)}${a.seen ? ago(a.seen.time) : ''} · heard ${a.heard && a.heard.uncertainty ? '≈' + xz(a.heard.estimate) + ' ±' + a.heard.uncertainty.toFixed(1) + ' m' : xz(a.heard && a.heard.position)} · ${a.confirmed ? (guard.vision.seen.rate > 0 ? 'CONFIRMED · in sight' : 'CONFIRMED · no contact') : 'not confirmed'}`;
         ui.reason.textContent = (a.evasion && a.state === 'EVASION' ? a.evasion.reason + (a.note ? ' · ' + a.note : '') : a.hs && a.state === 'HEIGHTENED' ? a.hs.reason + (a.note ? ' · ' + a.note : '') : a.note) || '–';
         ui.voice.textContent = voice ? voice.status() : '–';
+        ui.patrol.textContent = guard.patrol.status();
         ui.post.textContent = `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`;
       }
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';

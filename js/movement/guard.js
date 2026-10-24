@@ -111,6 +111,8 @@
     this.nav = mv.GuardNav ? new mv.GuardNav(world, o.radius) : null;
     this.vision = new mv.GuardVision(this, o.vision);
     this.hearing = noise && mv.GuardHearing ? new mv.GuardHearing(this, noise, o.hearing) : null;
+    // Step 9: an optional patrol routine (o.patrol: mv.PatrolDefaults); without one he's a stationary guard
+    this.patrol = mv.GuardPatrol ? new mv.GuardPatrol(this, o.patrol || { enabled: false }) : null;
     this.awareness = mv.GuardAwareness ? new mv.GuardAwareness(this) : null;
     this.headYaw = 0; this.tension = 0; this._blBase = new Map();
     if (this.hearing && this.awareness) this.hearing.onHeard = rec => this.awareness.onHeard(rec);
@@ -126,15 +128,17 @@
     this.vision.meter = 0; this.vision.sinceSeen = Infinity; this.vision.acc = Infinity;
     if (this.hearing) { this.hearing.last = null; this.hearing.heard = null; }
     if (this.awareness) this.awareness.reset();
+    if (this.patrol) this.patrol.reset();
     this.headYaw = 0; this.tension = 0;
     this.place();
   };
 
   // ---------------------------------------------------------------- movement orders (from the brain)
   // walk to a point, letting the walk finish once within `within` m, at an optional
-  // pace (stick-equivalent push; default the careful investigation walk); false if no path
-  mv.Guard.prototype.goTo = function (p, within, push) {
-    this.push = push || null;
+  // pace (stick-equivalent push; default the careful investigation walk); false if no path.
+  // opts.noSlow: keep the pace to the end (a patrol point he walks straight through)
+  mv.Guard.prototype.goTo = function (p, within, push, opts) {
+    this.push = push || null; this.noSlow = !!(opts && opts.noSlow);
     this.arrived = false; this.navFailed = null;
     const path = this.nav ? this.nav.plan(this.position, p) : [{ x: p.x, z: p.z }];
     if (!path) { this.moving = false; this.path = null; this.navFailed = 'unreachable'; return false; }
@@ -177,7 +181,7 @@
         if (d < this._best - o.stuckProgress) { this._best = d; this._bestAt = this._clock; }
         else if (this._clock - this._bestAt > o.stuckTime) { this.moving = false; this.path = null; this.navFailed = 'stuck'; }
         else {
-          const push = this.path.length === 1 && toGoal < a.slowWithin ? a.slowPush : (this.push || a.walkPush);
+          const push = !this.noSlow && this.path.length === 1 && toGoal < a.slowWithin ? a.slowPush : (this.push || a.walkPush);
           this._motorStep(dt, (wp.x - p.x) / d, (wp.z - p.z) / d, push);
         }
       }

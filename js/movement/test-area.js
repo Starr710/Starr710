@@ -70,11 +70,25 @@
 
   mv.buildTestArea = function (scene, world, renderer) {
     const SIZE = 44;
+    // The guard's patrol route (Step 9; guard-patrol.js has the other settings): his post,
+    // the open ground by the corridor entrance, the north side facing the surface strips,
+    // then back past the tall crate (walked straight through). Observation points: pause
+    // [min, max] s, facing (°, 0 = +Z, 90 = +X) and looks (° from that facing). Every point
+    // is more than 16 m (his sight range) from the player's spawn. enabled: false = stationary.
+    const PATROL = {
+      enabled: true, loop: true, push: 0.42,
+      points: [
+        { x: 2, z: -16, pause: [2, 3], face: 0, looks: [-40, 35] },
+        { x: 12, z: -11, pause: [1.5, 2.5], face: 90, looks: [-50, 40] },
+        { x: 6.5, z: -1, pause: [1.5, 3], face: -35, looks: [40, -30] },
+        { x: 0.5, z: -10.5 },
+      ],
+    };
     // The guard's post, and the player's spawn (the one place to change it; RESET returns
     // here). The spawn is in the yard's west corner, 19 m from the guard (beyond his 16 m
     // sight range) and 84° off his facing (outside his 55° half-cone), in open ground
     // (3.6 m to the nearest pillar, 5 m to the wall), facing east toward the yard.
-    const GUARD = { x: 2, z: -16, yaw: 0 };
+    const GUARD = { x: 2, z: -16, yaw: 0, patrol: PATROL };
     const SPAWN = { x: -17, z: -14, yaw: Math.PI / 2 };
     const tex = gridTexture(renderer);
     tex.repeat.set(SIZE / 4, SIZE / 4);

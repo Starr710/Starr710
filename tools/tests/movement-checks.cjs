@@ -60,8 +60,17 @@ async function simPage() {
     window.angJump = (a, b) => 2 * Math.acos(Math.min(1, Math.abs(a.dot(b)))) * 57.2958;
     window.segDist = (p, a, b) => { const ab = b.clone().sub(a); const t = Math.max(0, Math.min(1, p.clone().sub(a).dot(ab) / ab.lengthSq())); return p.distanceTo(a.clone().addScaledVector(ab, t)); };
     motor.teleport(-6, -20, 0);
+    // the checks written before Step 9 cover the stationary guard (still a setting): patrol off
+    MV.guard.patrol.enabled = false; MV.guard.reset();
   });
   page.errors = errors;
+  return page;
+}
+
+// Step 9: the same page with the guard on his patrol route, from its clean start
+async function patrolPage(touch) {
+  const page = touch ? await touchPage() : await simPage();
+  await page.evaluate(() => { MV.guard.patrol.enabled = true; MV.guard.reset(); });
   return page;
 }
 
@@ -73,6 +82,7 @@ async function touchPage() {
   await page.goto(base + '/movement.html');
   await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
   await page.tap('#mv-start'); await page.waitForTimeout(300);
+  await page.evaluate(() => { MV.guard.patrol.enabled = false; MV.guard.reset(); });   // stationary guard (see simPage)
   const cdp = await ctx.newCDPSession(page);
   page.touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
   page.errors = errors;
@@ -1449,6 +1459,164 @@ const CHECKS = {
     const ok = C.react === 0.8 && C.visual === 0.8 && C.hold === 1.2 && okSound && okGlimpse && okRecog;
     const f2 = x => x == null ? 'never' : x.toFixed(2) + ' s';
     return { pass: ok, detail: `settings: sound pause ${C.react} s, glimpse pause ${C.visual} s, assess ${C.assess} s, caption hold ${C.hold} s. Sound: "huh" at ${f2(S.reactT)}, head ${f2(S.headT)}, body ${f2(S.bodyT)}, reaction time set ${S.reactAts}× despite 3 more steps in the pause (suspicion rose: ${S.suspRise}), first investigation step ${f2(S.moveT)} (pause + assess ${(C.react + C.assess).toFixed(1)} s). Glimpse (from when he noticed): "huh" ${f2(G.reactFromInc)}, head ${f2(G.headT - G.reactT + G.reactFromInc)}, body ${f2(G.bodyT - G.reactT + G.reactFromInc)}, set ${G.reactAts}×, meter ${(G.meterPause[0] * 100).toFixed(0)}% → ${(G.meterPause[1] * 100).toFixed(0)}% during the pause (drops ${G.drops}). Recognised ${R.fullF == null ? '-' : ((R.fullF - R.inc2) / 60).toFixed(2) + ' s'} into the pause: ALERT on frame ${R.alertF} (meter full on ${R.fullF}), "huh" ${R.reactions}` };
+  },
+
+  // Step 9, 1–4, 12, 13: two laps of the patrol with the player standing at her spawn. He
+  // visits the waypoints in order; at observation points he slows, stops for a while and
+  // looks around (varying from lap to lap), at the pass-through point he walks straight on;
+  // a relaxed walk (never a jog), no obstacle overlap, no teleport or snap, legs moving
+  // and planted feet holding while he walks, hips aligned with his vision facing; he never
+  // sees or senses the player at the spawn
+  async patrolRoute() {
+    const page = await patrolPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, world, area } = MV, g = MV.guard, a = g.awareness, p = g.patrol, T = MV.seeTarget, dt = 1 / 60, R = g.cfg.radius, B = g.bones, pts = p.cfg.points;
+      const intrusion = () => { let w = 0; for (const b of world.boxes) { const dx = Math.max(b.minX - g.position.x, 0, g.position.x - b.maxX), dz = Math.max(b.minZ - g.position.z, 0, g.position.z - b.maxZ); w = Math.max(w, R - Math.hypot(dx, dz)); } for (const c of world.cylinders) if (!c.noSight) w = Math.max(w, c.r + R - Math.hypot(g.position.x - c.x, g.position.z - c.z)); return w; };
+      const wrap = x => Math.atan2(Math.sin(x), Math.cos(x));
+      motor.teleport(area.spawn.x, area.spawn.z, area.spawn.yaw); g.reset();
+      const order = [], obs = [], prevQ = {}, lastA = {}; let lastKey = '', cur = null, worst = 0, maxSp = 0, maxStep = 0, maxYaw = 0, pops = 0, meter = 0, sensed = 0, states = new Set();
+      let lp = g.position.clone(), ly = g.yaw, passMin = Infinity, nearObsSpeed = [], cruise = [], slips = [], legSwing = { min: 9, max: -9 }, hipOff = 0;
+      const foot = {}; for (const s of ['left', 'right']) foot[s] = { prev: null };
+      for (let f = 0; f < 112 * 60; f++) {
+        step(0, 'stand'); noise.update(dt); g.update(dt, T);
+        const key = p.state + p.index;
+        if (p.state === 'walking' && order[order.length - 1] !== p.index) order.push(p.index);
+        if (key !== lastKey) { if (cur) { cur.t = a.clock - cur.start; obs.push(cur); cur = null; } if (p.state === 'observing') cur = { i: p.index, start: a.clock, yawMin: 9, yawMax: -9, base: (pts[p.index].face || 0) * Math.PI / 180 }; lastKey = key; }
+        if (cur && g.isStill()) { const y = wrap(g.yaw - cur.base); cur.yawMin = Math.min(cur.yawMin, y); cur.yawMax = Math.max(cur.yawMax, y); }
+        worst = Math.max(worst, intrusion()); const sp = Math.abs(g.motor.speed); maxSp = Math.max(maxSp, sp);
+        maxStep = Math.max(maxStep, g.position.distanceTo(lp)); maxYaw = Math.max(maxYaw, Math.abs(wrap(g.yaw - ly))); lp.copy(g.position); ly = g.yaw;
+        meter = Math.max(meter, g.vision.meter); if (a.seen || a.heard || a.focus) sensed++; states.add(a.state);
+        const w3 = pts[3]; const d3 = Math.hypot(g.position.x - w3.x, g.position.z - w3.z); if (d3 < 1.5) passMin = Math.min(passMin, sp);
+        for (const i of [1, 2]) { const q = pts[i], d = Math.hypot(g.position.x - q.x, g.position.z - q.z); if (p.state === 'walking' && p.index === i && d < 1.2 && d > 0.6) nearObsSpeed.push(sp); }
+        if (p.state === 'walking' && sp > 0.9) {
+          cruise.push(sp);
+          // planted feet: the lower foot's ground speed while it's on the ground
+          for (const s of ['left', 'right']) { const v = B[s + 'Foot'].getWorldPosition(new THREE.Vector3()); const F = foot[s]; if (F.prev && v.y < 0.13) slips.push(Math.hypot(v.x - F.prev.x, v.z - F.prev.z) / dt); F.prev = v; }
+          // thigh pitch (hip → knee, in his own frame): the legs really swing
+          const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert(), th = B.leftLeg.getWorldPosition(new THREE.Vector3()).sub(B.leftUpLeg.getWorldPosition(new THREE.Vector3())).applyQuaternion(ri), pitch = Math.atan2(th.z, -th.y); legSwing.min = Math.min(legSwing.min, pitch); legSwing.max = Math.max(legSwing.max, pitch);
+          const l = B.leftUpLeg.getWorldPosition(new THREE.Vector3()), rr = B.rightUpLeg.getWorldPosition(new THREE.Vector3()), side = l.sub(rr), hf = Math.atan2(-side.z, side.x); hipOff = Math.max(hipOff, Math.min(Math.abs(wrap(hf - g.yaw)), Math.abs(wrap(hf + Math.PI - g.yaw))) * 57.3);
+        } else for (const s of ['left', 'right']) foot[s].prev = null;
+        const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert();
+        for (const nm of ['spine1', 'chest', 'neck', 'head', 'leftArm', 'rightArm', 'leftUpLeg', 'rightUpLeg', 'leftLeg', 'rightLeg']) { const q = ri.clone().multiply(B[nm].getWorldQuaternion(new THREE.Quaternion())); if (prevQ[nm]) { const ang = 2 * Math.acos(Math.min(1, Math.abs(q.dot(prevQ[nm])))) * 57.3, leg = nm.endsWith('Leg'); if (leg ? (ang > 12 && ang > 2 * (lastA[nm] || 0)) : ang > 9) pops++; lastA[nm] = ang; } prevQ[nm] = q; }
+      }
+      slips.sort((x, y) => x - y);
+      const mean = v => v.length ? v.reduce((x, y) => x + y, 0) / v.length : 0;
+      return { order: order.join(''), obs: obs.map(o => ({ i: o.i, t: o.t, span: (o.yawMax - o.yawMin) * 57.3 })), pause: pts.map(q => q.pause || null), worst, maxSp, maxStep, maxYaw: maxYaw / dt, turnRate: g.cfg.turn.maxRate, pops, meter, sensed, states: [...states],
+        passMin, nearObs: mean(nearObsSpeed), cruise: mean(cruise), slipMed: slips[Math.floor(slips.length / 2)] || 0, slipP90: slips[Math.floor(slips.length * 0.9)] || 0, legSwing: (legSwing.max - legSwing.min) * 57.3, hipOff, laps: p.legs };
+    });
+    // observation pauses: each at least its minimum, never far past its maximum (turning time on top)
+    const obsOk = r.obs.filter(o => r.pause[o.i]).every(o => o.t >= r.pause[o.i][0] - 0.05 && o.t <= r.pause[o.i][1] + 4.5 && o.span >= 40);
+    const byPoint = i => r.obs.filter(o => o.i === i).map(o => o.t.toFixed(2));
+    const varied = [0, 1, 2].some(i => new Set(byPoint(i)).size > 1);
+    const ok = r.order.startsWith('1230123') && obsOk && r.obs.length >= 6 && varied && r.passMin > 0.6 && r.nearObs < r.cruise * 0.9
+      && r.maxSp <= 1.3 && r.worst < 0.02 && r.maxStep < 0.03 && r.maxYaw <= r.turnRate + 0.05 && r.pops === 0 && r.legSwing > 20 && r.legSwing < 120 && r.slipMed <= 0.4 && r.hipOff < 30
+      && r.meter === 0 && r.sensed === 0 && r.states.length === 1 && r.states[0] === 'NORMAL';
+    return { pass: ok, detail: `legs walked in order ${r.order}; ${r.obs.length} observation stops (${r.obs.map(o => 'W' + o.i + ' ' + o.t.toFixed(1) + ' s/' + o.span.toFixed(0) + '°').join(', ')}), varying lap to lap ${varied}; through the pass-through point at ≥ ${r.passMin.toFixed(2)} m/s; ${r.nearObs.toFixed(2)} m/s near an observation point vs ${r.cruise.toFixed(2)} cruising (max ${r.maxSp.toFixed(2)}); obstacle overlap ${(Math.max(0, r.worst) * 100).toFixed(1)} cm; per-frame move ≤ ${(r.maxStep * 100).toFixed(1)} cm, turn ≤ ${r.maxYaw.toFixed(2)} rad/s; joint pops ${r.pops}; thigh swing ${r.legSwing.toFixed(0)}°, planted-foot speed median ${r.slipMed.toFixed(2)} m/s (90th pct ${r.slipP90.toFixed(2)}); hips ≤ ${r.hipOff.toFixed(0)}° from his vision facing; player at the spawn: meter peak ${r.meter}, sensed ${r.sensed} frames, states ${r.states.join('/')}` };
+  },
+
+  // Step 9, 5, 6, 10, 11, 12: footsteps behind him as he walks his route. The patrol gives
+  // way (he stops), the 0.8 s pause and one "huh" for six steps, he investigates his estimate
+  // of the sound (never where she really is). Walking back to his route (the waypoint he was
+  // heading for), a new sound interrupts that walk; after that one he returns, stands down
+  // and carries on his route from that waypoint (no teleport, never restarting at W0)
+  async patrolSound() {
+    const page = await patrolPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, p = g.patrol, T = MV.seeTarget, dt = 1 / 60;
+      let maxStep = 0, lp = g.position.clone();
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); maxStep = Math.max(maxStep, g.position.distanceTo(lp)); lp.copy(g.position); } };
+      motor.teleport(-17, 15, 0);                                    // she's hidden far away throughout
+      let t = 0; while (!(p.state === 'walking' && p.index === 1 && Math.hypot(g.position.x - 2, g.position.z + 16) > 4) && t < 30) { sim(1); t += dt; }
+      const at = g.position.clone(), behind = at.clone().addScaledVector(g.forward(), -3);
+      for (let k = 0; k < 6; k++) { noise.emit(2, 'footstep', behind.clone().add(new THREE.Vector3(0.15 * k, 0, 0)), 'concrete', 'player'); sim(20); }
+      const out = { interrupted: p.state === 'interrupted', resumeAt: p.resumeIndex, why: p.why, reactions: a.reactions };
+      let f = 0; while (a.state !== 'INVESTIGATING' && f < 600) { sim(1); f++; }
+      out.inv = a.state; out.focusErr = a.focus ? a.focus.position.distanceTo(behind) : 99; out.focusToHer = a.focus ? a.focus.position.distanceTo(motor.position) : 0;
+      // the walk back to his route
+      f = 0; while (!(a.state === 'INVESTIGATING' && a.behavior === 'return' && g.moving) && f < 60 * 60) { sim(1); f++; }
+      out.returning = a.behavior === 'return'; out.returnTo = g.goal ? Math.hypot(g.goal.x - p.cfg.points[1].x, g.goal.z - p.cfg.points[1].z) : 99;
+      sim(60);
+      const S = g.position.clone().add(new THREE.Vector3(4, 0, 2)); noise.emit(3, 'footstep', S, 'metal', 'player'); sim(2);
+      f = 0; while (a.behavior !== 'approach' && f < 120) { sim(1); f++; }
+      out.reInterrupt = a.behavior === 'approach'; out.reFocus = a.focus ? a.focus.position.distanceTo(S) : 99; out.reactions2 = a.reactions;
+      // eventually: back on the route, carrying on from W1 → W2
+      const seq = []; f = 0;
+      while (!(p.state === 'walking' && p.index === 2) && f < 120 * 60) { sim(1); f++; const k = a.state + '/' + p.state; if (seq[seq.length - 1] !== k) seq.push(k); }
+      out.seq = seq.join(' → '); out.resumed = p.state === 'walking' && p.index === 2; out.resumes = p.resumes; out.maxStep = maxStep; out.sawHer = !!a.seen;
+      return out;
+    });
+    const ok = r.interrupted && r.resumeAt === 1 && r.reactions === 1 && r.inv === 'INVESTIGATING' && r.focusErr < 0.5 && r.focusToHer > 10
+      && r.returning && r.returnTo < 0.01 && r.reInterrupt && r.reFocus < 0.01 && r.reactions2 === 1 && r.resumed && r.resumes >= 1 && r.maxStep < 0.03 && !r.sawHer;
+    return { pass: ok, detail: `6 footsteps behind him on the W0→W1 leg: patrol interrupted ${r.interrupted} ("${r.why}", resumes at W${r.resumeAt}), "huh" ×${r.reactions}; ${r.inv} toward ${r.focusErr.toFixed(2)} m from the sound (${r.focusToHer.toFixed(0)} m from her); walking back to his route: ${r.returning} (to W1: ${r.returnTo.toFixed(2)} m); a metal step then interrupted that walk: ${r.reInterrupt} (target ${r.reFocus.toFixed(2)} m from it), "huh" still ×${r.reactions2}; then ${r.seq}; resumed his route W1 → W2 ${r.resumed}; largest per-frame move ${(r.maxStep * 100).toFixed(1)} cm; ever saw her ${r.sawHer}` };
+  },
+
+  // Step 9, 7, 8, 9, 10: sight while he patrols. A peripheral glimpse: the patrol gives way,
+  // one "huh", and his vision meter never drops through his stop and turn. Then plain view:
+  // ALERT on the frame the meter fills, he stops walking. She hides: EVASION (30 s),
+  // HEIGHTENED SECURITY (60 s), the walk back to his post and stand-down, then he rejoins
+  // his route by nav at the waypoint he was heading for and walks on
+  async patrolSight() {
+    const page = await patrolPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, p = g.patrol, v = g.vision, T = MV.seeTarget, dt = 1 / 60;
+      let maxStep = 0, lp = g.position.clone();
+      const sim = (n, m, x, z) => { for (let i = 0; i < n; i++) { step(m || 0, 'stand', x, z); noise.update(dt); g.update(dt, T); maxStep = Math.max(maxStep, g.position.distanceTo(lp)); lp.copy(g.position); } };
+      motor.teleport(-17, 15, 0);
+      let t = 0; while (!(p.state === 'walking' && p.index === 1 && Math.hypot(g.position.x - 2, g.position.z + 16) > 4) && t < 30) { sim(1); t += dt; }
+      // she sneaks alongside him, 9 m away and 45° to his left (his slower peripheral zone)
+      const off = g.yaw - Math.PI / 4, hx = Math.sin(g.yaw), hz = Math.cos(g.yaw);
+      motor.teleport(g.position.x + Math.sin(off) * 9, g.position.z + Math.cos(off) * 9, g.yaw);
+      let drops = 0, last = 0, f = 0, interruptedF = null, stillF = null, zone0 = null;
+      while (f < 240 && !(a.reactions === 1 && g.isStill() && f > 100)) { sim(1, p.state === 'interrupted' ? 0 : 0.22, hx, hz); f++; if (zone0 == null && v.seen.rate > 0) zone0 = v.seen.zone; if (v.seen.rate > 0 && v.meter < last - 1e-9) drops++; last = v.meter; if (interruptedF == null && p.state === 'interrupted') interruptedF = f; if (stillF == null && interruptedF != null && g.isStill()) stillF = f; }
+      const glimpse = { zone0, interrupted: p.state === 'interrupted', why: p.why, reactions: a.reactions, drops, meter: v.meter, state: a.state, stopped: stillF != null };
+      // plain view close in front of him
+      const fw = g.forward(), q = g.position.clone().addScaledVector(fw, 3); motor.teleport(q.x, q.z, g.yaw + Math.PI);
+      let fullF = null, alertF = null; f = 0;
+      while (alertF == null && f < 300) { sim(1); f++; if (fullF == null && v.meter >= 1) fullF = f; if (a.state === 'ALERT') alertF = f; }
+      sim(30); const alert = { fullF, alertF, moving: g.moving, patrol: p.state, why: p.why };
+      // she hides: the whole cycle, then back on his route
+      motor.teleport(-17, 15, 0);
+      const seq = [a.state], times = {}; t = 0; let rejoinStart = null;
+      while (t < 200 && !(p.state === 'walking' && p.resumes >= 1 && !p.rejoining && p.legs > 2)) {
+        sim(1); t += dt; if (seq[seq.length - 1] !== a.state) { seq.push(a.state); times[a.state] = a.clock; }
+        if (rejoinStart == null && p.rejoining) rejoinStart = { at: g.position.clone(), to: p.index };
+      }
+      return { glimpse, alert, seq: seq.join(' → '), ev: (times.HEIGHTENED || 0) - (times.EVASION || 0), hs: (times.RETURNING || 0) - (times.HEIGHTENED || 0), standDowns: a.standDowns,
+        rejoin: rejoinStart ? { from: Math.hypot(rejoinStart.at.x - g.post.x, rejoinStart.at.z - g.post.z), to: rejoinStart.to } : null, now: p.index, state: p.state, maxStep };
+    });
+    const G = r.glimpse, A = r.alert;
+    const ok = G.zone0 === 'slower' && G.interrupted && G.reactions === 1 && G.drops === 0 && G.meter > 0 && G.meter < 1 && G.state !== 'ALERT' && G.stopped
+      && A.fullF != null && A.alertF === A.fullF && !A.moving && A.patrol === 'interrupted'
+      && /^ALERT → EVASION → HEIGHTENED → RETURNING → NORMAL$/.test(r.seq) && Math.abs(r.ev - 30) < 1 && Math.abs(r.hs - 60) < 0.5 && r.standDowns === 1
+      && r.rejoin && r.rejoin.from < 0.6 && r.rejoin.to === 1 && r.state === 'walking' && r.maxStep < 0.06;
+    return { pass: ok, detail: `peripheral glimpse (his ${G.zone0} zone) while walking: patrol interrupted ${G.interrupted} ("${G.why}"), he stopped ${G.stopped}, "huh" ×${G.reactions}, meter drops ${G.drops} (now ${(G.meter * 100).toFixed(0)}%, ${G.state}); plain view: meter full on frame ${A.fullF}, ALERT on ${A.alertF}, still walking ${A.moving}, patrol ${A.patrol}; she hid: ${r.seq} (search ${r.ev.toFixed(1)} s, Heightened Security ${r.hs.toFixed(1)} s, stand-downs ${r.standDowns}); rejoined his route from ${r.rejoin ? r.rejoin.from.toFixed(2) + ' m from his post toward W' + r.rejoin.to : 'never'}, now ${r.state} to W${r.now}; largest per-frame move ${(r.maxStep * 100).toFixed(1)} cm` };
+  },
+
+  // Step 9, 13, 14, 15 on an iPhone-landscape screen (real touches, frame loop running):
+  // she starts at the spawn unseen while he patrols; she's moved 3 m behind him and
+  // jogs with the stick: he hears, the patrol gives way, one "huh". RESET (tapped): she's
+  // at the spawn, he's at his post facing it, NORMAL, memory clear, and his patrol is back
+  // at its clean start (observing W0, nothing walked); then he sets off on the route again
+  async patrolTouch() {
+    const page = await patrolPage(true), Tc = page.touch;
+    await page.evaluate(() => { MV.motor.teleport(MV.area.spawn.x, MV.area.spawn.z, MV.area.spawn.yaw); MV.cam.snap(MV.motor); MV.guard.reset(); window.__pm = 0; (function f() { window.__pm = Math.max(window.__pm, MV.guard.vision.meter); if (!window.__stopPm) requestAnimationFrame(f); })(); });
+    await page.waitForFunction(() => MV.guard.patrol.state === 'walking' && MV.guard.patrol.index === 1 && Math.hypot(MV.guard.position.x - 2, MV.guard.position.z + 16) > 3, null, { timeout: 60000 }).catch(() => {});
+    const spawnMeter = await page.evaluate(() => { window.__stopPm = true; return window.__pm; });
+    await page.evaluate(() => { const g = MV.guard, b = g.position.clone().addScaledVector(g.forward(), -3); MV.motor.teleport(b.x, b.z, g.yaw + Math.PI); MV.cam.snap(MV.motor); });
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 236, id: 1 }]); await page.waitForTimeout(900); await Tc('touchEnd', []);
+    await page.waitForFunction(() => MV.guard.awareness.reactions >= 1, null, { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(800);
+    const before = await page.evaluate(() => ({ patrol: MV.guard.patrol.state, reactions: MV.guard.awareness.reactions, state: MV.guard.awareness.state, heard: MV.guard.hearing.heardCount }));
+    await page.tap('#mv-reset'); await page.waitForTimeout(150);
+    const snap = () => page.evaluate(() => { const g = MV.guard, a = g.awareness, p = g.patrol, S = MV.area.spawn, wrap = x => Math.atan2(Math.sin(x), Math.cos(x));
+      return { her: Math.hypot(MV.motor.position.x - S.x, MV.motor.position.z - S.z), post: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), yaw: Math.abs(wrap(g.yaw - g.postYaw)) * 57.3, state: a.state, left: [a.evasion, a.hs, a.search, a.focus, a.seen, a.heard, a.incident].filter(x => x != null).length, susp: a.suspicion,
+        patrol: p.state, index: p.index, legs: p.legs, interrupts: p.interrupts, resumes: p.resumes, meter: g.vision.meter }; });
+    const A = await snap();
+    await page.waitForFunction(() => MV.guard.patrol.state === 'walking' && MV.guard.patrol.index === 1, null, { timeout: 30000 }).catch(() => {});
+    const B = await snap();
+    const ok = spawnMeter === 0 && before.patrol === 'interrupted' && before.reactions === 1 && A.her < 0.01 && A.post < 0.01 && A.yaw < 0.5 && A.state === 'NORMAL' && A.left === 0 && A.susp === 0
+      && A.patrol === 'observing' && A.index === 0 && A.legs === 0 && A.interrupts === 0 && A.meter === 0 && B.patrol === 'walking' && B.index === 1 && B.meter === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `she waited at the spawn while he set off: meter peak ${spawnMeter}; jogging 3 m behind him (real touches): patrol ${before.patrol}, "huh" ×${before.reactions}, ${before.state}; after RESET: her ${A.her.toFixed(2)} m from the spawn, him ${A.post.toFixed(2)} m / ${A.yaw.toFixed(1)}° from his post, ${A.state}, leftover memory ${A.left}, patrol ${A.patrol} at W${A.index} (legs ${A.legs}, interrupts ${A.interrupts}); then he set off: ${B.patrol} to W${B.index}, meter ${B.meter}; page errors ${page.errors.length}` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
