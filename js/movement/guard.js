@@ -111,7 +111,8 @@
   mv.Guard.prototype.reset = function () {
     this.motor.teleport(this.post.x, this.post.z, this.postYaw);
     this.wantYaw = this.postYaw; this.path = null; this.moving = false; this.arrived = false; this.navFailed = null;
-    this.vision.meter = 0; this.vision.sinceSeen = Infinity;
+    this.vision.meter = 0; this.vision.sinceSeen = Infinity; this.vision.acc = Infinity;
+    if (this.hearing) { this.hearing.last = null; this.hearing.heard = null; }
     if (this.awareness) this.awareness.reset();
     this.place();
   };

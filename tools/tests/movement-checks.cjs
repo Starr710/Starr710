@@ -796,7 +796,7 @@ const CHECKS = {
 
   // 10, 11, 14: with no further evidence he searches several different places (no
   // pacing between two), never through obstacles, and after 30 s settles naturally into
-  // HEIGHTENED PENDING; the duration is configurable and the search order varies by seed
+  // HEIGHTENED SECURITY (Step 7: it opens with a standing look-around); the duration is configurable and the search order varies by seed
   async evasionSearch() {
     const page = await simPage();
     const r = await page.evaluate(() => {
@@ -812,22 +812,24 @@ const CHECKS = {
         while (a.state !== 'EVASION') sim(1);
         // the whole planned search (the first two spots are fixed: last seen, then her heading)
         const planned = [a.evasion.dest].concat(a.evasion.plan).filter(Boolean).map(s => s.p.x.toFixed(1) + ',' + s.p.z.toFixed(1)).join(' ');
-        const t0 = a.clock, dests = [], order = []; let worst = 0, hp = null;
+        const t0 = a.clock, dests = [], order = []; let worst = 0, hp = null, settle = null;
         for (let f = 0; f < (evasionTime + 6) * 60; f++) {
           sim(1); worst = Math.max(worst, intrusion());
           const d = a.evasion && a.evasion.dest; if (d && (!dests.length || dests[dests.length - 1].distanceTo(d.p) > 0.01)) { dests.push(d.p.clone()); order.push(d.why); }
-          if (hp == null && a.state === 'HEIGHTENED_PENDING') hp = a.clock - t0;
+          if (hp == null && a.state === 'HEIGHTENED') hp = a.clock - t0;
+          // Heightened Security opens with a pause to look around: standing, in idle
+          if (hp != null && settle == null && a.clock - t0 >= hp + 1) settle = { still: g.isStill(), idle: g.animator.weights.idle, state: a.state };
         }
         let tooClose = 0; for (let i = 0; i < dests.length; i++) for (let j = i + 1; j < dests.length; j++) if (dests[i].distanceTo(dests[j]) < a.cfg.spotSpacing - 0.01) tooClose++;
-        return { spots: dests.length, tooClose, worst, hp, still: g.isStill(), idle: g.animator.weights.idle, state: a.state, order: planned };
+        return { spots: dests.length, tooClose, worst, hp, still: settle ? settle.still : false, idle: settle ? settle.idle : 0, state: settle ? settle.state : a.state, order: planned };
       };
       const A = run(1337, 30), B = run(4242, 30), C = run(1337, 10);
       return { A, B, C };
     });
     const A = r.A;
-    const ok = A.spots >= 3 && A.tooClose === 0 && A.worst < 0.02 && A.hp != null && Math.abs(A.hp - 30) < 0.5 && A.still && A.idle > 0.9 && A.state === 'HEIGHTENED_PENDING'
+    const ok = A.spots >= 3 && A.tooClose === 0 && A.worst < 0.02 && A.hp != null && Math.abs(A.hp - 30) < 0.5 && A.still && A.idle > 0.9 && A.state === 'HEIGHTENED'
       && r.C.hp != null && Math.abs(r.C.hp - 10) < 0.5 && r.B.order !== A.order;
-    return { pass: ok, detail: `30 s search: ${A.spots} different spots (pairs closer than the spacing: ${A.tooClose}), deepest obstacle overlap ${(Math.max(0, A.worst) * 100).toFixed(1)} cm, HEIGHTENED PENDING after ${A.hp == null ? 'never' : A.hp.toFixed(1) + ' s'}, then standing still ${A.still} with idle weight ${A.idle.toFixed(2)}; a 10 s setting ended at ${r.C.hp == null ? 'never' : r.C.hp.toFixed(1) + ' s'}; another seed planned a different search order: ${r.B.order !== A.order}` };
+    return { pass: ok, detail: `30 s search: ${A.spots} different spots (pairs closer than the spacing: ${A.tooClose}), deepest obstacle overlap ${(Math.max(0, A.worst) * 100).toFixed(1)} cm, HEIGHTENED SECURITY after ${A.hp == null ? 'never' : A.hp.toFixed(1) + ' s'}, 1 s later standing still ${A.still} with idle weight ${A.idle.toFixed(2)}; a 10 s setting ended at ${r.C.hp == null ? 'never' : r.C.hp.toFixed(1) + ' s'}; another seed planned a different search order: ${r.B.order !== A.order}` };
   },
 
   // 12, 13: seeing her again during the search returns him to ALERT; losing her again
@@ -853,6 +855,133 @@ const CHECKS = {
     });
     const ok = r.reacquired && r.t2 < 3 && /again/.test(r.reason) && r.evasions === 2 && Math.abs(r.fresh - r.total) < 0.2;
     return { pass: ok, detail: `8 s into the search (${r.firstLeft.toFixed(0)} s left) she stepped into view: ${r.reacquired ? 'ALERT again after ' + r.t2.toFixed(2) + ' s ("' + r.reason + '")' : 'not re-alerted'}; she vanished again: search #${r.evasions} with ${r.fresh.toFixed(1)} s on the clock (fresh ${r.total} s)` };
+  },
+
+  // Step 7, 1–9, 13, 14: the whole cycle with her hidden far away. EVASION runs out into
+  // HEIGHTENED SECURITY (~60 s of slower, watchful checks near his post), then he walks back
+  // by path, stops, turns smoothly to his post facing and stands down to NORMAL. No
+  // teleports, no obstacle overlap, never NORMAL while seeing her; hearing and vision still work
+  async hsCycle() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, world } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, R = g.cfg.radius;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      const intrusion = () => { let w = 0; for (const b of world.boxes) { const dx = Math.max(b.minX - g.position.x, 0, g.position.x - b.maxX), dz = Math.max(b.minZ - g.position.z, 0, g.position.z - b.maxZ); w = Math.max(w, R - Math.hypot(dx, dz)); } for (const c of world.cylinders) if (!c.noSight) w = Math.max(w, c.r + R - Math.hypot(g.position.x - c.x, g.position.z - c.z)); return w; };
+      const wrap = x => Math.atan2(Math.sin(x), Math.cos(x));
+      g.reset(); a.reset();
+      motor.teleport(-2.4, -10.5, Math.PI); let t = 0; while (a.state !== 'ALERT' && t < 15) { sim(1); t += dt; }
+      for (let f = 0; f < 30; f++) { motor.position.z += 0.05; sim(1); }
+      motor.teleport(-17, 15, 0);                                 // hidden far away for the whole stand-down
+      while (a.state !== 'EVASION') sim(1);
+      const seq = ['EVASION'], times = { EVASION: a.clock }, speeds = { EVASION: [], HEIGHTENED: [], RETURNING: [] };
+      let worst = 0, maxStep = 0, maxYawStep = 0, maxLeash = 0, seenEver = false, normalWhileSeen = 0, hsDests = 0, hsPauses = 0, lastDest = null, lastLook = null, maxAv = 0, lastPos = g.position.clone(), lastYaw = g.yaw;
+      let behaviours = new Set();
+      for (let f = 0; f < 160 * 60 && a.state !== 'NORMAL'; f++) {
+        sim(1);
+        const s = a.state; if (seq[seq.length - 1] !== s) { seq.push(s); times[s] = a.clock; }
+        worst = Math.max(worst, intrusion());
+        maxStep = Math.max(maxStep, g.position.distanceTo(lastPos)); maxYawStep = Math.max(maxYawStep, Math.abs(wrap(g.yaw - lastYaw))); lastPos.copy(g.position); lastYaw = g.yaw;
+        if (g.vision.seen.rate > 0) seenEver = true;
+        if (s === 'NORMAL' && g.vision.seen.rate > 0) normalWhileSeen++;
+        if (speeds[s] && g.moving && Math.abs(g.motor.speed) > 0.3) speeds[s].push(Math.abs(g.motor.speed));
+        if (s === 'HEIGHTENED' && a.hs) {
+          if (a.hs.dest && a.hs.dest !== lastDest) { hsDests++; lastDest = a.hs.dest; maxLeash = Math.max(maxLeash, Math.hypot(a.hs.dest.p.x - g.post.x, a.hs.dest.p.z - g.post.z)); }
+          if (a.hs.look && a.hs.look !== lastLook) { hsPauses++; lastLook = a.hs.look; }
+          behaviours.add(a.behavior);
+        }
+        if (s === 'RETURNING' && g.atPost() && !g.moving) maxAv = Math.max(maxAv, Math.abs(g.motor.angularVelocity));
+      }
+      const end = { state: a.state, post: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), facing: Math.abs(wrap(g.yaw - g.postYaw)) * 57.2958, stoodDown: a.standDowns, note: a.note, confirmed: a.confirmed };
+      sim(5 * 60);                                                // he stays put and idle
+      const after = { state: a.state, post: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), still: g.isStill(), idle: g.animator.weights.idle };
+      // senses intact: a jog step 4 m behind him is heard; then she stands 6 m in front, seen
+      const behind = g.position.clone().addScaledVector(g.forward(), -4);
+      const heard0 = g.hearing.heardCount || 0; noise.emit(3, 'footstep', behind, 'concrete', 'player'); sim(2);
+      const heard = g.hearing.heardCount > heard0 && g.hearing.heard.position.distanceTo(behind) < 0.01;
+      const front = g.position.clone().addScaledVector(g.forward(), 6); motor.teleport(front.x, front.z, g.yaw + Math.PI); sim(30);
+      const seen = g.vision.seen.rate > 0 && g.vision.meter > 0;
+      const mean = v => v.length ? v.reduce((x, y) => x + y, 0) / v.length : 0;
+      return { seq: seq.join(' → '), hsLen: (times.RETURNING || 0) - (times.HEIGHTENED || 0), evLen: (times.HEIGHTENED || 0) - times.EVASION, hsDests, hsPauses, behaviours: [...behaviours],
+        evSpeed: mean(speeds.EVASION), hsSpeed: mean(speeds.HEIGHTENED), retSpeed: mean(speeds.RETURNING), maxLeash, leash: a.cfg.heightenedLeash, worst, maxStep, maxYawStep, seenEver, normalWhileSeen, maxAv, end, after, heard, seen, hsTime: a.cfg.heightenedTime };
+    });
+    const e = r.end, A = r.after;
+    const ok = r.seq === 'EVASION → HEIGHTENED → RETURNING → NORMAL' && Math.abs(r.hsLen - r.hsTime) < 0.5 && r.hsDests >= 2 && r.hsPauses >= 3
+      && r.hsSpeed > 0 && r.hsSpeed < r.evSpeed * 0.8 && r.maxLeash <= r.leash + 1e-6 && r.worst < 0.02 && r.maxStep < 0.06 && r.maxYawStep < 0.08
+      && !r.seenEver && r.normalWhileSeen === 0 && e.state === 'NORMAL' && e.post <= 0.4 && e.facing <= 4 && e.stoodDown === 1 && !e.confirmed && r.maxAv <= 3.05
+      && A.state === 'NORMAL' && A.post <= 0.4 && A.still && A.idle > 0.9 && r.heard && r.seen;
+    return { pass: ok, detail: `${r.seq}; search ${r.evLen.toFixed(1)} s, Heightened Security ${r.hsLen.toFixed(1)} s (setting ${r.hsTime}): ${r.hsDests} checkpoint walks, ${r.hsPauses} look-around pauses, walking ${r.hsSpeed.toFixed(2)} m/s vs search ${r.evSpeed.toFixed(2)} m/s, checkpoints at most ${r.maxLeash.toFixed(1)} m from his post (leash ${r.leash}); return walk ${r.retSpeed.toFixed(2)} m/s; stood down ${e.post.toFixed(2)} m from his post facing ${e.facing.toFixed(1)}° off (turn ≤ ${r.maxAv.toFixed(2)} rad/s), "${e.note}"; 5 s later ${A.state}, still ${A.still}, idle ${A.idle.toFixed(2)}; largest per-frame move ${(r.maxStep * 100).toFixed(1)} cm / turn ${(r.maxYawStep * 57.3).toFixed(1)}°, obstacle overlap ${(Math.max(0, r.worst) * 100).toFixed(1)} cm, ever saw her ${r.seenEver}; afterwards a sound is heard ${r.heard}, she's seen ${r.seen}` };
+  },
+
+  // Step 7, 10–12: interruptions. A sighting during Heightened Security → ALERT, then a fresh
+  // EVASION; a sighting during the walk back does the same. A meaningful sound sends him to
+  // check it and extends his caution (spaced, capped); weak sounds never extend it; a
+  // meaningful sound during the return interrupts it, and he still returns afterwards
+  async hsInterrupt() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); } };
+      const simUntil = (pred, max) => { let t = 0; while (!pred() && t < max) { sim(1); t += dt; } return t; };
+      // time from her meter reaching the re-alert level to ALERT
+      const sightLag = max => { let t = 0, at = null; while (a.state !== 'ALERT' && t < max) { sim(1); t += dt; if (at == null && g.vision.meter >= a.cfg.reacquireMeter) at = t; } return at == null ? 99 : t - at; };
+      const toHS = () => {
+        g.reset(); a.reset(); a.cfg.evasionTime = 5;
+        motor.teleport(2, -10, Math.PI); simUntil(() => a.state === 'ALERT', 15);
+        motor.teleport(-17, 15, 0); simUntil(() => a.state === 'HEIGHTENED', 30);
+      };
+      const out = {};
+      // a sighting during Heightened Security
+      toHS(); sim(6 * 60);
+      let fw = g.forward(), p = g.position.clone().addScaledVector(fw, 5);
+      motor.teleport(p.x, p.z, g.yaw + Math.PI); out.hsSightT = sightLag(8); out.hsSight = a.state; out.hsSightNote = a.note; out.hsInterrupted = a.interrupted;
+      sim(30); motor.teleport(-17, 15, 0); simUntil(() => a.state === 'EVASION', 5);
+      out.hsFresh = a.state === 'EVASION' ? a.evasion.end - a.clock : 0; out.hsGone = a.hs === null;
+      // a sighting during the walk back
+      toHS(); a.hs.end = a.clock; simUntil(() => a.state === 'RETURNING', 2); sim(60);
+      fw = g.forward(); p = g.position.clone().addScaledVector(fw, 5);
+      motor.teleport(p.x, p.z, g.yaw + Math.PI); out.retSightT = sightLag(8); out.retSight = a.state;
+      sim(30); motor.teleport(-17, 15, 0); simUntil(() => a.state === 'EVASION', 5); out.retFresh = a.state === 'EVASION';
+      // weak sounds for 40 s (faint sneak steps on grass near him): no extension at all
+      toHS(); let end0 = a.hs.end, maxEnd = end0;
+      for (let k = 0; k < 40; k++) { noise.emit(1, 'footstep', g.position.clone().add(new THREE.Vector3(2.5, 0, 0)), 'grass', 'player'); sim(60); if (a.hs) maxEnd = Math.max(maxEnd, a.hs.end); else break; }
+      out.weakExtended = maxEnd - end0; out.weakState = a.state;
+      // one meaningful sound: he heads for it (his estimate, not the exact spot) and it extends a little
+      toHS(); sim(3 * 60); end0 = a.hs.end;
+      const P = new THREE.Vector3(9, 0, -12);
+      noise.emit(3, 'footstep', P, 'metal', 'player'); sim(2);
+      out.meanDest = a.hs && a.hs.dest ? a.hs.dest.p.distanceTo(a.heard.estimate) : 99; out.meanExact = a.hs && a.hs.dest ? a.hs.dest.p.distanceTo(P) : 0;
+      out.meanExt = a.hs ? a.hs.end - end0 : 0; out.meanNote = a.note; out.meanReason = a.hs ? a.hs.reason : '';
+      // a stream of meaningful sounds for 120 s: extensions spaced ≥ the gap and capped at the max
+      toHS(); const start = a.hs.start, exts = []; let lastEnd = a.hs.end, maxLen = 0;
+      for (let k = 0; k < 240 && a.state === 'HEIGHTENED'; k++) {
+        const q = new THREE.Vector3(k % 2 ? 9 : -6, 0, k % 2 ? -12 : -9);
+        noise.emit(3, 'footstep', q, 'metal', 'player');
+        for (let f = 0; f < 30; f++) { sim(1); if (a.hs) { if (a.hs.end > lastEnd + 1e-6) exts.push(a.clock); lastEnd = a.hs.end; maxLen = Math.max(maxLen, a.hs.end - start); } }
+      }
+      let minGap = Infinity; for (let i = 1; i < exts.length; i++) minGap = Math.min(minGap, exts[i] - exts[i - 1]);
+      out.exts = exts.length; out.minGap = minGap; out.maxLen = maxLen; out.streamEndState = a.state; out.cap = a.cfg.heightenedMax; out.gapCfg = a.cfg.heightenedExtendGap;
+      // a meaningful sound during the walk back interrupts it; he checks it, then returns and stands down
+      toHS(); a.hs.end = a.clock; simUntil(() => a.state === 'RETURNING', 2); sim(90);
+      noise.emit(3, 'footstep', new THREE.Vector3(9, 0, -12), 'metal', 'player'); sim(2);
+      out.retInt = a.state; out.retIntNote = a.interrupted; out.retIntReason = a.hs ? a.hs.reason : '';
+      const seq = [a.state]; let t = 0;
+      while (a.state !== 'NORMAL' && t < 90) { sim(1); t += dt; if (seq[seq.length - 1] !== a.state) seq.push(a.state); }
+      out.retSeq = seq.join(' → '); out.retPost = Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z);
+      // she stays in plain view (not hidden) for 100 s: never NORMAL
+      g.reset(); a.reset(); a.cfg.evasionTime = 30;
+      motor.teleport(2, -10, Math.PI); let normal = 0;
+      for (let f = 0; f < 100 * 60; f++) { sim(1); if (f > 600 && a.state === 'NORMAL') normal++; }
+      out.visibleNormal = normal; out.visibleState = a.state;
+      return out;
+    });
+    const ok = r.hsSight === 'ALERT' && r.hsSightT < 0.05 && /again/.test(r.hsSightNote) && r.hsGone && /interrupted/.test(r.hsInterrupted) && Math.abs(r.hsFresh - 5) < 0.3
+      && r.retSight === 'ALERT' && r.retSightT < 0.05 && r.retFresh
+      && r.weakExtended === 0 && r.weakState !== 'ALERT'
+      && r.meanDest < 0.01 && r.meanExact > 0.05 && r.meanExt > 0 && r.meanExt <= 5 + 1e-6 && /metal/.test(r.meanNote) && /sound/.test(r.meanReason)
+      && r.exts >= 2 && r.minGap >= r.gapCfg - 0.05 && r.maxLen <= r.cap + 1e-6
+      && r.retInt === 'HEIGHTENED' && /interrupted/.test(r.retIntNote) && r.retSeq.endsWith('RETURNING → NORMAL') && r.retPost <= 0.4
+      && r.visibleNormal === 0 && r.visibleState === 'ALERT';
+    return { pass: ok, detail: `seen during Heightened Security: ${r.hsSight} after ${r.hsSightT.toFixed(2)} s ("${r.hsInterrupted}"), then a fresh search (${r.hsFresh.toFixed(1)} s); seen during the return: ${r.retSight} ${r.retSightT.toFixed(2)} s after the re-alert level, fresh search ${r.retFresh}; 40 s of faint steps extended it by ${r.weakExtended.toFixed(1)} s; a metal jog step: "${r.meanNote}", he heads for his estimate (${r.meanExact.toFixed(2)} m off the real spot), +${r.meanExt.toFixed(1)} s; a stream of strong sounds: ${r.exts} extensions at least ${isFinite(r.minGap) ? r.minGap.toFixed(1) : '-'} s apart (gap ${r.gapCfg}), longest ${r.maxLen.toFixed(1)} s (cap ${r.cap}), then ${r.streamEndState}; a sound during the walk back → ${r.retInt} ("${r.retIntNote}"), then ${r.retSeq}, ${r.retPost.toFixed(2)} m from post; in plain view 100 s: NORMAL frames ${r.visibleNormal}, ends ${r.visibleState}` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
