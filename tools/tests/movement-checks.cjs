@@ -1285,7 +1285,7 @@ const CHECKS = {
       let ups = 0, phase = 'in', restarts = 0; for (let i = 1; i < on.length; i++) { const d = on[i].op - on[i - 1].op; if (phase === 'in' && d < -1e-3) phase = 'out'; else if (phase === 'out' && d > 1e-3) restarts++; }
       const first = on[0], last = on[on.length - 1], full = on.filter(x => x.op >= 0.999);
       const anchor = Math.max(...on.map(x => Math.hypot(x.cx - x.hx, x.by - x.hy)));
-      return { shown: L[L.length - 1].shown, reactions: L[L.length - 1].reactions, restarts, span: on.length ? last.t - first.t : 0, full: full.length ? full[full.length - 1].t - full[0].t : 0, text: first ? first.text : '', h: first ? first.h : 0, fs: first ? first.fs : 0, anchor, endHidden: L[L.length - 1].hidden, state: L[L.length - 1].state };
+      return { hold: MV.caption.cfg.hold, total: MV.caption.cfg.fadeIn + MV.caption.cfg.hold + MV.caption.cfg.fadeOut, shown: L[L.length - 1].shown, reactions: L[L.length - 1].reactions, restarts, span: on.length ? last.t - first.t : 0, full: full.length ? full[full.length - 1].t - full[0].t : 0, text: first ? first.text : '', h: first ? first.h : 0, fs: first ? first.fs : 0, anchor, endHidden: L[L.length - 1].hidden, state: L[L.length - 1].state };
     });
     // hidden behind solid cover and when far away (a separate camera; nothing else moves)
     const B = await page.evaluate(() => {
@@ -1303,10 +1303,10 @@ const CHECKS = {
     await page.waitForFunction(() => MV.guard.awareness.state === 'ALERT', null, { timeout: 10000 }).catch(() => {});
     const C = await page.evaluate(() => { const L = window.__cap, i = L.findIndex(x => x.state === 'ALERT'); return { alerted: i >= 0, shownBefore: L.some(x => x.active), visibleOnAlert: i >= 0 && L.slice(i).some(x => !x.hidden && x.op > 0), dismissed: MV.caption.dismissed, why: MV.caption.why }; });
     await page.evaluate(() => { MV.guard.reset(); MV.caption.hide(); });
-    const ok = A.shown === 1 && A.reactions === 1 && A.restarts === 0 && A.text === 'Huh' && A.span > 1.2 && A.span < 1.9 && A.full > 0.8 && A.full < 1.2 && A.fs <= 14 && A.h < 24 && A.anchor < 12 && A.endHidden
+    const ok = A.shown === 1 && A.reactions === 1 && A.restarts === 0 && A.text === 'Huh' && Math.abs(A.span - A.total) < 0.2 && Math.abs(A.full - A.hold) < 0.15 && A.fs <= 14 && A.h < 24 && A.anchor < 12 && A.endHidden
       && B.clear.w === 'showing' && !B.clear.hid && B.wall.w === 'behind cover' && B.wall.hid && B.far.w === 'too far' && B.far.hid
       && C.alerted && C.shownBefore && !C.visibleOnAlert && C.dismissed >= 1 && page.errors.length === 0;
-    return { pass: ok, detail: `10 footsteps, one incident: shown ${A.shown}× ("${A.text}", ${A.fs}px, ${A.h.toFixed(0)}px tall), ${A.reactions} vocal reaction, restarted ${A.restarts}×; on screen ${A.span.toFixed(2)} s (fully shown ${A.full.toFixed(2)} s, then faded), within ${A.anchor.toFixed(1)} px of the point above his head, gone afterwards ${A.endHidden}; clear view: ${B.clear.w}; behind the tall crate: ${B.wall.w}; from 30 m: ${B.far.w}; a new incident turned ALERT: caption on screen after the alert ${C.visibleOnAlert} (${C.why}); page errors ${page.errors.length}` };
+    return { pass: ok, detail: `10 footsteps, one incident: shown ${A.shown}× ("${A.text}", ${A.fs}px, ${A.h.toFixed(0)}px tall), ${A.reactions} vocal reaction, restarted ${A.restarts}×; on screen ${A.span.toFixed(2)} s of ${A.total.toFixed(2)} (fully shown ${A.full.toFixed(2)} s of ${A.hold}, then faded), within ${A.anchor.toFixed(1)} px of the point above his head, gone afterwards ${A.endHidden}; clear view: ${B.clear.w}; behind the tall crate: ${B.wall.w}; from 30 m: ${B.far.w}; a new incident turned ALERT: caption on screen after the alert ${C.visibleOnAlert} (${C.why}); page errors ${page.errors.length}` };
   },
 
   // Step 8.2, glimpse: she sneaks 9 m away 45° off his facing (his slower peripheral zone).
@@ -1388,6 +1388,67 @@ const CHECKS = {
     const ok = r.a1 === 1 && r.aSeen && r.a2 === 1 && r.aInc === 1 && r.aCap === 0 && r.b1 === 1 && r.b2 === 1 && r.bInc === 1 && r.bCap === 0
       && C.meterFullF != null && C.alertF === C.meterFullF && C.reactions === 1 && C.capDuring && C.capAfter === 0;
     return { pass: ok, detail: `footstep then glimpse: reactions ${r.a1} → ${r.a2}, incidents ${r.aInc}, extra captions ${r.aCap}; glimpse then footsteps: ${r.b1} → ${r.b2}, incidents ${r.bInc}, extra captions ${r.bCap}; glimpse to full recognition: "huh" ${C.reactions}, meter 100% on frame ${C.meterFullF}, ALERT on frame ${C.alertF}, caption shown before ${C.capDuring}, after ALERT ${C.capAfter ? 'still showing' : 'dismissed'} (${C.why})` };
+  },
+
+  // Step 8 timing (0.8 s): for a sound and for a peripheral glimpse, he holds still (no head
+  // or body turn) for the configured pause, says "huh" once at it, then his head and body
+  // start turning straight away. Suspicion (more footsteps) and his vision meter keep
+  // building during the pause, which those extra steps and looks never restart. He walks
+  // off to investigate as soon as pause + assessTime allows (no extra delay). A recognition
+  // reached during the pause is ALERT on that frame, with no "huh"
+  async reactTiming() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, v = g.vision, T = MV.seeTarget, dt = 1 / 60, c = a.cfg;
+      const wrapD = x => Math.abs(Math.atan2(Math.sin(x), Math.cos(x))) * 57.3;
+      const watch = (frames, each) => {
+        const yaw0 = g.yaw, t0 = a.clock, o = { reactT: null, headT: null, bodyT: null, moveT: null, reactAts: new Set(), susp: [], meter: [] };
+        for (let f = 0; f < frames; f++) {
+          each(f); const t = a.clock - t0;
+          if (a.incident) o.reactAts.add(a.incident.reactAt.toFixed(4));
+          if (o.reactT == null && a.reactions > 0) o.reactT = t;
+          if (o.headT == null && Math.abs(g.headYaw) > 0.01) o.headT = t;
+          if (o.bodyT == null && wrapD(g.yaw - yaw0) > 0.5) o.bodyT = t;
+          if (o.moveT == null && g.moving && Math.abs(g.motor.speed) > 0.05) o.moveT = t;
+          o.susp.push(a.suspicion); o.meter.push(v.meter);
+        }
+        o.reactAts = o.reactAts.size; return o;
+      };
+      const out = {};
+      // a sound: three jog steps behind-right (enough to investigate), then more steps during the pause
+      g.reset(); motor.teleport(-12, -18, 0); for (let f = 0; f < 30; f++) step(0, 'stand');
+      const P = new THREE.Vector3(g.position.x + 2.8, 0, g.position.z - 2.8);
+      noise.emit(2, 'footstep', P, 'concrete', 'player');
+      out.sound = watch(4 * 60, f => {
+        if (f === 12 || f === 24 || f === 36) noise.emit(2, 'footstep', P.clone().add(new THREE.Vector3(0.2 * f / 12, 0, 0)), 'concrete', 'player');
+        step(0, 'stand'); noise.update(dt); g.update(dt, T);
+      });
+      const S = out.sound; S.suspRise = S.susp[40] > S.susp[0] + 0.01;
+      // a glimpse: sneaking 9 m away, 45° off his facing (peripheral)
+      g.reset(); const off = Math.PI / 4, ux = Math.sin(off), uz = Math.cos(off);
+      motor.teleport(g.position.x + ux * 9, g.position.z + uz * 9, off + Math.PI);
+      let incAt = null;
+      out.glimpse = watch(4 * 60, f => { const d = Math.floor(f / 30) % 2 ? 1 : -1; step(0.22, 'stand', d * ux, d * uz); noise.update(dt); g.update(dt, T); if (incAt == null && a.incident) incAt = a.clock; });
+      const G = out.glimpse; G.incAt = incAt; G.reactFromInc = G.reactT == null || incAt == null ? null : G.reactT - (incAt - (a.clock - 4 * 60 * dt + dt));
+      // meter during the glimpse's pause: it rose (never reset)
+      const i0 = Math.round((incAt - (a.clock - 4 * 60 * dt + dt)) / dt), i1 = Math.min(G.meter.length - 1, i0 + Math.round(c.visualReactDelay / dt) - 1);
+      G.meterPause = [G.meter[i0], G.meter[i1]]; let drops = 0; for (let i = i0 + 1; i <= i1; i++) if (G.meter[i] < G.meter[i - 1] - 1e-9) drops++; G.drops = drops;
+      // a glimpse that's recognised during its pause: ALERT on the frame the meter fills, no "huh"
+      g.reset(); motor.teleport(g.position.x + ux * 1.9, g.position.z + uz * 1.9, off + Math.PI);   // inside his close range
+      let fullF = null, alertF = null, f2 = 0, inc2 = null;
+      while (alertF == null && f2 < 600) { step(0, 'stand'); noise.update(dt); g.update(dt, T); f2++; if (inc2 == null && a.incident) inc2 = f2; if (fullF == null && v.meter >= 1) fullF = f2; if (a.state === 'ALERT') alertF = f2; }
+      out.recog = { fullF, alertF, inc2, reactions: a.reactions, pauseFrames: Math.round(c.visualReactDelay / dt) };
+      out.cfg = { react: c.reactDelay, visual: c.visualReactDelay, assess: c.assessTime, hold: MV.caption.cfg.hold };
+      return out;
+    });
+    const S = r.sound, G = r.glimpse, R = r.recog, C = r.cfg, near = (x, y, e) => x != null && Math.abs(x - y) <= e;
+    const okSound = near(S.reactT, C.react, 0.03) && S.headT >= C.react - 0.02 && S.bodyT >= C.react - 0.02 && S.bodyT <= C.react + 0.15 && S.reactAts === 1 && S.suspRise
+      && near(S.moveT, C.react + C.assess, 0.1);
+    const okGlimpse = near(G.reactFromInc, C.visual, 0.03) && G.headT >= G.reactT - 0.02 && G.bodyT >= G.reactT - 0.02 && G.bodyT <= G.reactT + 0.15 && G.reactAts === 1 && G.meterPause[1] > G.meterPause[0] && G.drops === 0;
+    const okRecog = R.fullF != null && R.alertF === R.fullF && R.inc2 != null && R.fullF - R.inc2 < R.pauseFrames && R.reactions === 0;
+    const ok = C.react === 0.8 && C.visual === 0.8 && C.hold === 1.2 && okSound && okGlimpse && okRecog;
+    const f2 = x => x == null ? 'never' : x.toFixed(2) + ' s';
+    return { pass: ok, detail: `settings: sound pause ${C.react} s, glimpse pause ${C.visual} s, assess ${C.assess} s, caption hold ${C.hold} s. Sound: "huh" at ${f2(S.reactT)}, head ${f2(S.headT)}, body ${f2(S.bodyT)}, reaction time set ${S.reactAts}× despite 3 more steps in the pause (suspicion rose: ${S.suspRise}), first investigation step ${f2(S.moveT)} (pause + assess ${(C.react + C.assess).toFixed(1)} s). Glimpse (from when he noticed): "huh" ${f2(G.reactFromInc)}, head ${f2(G.headT - G.reactT + G.reactFromInc)}, body ${f2(G.bodyT - G.reactT + G.reactFromInc)}, set ${G.reactAts}×, meter ${(G.meterPause[0] * 100).toFixed(0)}% → ${(G.meterPause[1] * 100).toFixed(0)}% during the pause (drops ${G.drops}). Recognised ${R.fullF == null ? '-' : ((R.fullF - R.inc2) / 60).toFixed(2) + ' s'} into the pause: ALERT on frame ${R.alertF} (meter full on ${R.fullF}), "huh" ${R.reactions}` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)

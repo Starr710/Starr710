@@ -1,7 +1,7 @@
 // SHADOW CELL — TEMPORARY guard reaction caption (Step 8.1). A stand-in for the
 // voice recordings that don't exist yet: when the guard's one-per-incident vocal
 // reaction fires (guard-voice.js) and no recording played, a small "Huh" appears
-// above his head for about a second and fades. It follows him, is hidden when a
+// above his head for about 1.2 s and fades. It follows him, is hidden when a
 // solid object is between the camera and his head or he's too far away, and is
 // dismissed the moment he becomes ALERT. It never changes what the guard does.
 // To remove once real audio exists: set GuardCaptionDefaults.enabled = false (or
@@ -15,7 +15,7 @@
     onlyWithoutRecording: true,   // show only when the voice had no recording to play
     text: 'Huh',
     fadeIn: 0.12,          // s
-    hold: 1.0,             // s fully shown…
+    hold: 1.2,             // s fully shown…
     fadeOut: 0.45,         // …then fades over this long
     height: 0.38,          // m above his head bone
     maxDistance: 24,       // m from the camera beyond which it isn't drawn
