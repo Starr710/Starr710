@@ -132,6 +132,7 @@
   // back to his post, calm (the lab's RESET)
   mv.Guard.prototype.reset = function () {
     this.motor.teleport(this.post.x, this.post.z, this.postYaw);
+    this.restraint = null;
     this.wantYaw = this.postYaw; this.path = null; this.moving = false; this.arrived = false; this.navFailed = null;
     this.vision.meter = 0; this.vision.sinceSeen = Infinity; this.vision.acc = Infinity;
     if (this.hearing) { this.hearing.last = null; this.hearing.heard = null; }
@@ -177,6 +178,8 @@
   };
 
   mv.Guard.prototype._locomotion = function (dt, other) {
+    // Step 13: restrained, he doesn't move himself: the CQC controller places him (cqc.js)
+    if (this.restraint) { this.moving = false; this.path = null; this.arrived = false; this.navFailed = null; return; }
     const o = this.cfg, a = this.awareness ? this.awareness.cfg : mv.AwarenessDefaults, m = this.motor, p = this.position;
     this._clock = (this._clock || 0) + dt;
     if (this.moving && this.path) {

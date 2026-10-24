@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), cqcBtn: $('mv-cqc'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -59,14 +59,14 @@
   const world = new mv.CollisionWorld();
   const area = mv.buildTestArea(scene, world, renderer);
   const motor = new mv.CharacterMotor(world);
-  const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), crouch: $('mv-crouch') });
+  const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), crouch: $('mv-crouch'), cqc: $('mv-cqc') });
   const cam = new mv.ThirdPersonCamera(camera, world);
   const actions = new mv.ActionSystem();
   const noise = new mv.NoiseSystem(scene);
   const footAudio = new mv.FootstepAudio(noise);
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
-  let footsteps = null, voice = null, caption = null, traitCard = null, indicator = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
+  let footsteps = null, voice = null, caption = null, traitCard = null, indicator = null, cqc = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
@@ -99,6 +99,7 @@
     voice = new mv.GuardVoice(() => footAudio.ctx);
     // caption: a TEMPORARY "Huh" above his head while no recording exists (guard-caption.js)
     caption = new mv.GuardCaption($('mv-caption'), guard, world);
+    cqc = new mv.CQC({ motor, visual, input }, guard, world);   // Step 13: grab and restraint
     indicator = new mv.GuardIndicator($('mv-indicator'), guard, world);   // TEMPORARY awareness symbol above him (UI only)
     traitCard = new mv.GuardTraitCard($('mv-trait'), guard, world, null, motor);   // his personality, beside him, clear of the player (UI only)
     guard.awareness.onVocal = line => {
@@ -122,13 +123,14 @@
     document.body.classList.add('playing');
   });
   // RESET puts the player back at the start and the guard back at his post, calm
-  ui.reset.addEventListener('click', () => { spawn(); if (guard) guard.reset(); if (caption) caption.hide(); if (indicator) indicator.hide(); });
+  ui.reset.addEventListener('click', () => { if (cqc) cqc.cancel(); spawn(); if (guard) guard.reset(); if (caption) caption.hide(); if (indicator) indicator.hide(); });
   ui.statsBtn.addEventListener('click', () => { ui.stats.hidden = !ui.stats.hidden; ui.statsBtn.setAttribute('aria-pressed', String(!ui.stats.hidden)); });
 
   // ---------------------------------------------------------------- loop
   const clock = new THREE.Clock();
   const fwd = new THREE.Vector3();
   let fps = 60, fpsT = 0, fpsN = 0, hudT = 0, grace = 2;
+  const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false };
   function frame() {
     const dt = Math.min(clock.getDelta(), 1 / 20);
 
@@ -142,11 +144,21 @@
       const l = Math.hypot(dx, dz); if (l > 1e-4) { dx /= l; dz /= l; }
 
       motor.stance = input.crouch ? 'crouch' : 'stand';
-      if (!actions.busy()) motor.update(dt, dx, dz, mag);
+      const grappling = cqc ? cqc.update(dt, dx, dz, mag) : false;   // CQC drives both characters while active
+      if (cqc) {
+        // the button: RELEASE while holding him; bright when a grab is possible (checked a few times a second)
+        const lbl = cqc.state === 'GRAPPLING' ? 'RELEASE' : 'CQC', hold = cqc.active();
+        if ((cqcUi.t += dt) > 0.12) { cqcUi.t = 0; cqcUi.ready = !hold && !cqc.check(); }
+        if (cqcUi.lbl !== lbl) { cqcUi.lbl = lbl; ui.cqcBtn.textContent = lbl; }
+        if (cqcUi.hold !== hold) { cqcUi.hold = hold; ui.cqcBtn.classList.toggle('holding', hold); }
+        if (cqcUi.shown !== cqcUi.ready) { cqcUi.shown = cqcUi.ready; ui.cqcBtn.classList.toggle('ready', cqcUi.ready); }
+      }
+      if (!actions.busy() && !grappling) motor.update(dt, dx, dz, mag);
       actions.update({ motor, world, visual, input }, dt, false);
       visual.place(motor.position, motor.yaw);
       animator.update(dt, motor);
       posture.update(dt, motor, animator);
+      if (cqc) cqc.poseArms();
       visual.root.updateMatrixWorld(true);
       footsteps.update(dt);
       guard.update(dt, seeTarget);
@@ -191,6 +203,7 @@
         ui.patrol.textContent = guard.patrol.status();
         ui.persona.textContent = guard.personality.status();
         ui.startle.textContent = guard.awareness.startleStatus();
+        ui.cqcstat.textContent = cqc.status();
         ui.post.textContent = `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`;
       }
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
@@ -203,5 +216,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { SCmv: mv, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { SCmv: mv, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

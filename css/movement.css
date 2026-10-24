@@ -57,7 +57,7 @@ body { position: fixed; inset: 0; }
 .mv-look-hint { position: absolute; pointer-events: none; font-size: 10px; letter-spacing: 2px; color: var(--muted); opacity: .6; right: calc(200px + env(safe-area-inset-right, 0px)); bottom: calc(52px + env(safe-area-inset-bottom, 0px)); }
 .stick-on #mv-joy-base, .stick-on #mv-joy-knob { opacity: 1; }
 .stick-on #mv-joy-hint { opacity: 0; }
-body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.playing) #mv-crouch { visibility: hidden; }
+body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.playing) #mv-crouch, body:not(.playing) #mv-cqc { visibility: hidden; }
 
 #mv-crouch {
   position: absolute; width: 66px; height: 66px; border-radius: 50%;
@@ -108,3 +108,14 @@ body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.pla
   font-family: var(--font-mono); font-weight: bold; line-height: 1; letter-spacing: 0.04em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 5px rgba(0, 0, 0, 0.55); opacity: 0; will-change: transform, opacity;
 }
+
+/* CQC (Step 13): a small button above CROUCH; RELEASE while holding a guard; dim when nobody's in reach */
+#mv-cqc {
+  position: absolute; width: 56px; height: 56px; border-radius: 50%;
+  right: calc(123px + env(safe-area-inset-right, 0px)); bottom: calc(108px + env(safe-area-inset-bottom, 0px));
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px; color: var(--text);
+  background: var(--panel); border: 1.5px solid var(--line); touch-action: none; opacity: 0.6;
+}
+#mv-cqc.ready { opacity: 1; border-color: var(--text); }
+#mv-cqc.holding { opacity: 1; background: var(--warn); color: var(--ink); border-color: var(--warn); }
+#mv-cqc.down { transform: scale(0.94); }

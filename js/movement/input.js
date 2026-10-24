@@ -16,6 +16,8 @@
     this.els = els;
     this.R = 64;                 // stick travel radius (px)
     this.joy = null; this.lookT = null; this.btn = new Map(); this.keys = new Set();
+    // CQC button (Step 13): a short press is a TAP, a long one a HOLD (read and cleared by cqc.js)
+    this.cqcTapped = false; this.cqcHeld = false; this.cqcHoldTime = 0.45; this._cqcDown = null;
     this._bind();
   };
 
@@ -56,6 +58,7 @@
     });
     window.addEventListener('mouseup', () => { drag = null; });
     this.els.crouch.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail !== 0) this.setCrouch(!this.crouch); });
+    if (this.els.cqc) this.els.cqc.addEventListener('click', e => { if (this.enabled && e.pointerType !== 'touch' && e.detail !== 0) this.cqcTapped = true; });
   };
 
   P._ts = function (e) {
@@ -64,6 +67,7 @@
     for (const t of e.changedTouches) {
       const el = document.elementFromPoint(t.clientX, t.clientY);
       if (el && el.closest && el.closest('#mv-crouch')) { this.btn.set(t.identifier, 'crouch'); this.setCrouch(!this.crouch); continue; }
+      if (el && el.closest && el.closest('#mv-cqc')) { this.btn.set(t.identifier, 'cqc'); this._cqcDown = performance.now(); this.els.cqc.classList.add('down'); continue; }
       if (el && el.closest && el.closest('button, .mv-panel')) { allow = true; continue; }
       if (!this.joy && t.clientX < window.innerWidth * 0.45) {
         this.joy = { id: t.identifier, ox: t.clientX, oy: t.clientY };
@@ -102,6 +106,7 @@
         this.joy = null; this.move.x = this.move.y = 0;
         this.els.root.classList.remove('stick-on');
       } else if (this.lookT && t.identifier === this.lookT.id) this.lookT = null;
+      if (this.btn.get(t.identifier) === 'cqc') this._cqcUp();
       this.btn.delete(t.identifier);
     }
     const tgt = e.target;
@@ -113,6 +118,7 @@
     const k = e.code;
     if (down) this.keys.add(k); else this.keys.delete(k);
     if (k === 'KeyC' && down && !e.repeat) this.setCrouch(!this.crouch);
+    if (k === 'KeyF' && !e.repeat) { if (down) this._cqcDown = performance.now(); else this._cqcUp(); }
     let x = 0, y = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1;
@@ -122,6 +128,14 @@
     const m = this.keys.has('ControlLeft') ? 0.35 : this.keys.has('AltLeft') ? 0.78 : 1;
     const l = Math.hypot(x, y) || 1;
     if (!this.joy) { this.move.x = x / l * m; this.move.y = y / l * m; }
+  };
+
+  // the CQC button let go: TAP or HOLD by how long it was pressed
+  P._cqcUp = function () {
+    if (this._cqcDown == null) return;
+    const held = (performance.now() - this._cqcDown) / 1000; this._cqcDown = null;
+    if (this.els.cqc) this.els.cqc.classList.remove('down');
+    if (held < this.cqcHoldTime) this.cqcTapped = true; else this.cqcHeld = true;
   };
 
   P.clear = function () {

@@ -218,6 +218,7 @@
       this.confirmed = true; this.confirmedAt = this.clock;
       this._alert('recognised her');
     }
+    if (g.restraint) { this._restrainedFrame(); return; }       // held: contact, no decisions of his own (Step 13)
     this._incidentUpdate(v.seen.rate > 0, v.meter);
     if (this.confirmed) { this.suspicion = 1; this._alerted(); return; }
     const P = g.personality, pm = k => (P ? P.mod(k) : 0);   // Step 11: focused holds and fades slower, careless faster
@@ -366,7 +367,7 @@
   mv.GuardAwareness.prototype._alert = function (why) {
     const g = this.guard;
     if (why === 'recognised her') this._maybeStartle(this.state);   // the first recognition of this confirmation (Step 12)
-    else if (this.state !== 'ALERT') this.startleNote = 'skipped: reacquired a known intruder (' + why + ')';
+    else if (why === 'saw her again') this.startleNote = 'skipped: reacquired a known intruder (' + why + ')';
     if (this._patrolling()) this._patrolling().interrupt('ALERT: ' + why);
     if (this.state === 'HEIGHTENED' || this.state === 'RETURNING') this.interrupted = (this.state === 'HEIGHTENED' ? 'Heightened Security' : 'return to post') + ' interrupted: ' + why;
     this.state = 'ALERT'; this.behavior = 'tracking her'; this.note = why;
@@ -404,6 +405,31 @@
   mv.GuardAwareness.prototype.startleStatus = function () {
     if (this.isStartled()) return `STARTLED (${this.startle.band}) · ${this.recoveryLeft().toFixed(1)} s to recover · offense not ready`;
     return `ready${this.startleNote ? ' · last: ' + this.startleNote : ''}`;
+  };
+
+  // ---------------------------------------------------------------- restrained (Step 13)
+  // Grabbed: he knows an intruder has hold of him (physical contact, wherever she came
+  // from). He's confirmed and ALERT, his patrol gives way, and he makes no sound (no new
+  // vocal reaction). While held he's in contact the whole time (no search starts) and
+  // his memory of where she is follows the contact. Released, he carries on from ALERT
+  // with her last position: the normal grace and search apply if he can't see her.
+  mv.GuardAwareness.prototype.onRestrained = function (by) {
+    if (this.incident) this.incident.voiced = true;            // no "huh" now
+    if (!this.confirmed) { this.confirmed = true; this.confirmedAt = this.clock; }
+    this.suspicion = 1;
+    this.seen = { position: by.clone().setY(0), time: this.clock };
+    if (this.state !== 'ALERT') this._alert('restrained by an intruder');
+    this.note = 'restrained by an intruder'; this.behavior = 'restrained';
+  };
+  mv.GuardAwareness.prototype._restrainedFrame = function () {
+    const by = this.guard.restraint.by;
+    this.lastContact = this.clock; this.suspicion = 1;
+    this.seen = { position: by.position.clone().setY(0), time: this.clock };
+    this.state = 'ALERT'; this.behavior = 'restrained'; this.evasion = null; this.hs = null; this.search = null;
+  };
+  mv.GuardAwareness.prototype.onReleased = function (at) {
+    this.lastContact = this.clock; this.seen = { position: at.clone().setY(0), time: this.clock };
+    this.behavior = 'tracking her'; this.note = 'released: on to her';
   };
 
   // per frame once confirmed
