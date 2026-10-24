@@ -2236,6 +2236,150 @@ const CHECKS = {
     return { pass: ok, detail: `60 s with every indicator shown (${on.showed} frames visible) vs all off (${off.showed}): identical states, notes, positions and suspicion ${on.trace === off.trace} (through ${on.states})` };
   },
 
+  // Step 12, 1–7: an unsuspecting guard recognises her at close (1.6 m), medium (6 m) and
+  // long (12 m) range. ALERT comes on the very frame his meter fills, exactly as with the
+  // startle switched off; one startle each, lasting 1.8 / 1.2 / 0.8 s; while it lasts he's not
+  // ready for offensive actions (vulnerable), then ready; his eyes keep working (she moves:
+  // last-seen keeps updating); the recoil eases in and out with no snaps or joint pops, his
+  // feet and position untouched
+  async startleTrigger() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, v = g.vision, T = MV.seeTarget, dt = 1 / 60, B = g.bones, sc = a.cfg.startle;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
+      const one = (d, on) => {
+        sc.enabled = on; g.patrol.enabled = false; g.reset(); motor.teleport(-17, 15, 0); sim(30);
+        const fw = g.forward(), side = new THREE.Vector3(fw.z, 0, -fw.x), q = g.position.clone().addScaledVector(fw, d);
+        motor.teleport(q.x, q.z, g.yaw + Math.PI); for (let k = 0; k < 2; k++) step(0, 'stand');
+        let f = 0, fullF = null, alertF = null; while (alertF == null && f < 900) { sim(1); f++; if (fullF == null && v.meter >= 1) fullF = f; if (a.state === 'ALERT') alertF = f; }
+        const out = { fullF, alertF, startles: a.startles, note: a.startleNote, dur: a.startle ? a.startle.duration : 0, band: a.startle ? a.startle.band : '' };
+        if (!on) return out;
+        // through the startle: she edges sideways in plain view; he keeps seeing her
+        const pos0 = g.position.clone(), prevQ = {}; let lastPos = g.position.clone(), maxJump = 0, lastAmt = a.startleAmount(), maxAmtStep = 0, maxRot = 0, pops = 0, readyDuring = 0, vulnFrames = 0, seenUpdates = 0, lastSeen = a.seen.position.clone(), lastFoot = null, footSlide = 0, readyAt = null, t0 = a.clock, peak = 0;
+        for (let k = 0; k < Math.round((out.dur + 0.5) * 60); k++) {
+          motor.position.addScaledVector(side, 0.01);
+          sim(1);
+          if (a.isStartled()) { vulnFrames++; if (a.offenseReady()) readyDuring++; } else if (readyAt == null) readyAt = a.clock - t0;
+          peak = Math.max(peak, a.startleAmount()); maxAmtStep = Math.max(maxAmtStep, Math.abs(a.startleAmount() - lastAmt)); lastAmt = a.startleAmount();
+          maxJump = Math.max(maxJump, g.position.distanceTo(lastPos)); lastPos.copy(g.position);
+          if (a.seen.position.distanceTo(lastSeen) > 1e-4) { seenUpdates++; lastSeen = a.seen.position.clone(); }
+          const ri = g.root.getWorldQuaternion(new THREE.Quaternion()).invert();
+          for (const nm of ['spine1', 'chest', 'neck', 'head', 'leftArm', 'rightArm']) { const qq = ri.clone().multiply(B[nm].getWorldQuaternion(new THREE.Quaternion())); if (prevQ[nm]) { const ang = 2 * Math.acos(Math.min(1, Math.abs(qq.dot(prevQ[nm])))) * 57.3; maxRot = Math.max(maxRot, ang); if (ang > 9) pops++; } prevQ[nm] = qq; }
+          const ft = B.leftFoot.getWorldPosition(new THREE.Vector3()); if (lastFoot && g.isStill()) footSlide = Math.max(footSlide, Math.hypot(ft.x - lastFoot.x, ft.z - lastFoot.z)); lastFoot = ft;
+        }
+        Object.assign(out, { maxJump, maxAmtStep, moved: g.position.distanceTo(pos0), maxRot, pops, readyDuring, vulnFrames, seenUpdates, readyAt, peak, footSlide, stateEnd: a.state, readyEnd: a.offenseReady() });
+        return out;
+      };
+      const res = {};
+      for (const [k, d] of [['close', 1.6], ['medium', 6], ['far', 12]]) res[k] = { on: one(d, true), off: one(d, false) };
+      sc.enabled = true; g.reset();
+      res.cfg = sc.durations; return res;
+    });
+    const D = r.cfg, bands = ['close', 'medium', 'far'];
+    const ok = bands.every(b => { const o = r[b].on, f = r[b].off; return o.alertF != null && o.alertF === o.fullF && o.alertF === f.alertF && f.startles === 0 && o.startles === 1 && o.band === b && Math.abs(o.dur - D[b]) < 1e-9
+      && o.readyDuring === 0 && Math.abs(o.vulnFrames / 60 - D[b]) < 0.05 && o.readyAt != null && Math.abs(o.readyAt - D[b]) < 0.05 && o.readyEnd && o.seenUpdates >= 3 && o.pops === 0 && o.maxAmtStep <= 0.13 && o.peak > 0.99 && o.maxJump < 0.03 && o.footSlide < 0.01 && o.stateEnd === 'ALERT'; });
+    const d = b => { const o = r[b].on; return `${b}: ALERT on frame ${o.alertF} (meter full ${o.fullF}; startle off: ${r[b].off.alertF}), startled ${o.dur} s (${o.note}), not ready for ${(o.vulnFrames / 60).toFixed(2)} s then ready at ${o.readyAt == null ? '-' : o.readyAt.toFixed(2)} s, last-seen updated ${o.seenUpdates}× during it, startle motion ≤ ${(o.maxAmtStep * 100).toFixed(0)}% per frame (upper body ≤ ${o.maxRot.toFixed(1)}°/frame), joint pops ${o.pops}, largest per-frame move ${(o.maxJump * 100).toFixed(1)} cm, standing foot slide ${(o.footSlide * 100).toFixed(1)} cm`; };
+    return { pass: ok, detail: bands.map(d).join('; ') };
+  },
+
+  // Step 12, 8, 9, 6: no repeats. Startled close up, she slips away at once: the grace runs
+  // as usual and EVASION starts while he's still recovering (he isn't held in ALERT). Five
+  // times she reappears during the search and ducks away again: ALERT each time, no new
+  // startle (the guard never freezes again). Seen during Heightened Security: no startle.
+  // Rediscovered right after he stood down: no startle (still on guard); after the rearm
+  // time a genuinely new discovery startles him again
+  async startleRepeat() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, sc = a.cfg.startle;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
+      const front = d => { const q = g.position.clone().addScaledVector(g.forward(), d); motor.teleport(q.x, q.z, g.yaw + Math.PI); for (let k = 0; k < 2; k++) step(0, 'stand'); };
+      const until = (fn, max) => { let n = 0; while (!fn() && n < max) { sim(1); n++; } return n; };
+      g.patrol.enabled = false; g.reset(); a.cfg.evasionTime = 30; a.cfg.heightenedTime = 12; motor.teleport(-17, 15, 0); sim(30);
+      front(1.6); until(() => a.state === 'ALERT', 300); const t0 = a.clock;
+      motor.teleport(-17, 15, 0); until(() => a.state === 'EVASION', 300);
+      const evasionAt = a.clock - t0, startledThen = a.isStartled(), grace = a.cfg.alertGrace;
+      // five reappearances during the search
+      let reAlerts = 0, notReadyFrames = 0; sim(240);
+      for (let k = 0; k < 5; k++) { front(3); const n = until(() => a.state === 'ALERT', 300); if (n < 300) reAlerts++; for (let q = 0; q < 30; q++) { sim(1); if (!a.offenseReady()) notReadyFrames++; } motor.teleport(-17, 15, 0); until(() => a.state === 'EVASION', 300); sim(120); }
+      const afterLoop = { startles: a.startles, note: a.startleNote };
+      // Heightened Security
+      until(() => a.state === 'HEIGHTENED', 60 * 60); sim(60); front(3); until(() => a.state === 'ALERT', 300); const hsStartles = a.startles, hsNote = a.startleNote;
+      // stand down, then rediscovered at once
+      motor.teleport(-17, 15, 0); until(() => a.standDowns > 0, 120 * 60); sim(120);
+      front(1.6); until(() => a.state === 'ALERT', 300); const soonStartles = a.startles, soonNote = a.startleNote;
+      // and once more after the rearm time
+      motor.teleport(-17, 15, 0); until(() => a.standDowns > 1, 150 * 60); const sd2 = a.standDowns; sim(Math.round((sc.rearmTime + 1) * 60));
+      front(1.6); until(() => a.state === 'ALERT', 300); const laterStartles = a.startles, laterNote = a.startleNote;
+      a.cfg.evasionTime = 30; a.cfg.heightenedTime = 60; g.reset();
+      return { evasionAt, startledThen, grace, reAlerts, notReadyFrames, afterLoop, hsStartles, hsNote, soonStartles, soonNote, sd2, laterStartles, laterNote };
+    });
+    const ok = Math.abs(r.evasionAt - r.grace) < 0.15 && r.startledThen && r.reAlerts === 5 && r.notReadyFrames === 0 && r.afterLoop.startles === 1 && /reacquired/.test(r.afterLoop.note)
+      && r.hsStartles === 1 && r.soonStartles === 1 && /still on guard/.test(r.soonNote) && r.sd2 >= 2 && r.laterStartles === 2 && /startled/.test(r.laterNote);
+    return { pass: ok, detail: `slipped away mid startle: EVASION after ${r.evasionAt.toFixed(2)} s (grace ${r.grace} s) while still startled ${r.startledThen}; 5 reappearances in the search: ALERT ${r.reAlerts}×, frames not ready ${r.notReadyFrames}, startles still ${r.afterLoop.startles} ("${r.afterLoop.note}"); seen in Heightened Security: startles ${r.hsStartles}; rediscovered right after standing down: startles ${r.soonStartles} ("${r.soonNote}"); after the rearm time: startles ${r.laterStartles} ("${r.laterNote}")` };
+  },
+
+  // Step 12, 10: the "huh" and the startle never stack. A sound starts his 0.8 s pause; she's
+  // recognised during it: ALERT on the same frame as without the sound, no "huh", and the
+  // startle begins at that frame and lasts its own 1.8 s (not pause + startle). A glimpse
+  // gives one "huh", then she stays in view: the startle follows recognition as usual and no
+  // second vocal reaction. Suspicious for a while beforehand, he's partly prepared (×0.75)
+  async startleHuh() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, v = g.vision, T = MV.seeTarget, dt = 1 / 60, sc = a.cfg.startle, cap = MV.caption;
+      const sim = n => { for (let i = 0; i < n; i++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); } };
+      const until = (fn, max) => { let n = 0; while (!fn() && n < max) { sim(1); n++; } return n; };
+      const fresh = () => { g.patrol.enabled = false; g.reset(); cap.hide(); motor.teleport(-17, 15, 0); sim(30); };
+      const front = d => { const q = g.position.clone().addScaledVector(g.forward(), d); motor.teleport(q.x, q.z, g.yaw + Math.PI); for (let k = 0; k < 2; k++) step(0, 'stand'); };
+      const out = {};
+      fresh(); sim(6); front(1.6); out.quiet = until(() => a.state === 'ALERT', 300);
+      fresh(); noise.emit(2, 'footstep', new THREE.Vector3(g.position.x + 3, 0, g.position.z - 2), 'concrete', 'player'); sim(6); const pausing = a.incident && a.clock < a.incident.reactAt;
+      front(1.6); out.noisy = until(() => a.state === 'ALERT', 300);
+      out.pausing = pausing; out.huh1 = a.reactions; out.startStart = a.startle ? +(a.startle.start - a.confirmedAt).toFixed(4) : null; out.dur1 = a.startle ? a.startle.duration : 0;
+      // a glimpse: one "huh", then she stays until recognised
+      fresh(); const off = g.yaw - Math.PI / 4; motor.teleport(g.position.x + Math.sin(off) * 9, g.position.z + Math.cos(off) * 9, off + Math.PI);
+      until(() => a.reactions > 0, 300); const huhT = a.clock;
+      until(() => a.state === 'ALERT', 1200); out.huh2 = a.reactions; out.band2 = a.startle && a.startle.band; out.dur2 = a.startle ? a.startle.duration : 0; out.gap = a.clock - huhT; out.from2 = a.startle && a.startle.from;
+      for (let k = 0; k < 5; k++) { sim(1); cap.update(dt, MV.camera, 640, 300); } out.capAfter = cap.active; out.kind2 = a.incident && a.incident.kind;
+      out.cfg = sc;
+      return out;
+    });
+    const D = r.cfg.durations, expected2 = D[r.band2];   // her own glimpse growing into recognition: still a surprise (prepared only after something heard)
+    const ok = r.pausing && r.noisy === r.quiet && r.huh1 === 0 && r.startStart === 0 && Math.abs(r.dur1 - D.close) < 1e-9
+      && r.huh2 === 1 && r.band2 && Math.abs(r.dur2 - expected2) < 0.01 && !r.capAfter;
+    return { pass: ok, detail: `recognised during the 0.8 s pause: ALERT after ${r.noisy} frames (no sound: ${r.quiet}), "huh" ×${r.huh1}, startle began ${r.startStart} s after recognition and lasts ${r.dur1} s (close range, nothing added); a glimpse: "huh" ×1, recognised ${r.gap.toFixed(1)} s later from ${r.from2} (${r.band2} range): startle ${r.dur2.toFixed(2)} s (expected ${expected2.toFixed(2)}: a glimpse growing into recognition is still a surprise), "huh" still ×${r.huh2}, caption gone ${!r.capAfter}` };
+  },
+
+  // Step 12 with real iPhone touches, patrol and personality on (frame loop running): she
+  // sneaks around in front of him at close range as he walks his route; he's recognised her:
+  // ALERT, the red "!" over him, startled (close) per the STATS row, his patrol interrupted
+  // and the personality card still beside him; she runs off: the search begins as usual
+  async startleTouch() {
+    const page = await patrolPage(true), Tc = page.touch, X = 150, Y = 300;
+    await page.evaluate(() => { useProfile('B'); document.getElementById('mv-stats').hidden = false; MV.guard.reset(); MV.motor.teleport(-17, 15, 0); MV.cam.snap(MV.motor); });
+    await page.waitForFunction(() => MV.guard.patrol.state === 'walking' && MV.guard.patrol.index === 1 && Math.hypot(MV.guard.position.x - 2, MV.guard.position.z + 16) > 3, null, { timeout: 60000 }).catch(() => {});
+    // she's beside him (just out of his cone), then steps round in front of him with the stick
+    await page.evaluate(() => { const g = MV.guard, s = new THREE.Vector3(g.forward().z, 0, -g.forward().x), b = g.position.clone().addScaledVector(s, 1.3).addScaledVector(g.forward(), -1.2); MV.motor.teleport(b.x, b.z, Math.atan2(g.position.x - b.x, g.position.z - b.z)); MV.cam.snap(MV.motor);
+      window.__tgt = g.position.clone().addScaledVector(g.forward(), 1.4).addScaledVector(s, 0.5); for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; } window.__w = { alertF: null, startled: '', ind: '', card: false }; const a = g.awareness;
+      (function f() { const w = window.__w; if (w.alertF == null && a.state === 'ALERT') w.alertF = a.clock; if (a.isStartled()) { w.startled = document.getElementById('mv-startle').textContent; const el = document.getElementById('mv-indicator'); if (!el.hidden) w.ind = el.textContent + '|' + el.style.color; w.card = w.card || MV.traitCard.visible; w.patrol = g.patrol.state; } if (!window.__stop) requestAnimationFrame(f); })(); });
+    await Tc('touchStart', [{ x: X, y: Y, id: 1 }]);
+    for (let i = 0; i < 40 && !(await page.evaluate(() => MV.guard.awareness.state === 'ALERT')); i++) {
+      const st = await page.evaluate(() => { const f = MV.cam.forward(new THREE.Vector3()), p = MV.motor.position, t = window.__tgt, wx = t.x - p.x, wz = t.z - p.z, l = Math.hypot(wx, wz) || 1; return { mx: (wx * -f.z + wz * f.x) / l, my: (wx * f.x + wz * f.z) / l }; });
+      await Tc('touchMove', [{ x: X + st.mx * 45, y: Y - st.my * 45, id: 1 }]); await page.waitForTimeout(120);
+    }
+    await Tc('touchEnd', []);
+    await page.waitForTimeout(600);
+    const mid = await page.evaluate(() => ({ state: MV.guard.awareness.state, startle: MV.guard.awareness.startle, startles: MV.guard.awareness.startles, w: window.__w }));
+    // she runs off out of sight
+    await page.evaluate(() => { MV.motor.teleport(-17, 15, 0); MV.cam.snap(MV.motor); });
+    await page.waitForFunction(() => MV.guard.awareness.state === 'EVASION', null, { timeout: 10000 }).catch(() => {});
+    const end = await page.evaluate(() => { window.__stop = true; return { state: MV.guard.awareness.state, startles: MV.guard.awareness.startles }; });
+    await page.evaluate(() => { MV.guard.personality.enabled = false; MV.guard.reset(); });
+    const ok = mid.startles === 1 && mid.startle && mid.startle.band === 'close' && /STARTLED \(close\)/.test(mid.w.startled) && /^!\|/.test(mid.w.ind) && mid.w.patrol === 'interrupted' && end.state === 'EVASION' && end.startles === 1 && page.errors.length === 0;
+    return { pass: ok, detail: `stepped round in front of him on his route: ${mid.state}, startled ${mid.startle ? mid.startle.band + ' ' + mid.startle.duration + ' s at ' + mid.startle.distance.toFixed(1) + ' m' : 'no'}; STATS "${mid.w.startled}"; indicator "${mid.w.ind}"; personality card shown ${mid.w.card}; patrol ${mid.w.patrol}; she ran off: ${end.state}, startles ${end.startles}; page errors ${page.errors.length}` };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();

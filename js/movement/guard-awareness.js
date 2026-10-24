@@ -99,6 +99,18 @@
     postArriveWithin: 0.4, // m: close enough to his post…
     postFacingTolerance: 4,    // …and within this many degrees of its facing to stand down
     standDownSuspicion: 0.3,   // suspicion he's left with on standing down (then fades as usual)
+    // ---- startle and recovery (Step 12): an unsuspecting guard who recognises her is startled.
+    // ALERT starts on the same frame (nothing waits for the startle); while startled he's
+    // recovering: not ready for offensive actions (future CQC can use that window)
+    startle: {
+      enabled: true,
+      closeWithin: 3,      // m: recognised this close is a close-range discovery…
+      mediumWithin: 9,     // …this close medium range, farther long range (his sight reaches 16 m)
+      durations: { close: 1.8, medium: 1.2, far: 0.8 },   // s of startle and recovery
+      preparedScale: 0.75, // × when he was already suspicious from something he heard (partly prepared)…
+      preparedAfter: 1.5,  // …for at least this long (s). Gradually recognising her from her own glimpse is still a surprise
+      rearmTime: 45,       // s after standing down before a new discovery can startle him again
+    },
     seed: 1337,            // for the random variation (repeatable in tests)
     debug: true,           // developer markers and stats (separate from any player HUD)
   };
@@ -131,6 +143,8 @@
     this.hs = null; this.standDowns = 0; this.stoodDownAt = null; this.interrupted = '';
     // Step 8: one suspicious incident at a time: { start, kind, reactAt, assessUntil, voiced }
     this.incident = null; this.incidents = 0; this.reactions = 0; this.calmSince = null;
+    // Step 12: { start, until, duration, band, distance, from } while startled; history for the developer view
+    this.startle = null; this.startles = 0; this.startleNote = '';
     this.rng = mulberry(this.cfg.seed);
   };
   function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -351,12 +365,45 @@
   // ---------------------------------------------------------------- alert and evasion
   mv.GuardAwareness.prototype._alert = function (why) {
     const g = this.guard;
+    if (why === 'recognised her') this._maybeStartle(this.state);   // the first recognition of this confirmation (Step 12)
+    else if (this.state !== 'ALERT') this.startleNote = 'skipped: reacquired a known intruder (' + why + ')';
     if (this._patrolling()) this._patrolling().interrupt('ALERT: ' + why);
     if (this.state === 'HEIGHTENED' || this.state === 'RETURNING') this.interrupted = (this.state === 'HEIGHTENED' ? 'Heightened Security' : 'return to post') + ' interrupted: ' + why;
     this.state = 'ALERT'; this.behavior = 'tracking her'; this.note = why;
     this.lastContact = this.clock; this.evasion = null; this.search = null; this.hs = null;   // a sighting cancels the stand-down
     if (!this.incident) this._beginIncident('seen', true);       // part of an incident until he's genuinely calm again
     g.stopMoving();
+  };
+
+  // ---------------------------------------------------------------- startle and recovery (Step 12)
+  // Only a genuine surprise startles him: the first recognition of an intruder while he
+  // wasn't already confirmed (re-sightings during the search, Heightened Security or the
+  // walk back are expected contact), and not again soon after standing down from one.
+  mv.GuardAwareness.prototype._maybeStartle = function (prev) {
+    const s = this.cfg.startle, v = this.guard.vision;
+    if (!s || !s.enabled) { this.startleNote = 'skipped: startle off'; return; }
+    if (this.stoodDownAt != null && this.clock - this.stoodDownAt < s.rearmTime) { this.startleNote = `skipped: still on guard (stood down ${(this.clock - this.stoodDownAt).toFixed(0)} s ago)`; return; }
+    const d = v.seen && isFinite(v.seen.distance) ? v.seen.distance : (this.seen ? Math.hypot(this.seen.position.x - this.guard.position.x, this.seen.position.z - this.guard.position.z) : 99);
+    const band = d <= s.closeWithin ? 'close' : d <= s.mediumWithin ? 'medium' : 'far';
+    const prepared = (prev === 'SUSPICIOUS' || prev === 'INVESTIGATING') && !!this.incident && this.incident.kind === 'heard' && this.clock - this.incident.start >= s.preparedAfter;
+    const duration = s.durations[band] * (prepared ? s.preparedScale : 1);
+    this.startle = { start: this.clock, until: this.clock + duration, duration, band, distance: d, from: prev };
+    this.startles++; this.startleNote = `startled: ${band}-range discovery at ${d.toFixed(1)} m${prepared ? ' (was ' + prev.toLowerCase() + ')' : ''}`;
+  };
+  mv.GuardAwareness.prototype.isStartled = function () { return !!this.startle && this.clock < this.startle.until; };
+  mv.GuardAwareness.prototype.recoveryLeft = function () { return this.isStartled() ? this.startle.until - this.clock : 0; };
+  // for future combat / CQC logic: may he act offensively yet? (not while startled)
+  mv.GuardAwareness.prototype.offenseReady = function () { return !this.isStartled(); };
+  mv.GuardAwareness.prototype.vulnerable = function () { return this.isStartled(); };
+  // how far into the startle's motion he is, 0…1: rises fast, holds briefly, eases out by recovery
+  mv.GuardAwareness.prototype.startleAmount = function () {
+    if (!this.isStartled()) return 0;
+    const st = this.startle, t = this.clock - st.start, sm = (a, b, x) => { const u = Math.max(0, Math.min(1, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
+    return sm(0, 0.2, t) * (1 - sm(st.duration * 0.35, st.duration, t));   // a quick flinch (0.2 s), then recovery
+  };
+  mv.GuardAwareness.prototype.startleStatus = function () {
+    if (this.isStartled()) return `STARTLED (${this.startle.band}) · ${this.recoveryLeft().toFixed(1)} s to recover · offense not ready`;
+    return `ready${this.startleNote ? ' · last: ' + this.startleNote : ''}`;
   };
 
   // per frame once confirmed

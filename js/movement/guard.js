@@ -43,6 +43,12 @@
       headSmoothing: 7,    // 1/s easing toward the wanted head turn
       lean: 5,             // ° forward lean of the upper body at full tension (ALERT)…
       tensionSmoothing: 1.5,   // …eased in and out at this rate (1/s)
+      // Step 12 startle: at the peak of his surprise the upper body recoils back and the
+      // shoulders lift a little, then it all eases back into his alert posture (feet and
+      // position untouched). Follows awareness.startleAmount() (0…1)
+      startleRecoil: 9,    // ° back through spine and chest…
+      startleHead: 4,      // …the head pulled back a little less (it stays on her)…
+      startleShrug: 7,     // …and the upper arms lifted this much
     },
   };
 
@@ -242,7 +248,7 @@
   // what he's attending to, and lean the spine a little forward when tense (the head
   // tilting back to stay level). Rate-limited and eased, so it never snaps. Bones the
   // clips don't drive are restored to their own pose first, so nothing accumulates.
-  const _up = new THREE.Vector3(0, 1, 0), _ax = new THREE.Vector3(), _pq = new THREE.Quaternion(), _dq = new THREE.Quaternion();
+  const _fw = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _ax = new THREE.Vector3(), _pq = new THREE.Quaternion(), _dq = new THREE.Quaternion();
   mv.Guard.prototype._bodyLanguage = function (dt) {
     const o = this.cfg.bodyLanguage, B = this.bones, att = this.awareness ? this.awareness.attention() : { point: null, tension: 0 };
     if (!o || !B.neck || !B.head) return;
@@ -254,16 +260,21 @@
     this.tension += (att.tension - this.tension) * (1 - Math.exp(-o.tensionSmoothing * dt));
     const lean = o.lean * Math.PI / 180 * this.tension, right = _ax.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)).clone();
     const sh = this.personality ? this.personality.shift : { yaw: 0, head: 0 };   // a bored guard's occasional stance shift
-    const turns = [[B.spine1, _up, sh.yaw * 0.5, right, lean * 0.5], [B.chest, _up, sh.yaw * 0.5, right, lean * 0.5],
-      [B.neck, _up, this.headYaw * o.neckShare + sh.head * 0.4, right, -lean * 0.4], [B.head, _up, this.headYaw * (1 - o.neckShare) + sh.head * 0.6, right, -lean * 0.6]];
-    for (const [bone, yAxis, yaw, pAxis, pitch] of turns) {
+    const st = this.awareness && this.awareness.startleAmount ? this.awareness.startleAmount() : 0, D = Math.PI / 180;   // Step 12 startle
+    const rec = (o.startleRecoil || 0) * D * st, hb = (o.startleHead || 0) * D * st, shrug = (o.startleShrug || 0) * D * st;
+    const fwd = _fw.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)).clone();
+    const turns = [[B.spine1, _up, sh.yaw * 0.5, right, lean * 0.5 - rec * 0.5], [B.chest, _up, sh.yaw * 0.5, right, lean * 0.5 - rec * 0.5],
+      [B.neck, _up, this.headYaw * o.neckShare + sh.head * 0.4, right, -lean * 0.4 + (rec - hb) * 0.5], [B.head, _up, this.headYaw * (1 - o.neckShare) + sh.head * 0.6, right, -lean * 0.6 + (rec - hb) * 0.5],
+      [B.leftArm, fwd, 0, right, 0, shrug], [B.rightArm, fwd, 0, right, 0, -shrug]];   // arms lift away from his sides
+    for (const [bone, yAxis, yaw, pAxis, pitch, roll] of turns) {
       if (!bone) continue;
       const kept = this._blBase.get(bone);
       if (kept && bone.quaternion.equals(kept.written)) bone.quaternion.copy(kept.base);   // not re-posed by the mixer
       const base = bone.quaternion.clone();
-      if (Math.abs(yaw) > 1e-5 || Math.abs(pitch) > 1e-5) {
+      if (Math.abs(yaw) > 1e-5 || Math.abs(pitch) > 1e-5 || Math.abs(roll || 0) > 1e-5) {
         bone.parent.getWorldQuaternion(_pq).invert();
         if (Math.abs(yaw) > 1e-5) bone.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(yAxis).applyQuaternion(_pq), yaw));
+        if (Math.abs(roll || 0) > 1e-5) bone.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(yAxis).applyQuaternion(_pq), roll));   // (arms: about his forward axis)
         if (Math.abs(pitch) > 1e-5) bone.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(pAxis).applyQuaternion(_pq), pitch));
         bone.updateMatrixWorld(true);
       }
