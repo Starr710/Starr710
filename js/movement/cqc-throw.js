@@ -31,9 +31,13 @@
 
   // can she throw the guard she holds, and which way? { ok, why, L, side }
   mv.CQC.prototype.throwCheck = function () {
-    const c = this.tcfg, m = this.motor, g = this.guard;
+    const m = this.motor, g = this.guard;
     if (this.state !== 'GRAPPLING' || !g) return { ok: false, why: 'not holding anyone' };
-    const S = g.position, P = m.position, yaw = m.yaw;
+    return this._throwPlan(g.position, m.position, m.yaw, g);
+  };
+  // the landing for a pair: him at S, her at P facing yaw (also used ahead of time by the quick takedown)
+  mv.CQC.prototype._throwPlan = function (S, P, yaw, g) {
+    const c = this.tcfg;
     let why = 'no room to throw him';
     for (const deg of c.sides) {
       const a = yaw + deg * Math.PI / 180, L = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
@@ -68,10 +72,14 @@
     if (this.state !== 'GRAPPLING') return 'busy';
     const p = this.throwCheck(); this.lastThrow = p.ok ? 'thrown' : p.why;
     if (!p.ok) return p.why;
+    return this._throwBegin(p, this.tcfg, false);
+  };
+  // start the throw with plan p and these phase times (Step 16: the quick takedown runs it shorter)
+  mv.CQC.prototype._throwBegin = function (p, dur, quick) {
     const m = this.motor, g = this.guard, c = this.tcfg;
     const want = Math.atan2(p.L.x, p.L.z), rel = wrap(want - m.yaw), turn = Math.max(-c.playerTurnMax, Math.min(c.playerTurnMax, rel * 180 / Math.PI * c.playerTurn)) * Math.PI / 180;
     this.thr = { t: 0, phase: 'initiate', L: p.L, side: p.side, S: g.position.clone(), yaw0: g.yaw, yaw1: Math.atan2(-p.L.x, -p.L.z), pyaw0: m.yaw, pyaw1: m.yaw + turn,
-      by: m.position.clone(), hipsOut: c.hipsOut, impacted: false, guard: g };
+      by: m.position.clone(), hipsOut: c.hipsOut, impacted: false, guard: g, dur, quick: !!quick };
     this.state = 'THROWING'; this.throws++; this.vel = null; this.av = 0; this.dir = null; this.speed = 0;
     m.speed = 0; m.targetSpeed = 0; m.angularVelocity = 0; m.reverseGait = false; this._setGuardMotion(0, 0);
     return 'throw';
@@ -79,12 +87,12 @@
 
   // per frame while THROWING (from cqc.update); true while it still has control
   mv.CQC.prototype._throwStep = function (dt) {
-    const c = this.tcfg, m = this.motor, thr = this.thr, g = thr.guard, A = mv.ThrowAnim;
+    const m = this.motor, thr = this.thr, g = thr.guard, A = mv.ThrowAnim, d = thr.dur;
     thr.t += dt;
     let t = thr.t, i = 0;
-    while (i < PHASES.length && t >= c[PHASES[i]]) { t -= c[PHASES[i]]; i++; }
+    while (i < PHASES.length && t >= d[PHASES[i]]) { t -= d[PHASES[i]]; i++; }
     if (i >= PHASES.length) return this._throwDone();
-    const phase = PHASES[i], k = t / c[phase];
+    const phase = PHASES[i], k = t / d[phase];
     // entering the off-balance: he's no longer his own man (his pose is the throw's from here)
     if (i >= 1 && !thr.taken) { thr.taken = true; g.ko.beginThrow(); }
     // he lands: knocked out where his hips touch down, one impact sound from there
@@ -114,13 +122,14 @@
   mv.CQC.prototype._throwDone = function () {
     const thr = this.thr;
     if (!thr.impacted) this._impact();
-    this.lastThrowInfo = { guard: thr.guard, side: thr.side, landed: thr.guard.position.clone() };
+    this.lastThrowInfo = { guard: thr.guard, side: thr.side, landed: thr.guard.position.clone(), quick: thr.quick };
+    if (thr.quick) this.lastTakedown = 'completed: ' + thr.guard.cfg.label + ' down';
     this.thr = null; this.throwPose = null; this.state = 'FREE'; this.motor.stance = 'stand';
     return false;
   };
 
   mv.CQC.prototype.throwStatus = function () {
-    if (this.state === 'THROWING') return `THROWING · ${PHASE_LABEL[this.thr.phase] || this.thr.phase}`;
+    if (this.state === 'THROWING') return `${this.thr.quick ? 'TAKEDOWN' : 'THROWING'} · ${PHASE_LABEL[this.thr.phase] || this.thr.phase}`;
     if (this.state === 'GRAPPLING') { const p = this.throwCheck(); return p.ok ? `THROW available (${p.side < 0 ? 'right' : 'left'} ${Math.abs(p.side)}°)` : 'THROW blocked: ' + p.why; }
     return this.lastThrow ? 'last: ' + this.lastThrow : '–';
   };

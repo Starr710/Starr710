@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), chokeBtn: $('mv-choke'), chokestat: $('mv-chokestat'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), chokeBtn: $('mv-choke'), chokestat: $('mv-chokestat'), tkdnstat: $('mv-tkdnstat'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -137,7 +137,7 @@
     document.body.classList.add('playing');
   });
   // RESET puts the player back at the start and the guard back at his post, calm
-  ui.reset.addEventListener('click', () => { if (cqc) cqc.cancel(); spawn(); if (guard) guard.reset(); if (guard2) guard2.reset(); for (const u of [caption, indicator, caption2, indicator2]) if (u) u.hide(); });
+  ui.reset.addEventListener('click', () => { input._cqcDrop(); /* a CQC press still down is cancelled too: no TAP or HOLD after RESET */ if (cqc) cqc.cancel(); spawn(); if (guard) guard.reset(); if (guard2) guard2.reset(); for (const u of [caption, indicator, caption2, indicator2]) if (u) u.hide(); });
   // the stats bar leaves room for RESET / STATS in its top-right corner
   const chipRoom = () => document.documentElement.style.setProperty('--chips-w', document.querySelector('.mv-topright').offsetWidth + 8 + 'px');
   chipRoom(); window.addEventListener('resize', chipRoom);
@@ -152,8 +152,8 @@
   let fps = 60, fpsT = 0, fpsN = 0, hudT = 0, grace = 2;
   // stats text is written only when it changes (each write re-lays out the bar)
   const put = (el, v) => { if (el._v !== v) { el._v = v; el.textContent = v; } };
-  const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false, thr: false, thrReady: null, thrShown: null, locked: false, ring: null };
-  ui.chokeRing = ui.chokeBtn.querySelector('circle');
+  const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false, thr: false, thrReady: null, thrShown: null, locked: false, ring: null, charging: false, fired: false, cring: null };
+  ui.chokeRing = ui.chokeBtn.querySelector('circle'); ui.cqcRing = ui.cqcBtn.querySelector('circle'); ui.cqcLabel = ui.cqcBtn.querySelector('span');
   function frame() {
     const dt = Math.min(clock.getDelta(), 1 / 20);
 
@@ -179,7 +179,12 @@
         if (cqcUi.locked !== choking) { cqcUi.locked = choking; ui.throwBtn.classList.toggle('locked', choking); ui.cqcBtn.classList.toggle('locked', choking); ui.chokeBtn.classList.toggle('active', choking); }
         if (choking) { const off = (182.2 * (1 - cqc.ch.p)).toFixed(1); if (cqcUi.ring !== off) { cqcUi.ring = off; ui.chokeRing.style.strokeDashoffset = off; } } else if (cqcUi.ring !== null) { cqcUi.ring = null; ui.chokeRing.style.strokeDashoffset = ''; }
         if (cqcUi.thrShown !== cqcUi.thrReady) { cqcUi.thrShown = cqcUi.thrReady; ui.throwBtn.classList.toggle('ready', !!cqcUi.thrReady); ui.chokeBtn.classList.toggle('ready', !!cqcUi.thrReady); }   // (CHOKE needs the same room to lay him down)
-        if (cqcUi.lbl !== lbl) { cqcUi.lbl = lbl; ui.cqcBtn.textContent = lbl; }
+        if (cqcUi.lbl !== lbl) { cqcUi.lbl = lbl; ui.cqcLabel.textContent = lbl; }
+        // Step 16: the hold ring (a free press filling toward a quick takedown), a brief flash when it fires
+        const hp = input.cqcHoldProgress(), charging = hp != null && hp > 0.3, fired = cqc.quick || (cqc.state === 'THROWING' && cqc.thr.quick && cqc.thr.t < 0.35);
+        if (cqcUi.charging !== charging) { cqcUi.charging = charging; ui.cqcBtn.classList.toggle('charging', charging); }
+        if (cqcUi.fired !== fired) { cqcUi.fired = fired; ui.cqcBtn.classList.toggle('fired', fired); }
+        if (charging) { const off = (182.2 * (1 - hp)).toFixed(1); if (cqcUi.cring !== off) { cqcUi.cring = off; ui.cqcRing.style.strokeDashoffset = off; } } else if (cqcUi.cring !== null) { cqcUi.cring = null; ui.cqcRing.style.strokeDashoffset = ''; }
         if (cqcUi.hold !== hold) { cqcUi.hold = hold; ui.cqcBtn.classList.toggle('holding', hold); }
         if (cqcUi.shown !== cqcUi.ready) { cqcUi.shown = cqcUi.ready; ui.cqcBtn.classList.toggle('ready', cqcUi.ready); }
       }
@@ -241,6 +246,7 @@
         put(ui.cqcstat, cqc.status());
         put(ui.throwstat, cqc.throwStatus());
         put(ui.chokestat, cqc.chokeStatus(input.choking()));
+        put(ui.tkdnstat, cqc.takedownStatus());
         put(ui.ko, guard.ko.status() + (guard.awareness.attack ? ` · remembers attack at ${xz(guard.awareness.attack.position)}` : ''));
         if (guard2) { const b = guard2.awareness, tr = `${guard2.personality.traits.primary}/${guard2.personality.traits.secondary}`;
           put(ui.g2, guard2.isDown() ? `${guard2.ko.status()} · ${tr}${b.attack ? ' · remembers attack at ' + xz(b.attack.position) : ''}`

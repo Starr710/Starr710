@@ -17,7 +17,15 @@
     this.R = 64;                 // stick travel radius (px)
     this.joy = null; this.lookT = null; this.btn = new Map(); this.keys = new Set();
     // CQC button (Step 13): a short press is a TAP, a long one a HOLD (read and cleared by cqc.js)
-    this.cqcTapped = false; this.cqcHeld = false; this.cqcHoldTime = 0.45; this._cqcDown = null;
+    // Step 16: a press that starts while she's free (cqcHoldAllowed, set by cqc.js each frame) is a
+    // HOLD — the quick takedown — the moment it has lasted cqcHoldTime (fired once, while still
+    // down: pollCqcHold); let go sooner and it's a TAP (grab). One press is one or the other,
+    // never both. A press while she holds a guard (RELEASE) keeps the Step 13 rule: TAP if let
+    // go within contextHoldTime, otherwise HOLD (which does nothing there). Only the first
+    // finger on the button counts; a cancelled touch, blur or hidden page drops the press with
+    // no action. Times come from the events' own timestamps
+    this.cqcTapped = false; this.cqcHeld = false; this.cqcHoldTime = 0.35; this.contextHoldTime = 0.45; this._cqcDown = null;
+    this.cqcHoldAllowed = false; this._cqcFree = false; this._cqcFired = false; this._cqcTouch = null; this.cqcLast = 'IDLE';
     // THROW button (Step 14, shown only while holding a guard): one request per press (read and cleared by cqc.js)
     this.throwTapped = false;
     // CHOKE button (Step 15): press and HOLD. chokePresses counts presses (each may start one
@@ -86,7 +94,13 @@
     for (const t of e.changedTouches) {
       const el = document.elementFromPoint(t.clientX, t.clientY);
       if (el && el.closest && el.closest('#mv-crouch')) { this.btn.set(t.identifier, 'crouch'); this.setCrouch(!this.crouch); continue; }
-      if (el && el.closest && el.closest('#mv-cqc')) { this.btn.set(t.identifier, 'cqc'); this._cqcDown = when(e); this.els.cqc.classList.add('down'); continue; }
+      if (el && el.closest && el.closest('#mv-cqc')) {
+        this.btn.set(t.identifier, 'cqc');
+        // a press whose finger is no longer on the screen (its touchend never arrived) is dropped, never left stuck
+        if (this._cqcDown != null && this._cqcTouch != null && (t.identifier === this._cqcTouch || ![...e.touches].some(x => x.identifier === this._cqcTouch))) this._cqcDrop();
+        if (this._cqcDown == null) { this._cqcTouch = t.identifier; this._cqcPress(when(e)); }
+        continue;
+      }
       if (el && el.closest && el.closest('#mv-throw')) { this.btn.set(t.identifier, 'throw'); this.throwTapped = true; this.els.throw.classList.add('down'); continue; }
       if (el && el.closest && el.closest('#mv-choke')) { this.btn.set(t.identifier, 'choke'); this._chokeTouches.add(t.identifier); this.chokePresses++; this.els.choke.classList.add('down'); continue; }
       if (el && el.closest && el.closest('button, .mv-panel')) { allow = true; continue; }
@@ -127,7 +141,7 @@
         this.joy = null; this.move.x = this.move.y = 0;
         this.els.root.classList.remove('stick-on');
       } else if (this.lookT && t.identifier === this.lookT.id) this.lookT = null;
-      if (this.btn.get(t.identifier) === 'cqc') this._cqcUp(when(e));
+      if (this.btn.get(t.identifier) === 'cqc' && t.identifier === this._cqcTouch) { this._cqcTouch = null; if (e.type === 'touchcancel') this._cqcDrop(); else this._cqcUp(when(e)); }
       if (this.btn.get(t.identifier) === 'throw' && this.els.throw) this.els.throw.classList.remove('down');
       if (this.btn.get(t.identifier) === 'choke') { this._chokeTouches.delete(t.identifier); if (!this._chokeTouches.size && this.els.choke) this.els.choke.classList.remove('down'); }
       this.btn.delete(t.identifier);
@@ -141,7 +155,7 @@
     const k = e.code;
     if (down) this.keys.add(k); else this.keys.delete(k);
     if (k === 'KeyC' && down && !e.repeat) this.setCrouch(!this.crouch);
-    if (k === 'KeyF' && !e.repeat) { if (down) this._cqcDown = when(e); else this._cqcUp(when(e)); }
+    if (k === 'KeyF' && !e.repeat) { if (down) { if (this._cqcDown == null) this._cqcPress(when(e)); } else this._cqcUp(when(e)); }
     if (k === 'KeyT' && down && !e.repeat) this.throwTapped = true;   // THROW (Step 14)
     if (k === 'KeyG' && !e.repeat) { if (down) { this._chokeKey = true; this.chokePresses++; } else this._chokeKey = false; }   // CHOKE, held (Step 15)
     let x = 0, y = 0;
@@ -156,16 +170,44 @@
   };
 
   // the CQC button let go: TAP or HOLD by how long it was pressed
+  P._cqcPress = function (at) {
+    this._cqcDown = at; this._cqcFree = this.cqcHoldAllowed; this._cqcFired = false; this._cqcArmed = false; this.cqcLast = 'PRESSED';
+    if (this.els.cqc) this.els.cqc.classList.add('down');
+  };
   P._cqcUp = function (at) {
     if (this._cqcDown == null) return;
     const held = ((at != null ? at : performance.now()) - this._cqcDown) / 1000; this._cqcDown = null;
     if (this.els.cqc) this.els.cqc.classList.remove('down');
-    if (held < this.cqcHoldTime) this.cqcTapped = true; else this.cqcHeld = true;
+    this.cqcHeldFor = held;
+    if (this._cqcFired) return;   // already a HOLD (it fired while the finger was down)
+    if (held < (this._cqcFree ? this.cqcHoldTime : this.contextHoldTime)) { this.cqcTapped = true; this.cqcLast = 'TAP'; }
+    else { this.cqcHeld = true; this.cqcLast = 'HOLD'; }   // (held past it before a frame could see it)
+  };
+  // the press ended without an action (touch cancelled, focus lost)
+  P._cqcDrop = function () {
+    if (this._cqcDown == null) return;
+    this._cqcDown = null; this._cqcFired = false; this.cqcLast = 'CANCELLED';
+    if (this.els.cqc) this.els.cqc.classList.remove('down');
+  };
+  // per frame (cqc.js): a free press that's lasted cqcHoldTime becomes a HOLD, once. It has
+  // to be seen past the threshold on two frames running: a finger-up already on its way (its
+  // event can arrive a frame late when the page is busy) gets the frame in between to land,
+  // so a quick tap is never taken for a hold (costs a hold at most one frame)
+  P.pollCqcHold = function (now) {
+    if (this._cqcDown == null || this._cqcFired || !this._cqcFree || !this.cqcHoldAllowed) { this._cqcArmed = false; return false; }
+    if (((now != null ? now : performance.now()) - this._cqcDown) / 1000 < this.cqcHoldTime) return false;
+    if (!this._cqcArmed) { this._cqcArmed = true; return false; }
+    this._cqcArmed = false; this._cqcFired = true; this.cqcHeld = true; this.cqcLast = 'HOLD'; return true;
+  };
+  // how far a free press is toward a HOLD (0…1), null when there's none
+  P.cqcHoldProgress = function (now) {
+    if (this._cqcDown == null || this._cqcFired || !this._cqcFree) return null;
+    return Math.min(1, ((now != null ? now : performance.now()) - this._cqcDown) / 1000 / this.cqcHoldTime);
   };
 
   P.clear = function () {
     this.move.x = this.move.y = 0; this.look.dx = this.look.dy = 0;
-    this.joy = this.lookT = null; this.btn.clear(); this.keys.clear();
+    this.joy = this.lookT = null; this.btn.clear(); this.keys.clear(); this._cqcDrop(); this._cqcTouch = null;
     this._chokeTouches.clear(); this._chokeKey = false; this._chokeMouse = false; if (this.els.choke) this.els.choke.classList.remove('down');
     this.els.root.classList.remove('stick-on');
   };

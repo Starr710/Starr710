@@ -57,6 +57,7 @@
     this.motor = player.motor; this.visual = player.visual; this.input = player.input; this.noise = player.noise || null;
     this.tcfg = Object.assign({}, mv.ThrowDefaults || {}, (opts && opts.throw) || {});   // Step 14 throw settings
     this.kcfg = Object.assign({}, mv.ChokeDefaults || {}, (opts && opts.choke) || {});   // Step 15 choke settings
+    this.dcfg = Object.assign({}, mv.TakedownDefaults || {}, (opts && opts.takedown) || {});   // Step 16 quick takedown settings
     this.guards = Array.isArray(guards) ? guards : [guards];
     this.guard = this.guards[0];   // the guard she holds (or last held / last checked)
     this.world = world;
@@ -68,6 +69,7 @@
     if (this.ch) this._chokeCancel();
     this.ch = null; this.chokes = 0; this.chokeInterrupts = 0; this.chokeDone = 0; this.lastChoke = ''; this.lastLowerSound = null; this._chokeSeen = this.input ? this.input.chokePresses || 0 : 0;
     this.thr = null; this.throwPose = null; this.throws = 0; this.impacts = 0; this.lastThrow = ''; this.lastImpact = null;
+    this.quick = false; this.takedowns = 0; this.takedownFails = 0; this.lastTakedown = '';
     this.t = 0; this.from = null; this.speed = 0; this.grabs = 0; this.releases = 0;
     this.lastTry = ''; this.holdNote = ''; this.armW = 0; this._armBase = new Map();
   };
@@ -105,15 +107,18 @@
     if (why) return why;
     this.guard = this.target; this._grab(); return 'grab';
   };
-  // HOLD: a future quick takedown; reserved, nothing happens
-  mv.CQC.prototype.hold = function () { this.holdNote = 'hold: quick takedown not available yet'; return 'reserved'; };
+  // HOLD: free, the quick takedown (Step 16, cqc-takedown.js); holding someone, nothing
+  mv.CQC.prototype.hold = function () {
+    if (this.state === 'FREE' && this.quickTakedown) { this.holdNote = 'hold: quick takedown'; return this.quickTakedown(); }
+    this.holdNote = 'hold: nothing while busy'; return 'reserved';
+  };
 
   mv.CQC.prototype._grab = function () {
     const g = this.guard, m = this.motor, c = this.cfg;
     // she takes him from wherever she is: the pair faces from her toward him
     const yaw = Math.atan2(g.position.x - m.position.x, g.position.z - m.position.z);
     this.from = { p: m.position.clone(), py: m.yaw, g: g.position.clone(), gy: g.yaw, yaw };
-    this.yaw = yaw; this.state = 'GRABBING'; this.t = 0; this.speed = 0; this.grabs++; this.vel = null; this.av = 0; this.dir = null;
+    this.yaw = yaw; this.state = 'GRABBING'; this.t = 0; this.speed = 0; if (!this.quick) this.grabs++; /* a quick takedown's seize isn't a grab */ this.vel = null; this.av = 0; this.dir = null;
     if (this.input.crouch) this.input.setCrouch(false);
     m.stance = 'stand';
     g.restraint = { by: m, since: g.awareness ? g.awareness.clock : 0 };
@@ -130,6 +135,8 @@
 
   // immediate end (RESET): both are left where they are, the guard back to his AI
   mv.CQC.prototype.cancel = function () {
+    if (this.quick) { this.quick = false; this.lastTakedown = 'cancelled'; }
+    if (this.thr && this.thr.quick && !this.thr.impacted) this.lastTakedown = 'cancelled';
     if (this.ch) { this._chokeCancel(); this.motor.stance = 'stand'; }
     if (this.thr) { if (!this.thr.impacted && this.thr.guard.ko) this.thr.guard.ko.abortThrow(); this.thr = null; this.throwPose = null; this.motor.stance = 'stand'; }
     if (this.guard) { this.guard.restraint = null; this.guard.stopMoving(); }
@@ -163,6 +170,8 @@
   mv.CQC.prototype.update = function (dt, dx, dz, mag) {
     const c = this.cfg, m = this.motor, inp = this.input;
     // button events from the input layer
+    // Step 16: a press begun while free turns into a HOLD (quick takedown) once it's held long enough
+    if (inp.pollCqcHold) { inp.cqcHoldAllowed = this.state === 'FREE'; inp.pollCqcHold(); }
     if (inp.cqcTapped) { inp.cqcTapped = false; this.tap(); }
     if (inp.cqcHeld) { inp.cqcHeld = false; this.hold(); }
     if (inp.throwTapped) { inp.throwTapped = false; if (this.state === 'GRAPPLING') this.throwTap(); }   // Step 14 (one throw per press; ignored unless holding him)
@@ -175,7 +184,8 @@
     if (this.state === 'THROWING') return this._throwStep(dt);
     if (this.state === 'CHOKING') return this._chokeStep(dt, !!(inp.choking && inp.choking()));
     if (this.state === 'GRABBING') {
-      this.t += dt; const k = ease(this.t / c.grabTime), f = this.from;
+      const gt = this.quick ? this.dcfg.acquire : c.grabTime;   // (Step 16: a quick takedown seizes him faster)
+      this.t += dt; const k = ease(this.t / gt), f = this.from;
       // she stays about where she was (a small step in), he's drawn back against her and turned with her
       const target = new THREE.Vector3(f.g.x - Math.sin(f.yaw) * c.holdOffset, 0, f.g.z - Math.cos(f.yaw) * c.holdOffset);
       const px = f.p.x + (target.x - f.p.x) * k * 0.5, pz = f.p.z + (target.z - f.p.z) * k * 0.5;
@@ -183,7 +193,7 @@
       const gx = f.g.x + (px + Math.sin(f.yaw) * c.holdOffset - f.g.x) * k, gz = f.g.z + (pz + Math.cos(f.yaw) * c.holdOffset - f.g.z) * k;
       m.position.x = px; m.position.z = pz; m.yaw = pyaw; m.speed = 0; m.targetSpeed = 0; m.angularVelocity = 0;
       g.position.x = gx; g.position.z = gz; g.yaw = gyaw; g.wantYaw = gyaw; g.place();
-      if (this.t >= c.grabTime) { this.state = 'GRAPPLING'; this._place(m.position.x, m.position.z, f.yaw, c.holdOffset); }
+      if (this.t >= gt) { this.state = 'GRAPPLING'; this._place(m.position.x, m.position.z, f.yaw, c.holdOffset); if (this.quick) this._acquired(); }
       this._setGuardMotion(0, 0);
       return true;
     }
@@ -272,7 +282,8 @@
   mv.CQC.prototype.status = function () {
     const name = g => g && g.cfg.label || 'guard';
     if (this.state === 'FREE') { const why = this.check(); return `FREE · ${why ? 'no grab: ' + why : 'CQC available: ' + name(this.target)}${this.holdNote ? ' · ' + this.holdNote : ''}`; }
-    if (this.state === 'THROWING') return `THROWING · ${name(this.guard)} · ${this.throwStatus()}`;
+    if (this.state === 'THROWING') return `${this.thr.quick ? 'TAKEDOWN' : 'THROWING'} · ${name(this.guard)} · ${this.throwStatus()}`;
+    if (this.quick) return `TAKEDOWN · seizing ${name(this.guard)}`;
     if (this.state === 'CHOKING') return `CHOKING · ${name(this.guard)} ${this.ch.phase === 'hold' ? 'RESTRAINED' : 'UNCONSCIOUS'} · ${PHASES_CH[this.ch.phase] || this.ch.phase}`;
     return `${this.state === 'GRAPPLING' ? 'GRAPPLING · ' + name(this.guard) + ' RESTRAINED' : this.state + ' · ' + name(this.guard)}${this.state === 'GRAPPLING' ? ' · ' + this.speed.toFixed(2) + ' m/s' : ''}`;
   };

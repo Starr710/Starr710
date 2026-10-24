@@ -137,6 +137,13 @@ body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.pla
 #mv-cqc.ready { opacity: 1; border-color: var(--text); }
 #mv-cqc.holding { opacity: 1; background: var(--warn); color: var(--ink); border-color: var(--warn); }
 #mv-cqc.down { transform: scale(0.94); }
+/* Step 16: a ring round CQC fills while a free press heads toward HOLD (quick takedown); it flashes when it's reached */
+#mv-cqc { padding: 0; }
+#mv-cqc span { pointer-events: none; }
+#mv-cqc .mv-ring { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); pointer-events: none; transform: rotate(-90deg); visibility: hidden; }
+#mv-cqc.charging .mv-ring, #mv-cqc.fired .mv-ring { visibility: visible; }
+#mv-cqc .mv-ring circle { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 182.2; stroke-dashoffset: 182.2; }
+#mv-cqc.fired .mv-ring circle { stroke: var(--warn); stroke-dashoffset: 0; }
 /* THROW (Step 14): appears above RELEASE only while she holds a guard; dim when there's no room to throw */
 #mv-throw {
   position: absolute; width: 56px; height: 56px; border-radius: 50%;
