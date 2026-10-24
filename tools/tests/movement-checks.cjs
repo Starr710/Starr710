@@ -1997,6 +1997,111 @@ const CHECKS = {
     return { pass: ok, detail: `Focused: ${d(B)}; Careless: ${d(C)} (STATS "${C.one.stats}"); page errors ${page.errors.length}` };
   },
 
+  // Personality card (UI only), on an iPhone-landscape page with the frame loop running.
+  // It appears beside the visible guard's shoulder (not in the HUD, a corner or STATS) with
+  // his two traits, the primary larger and brighter; it follows him as he walks his route
+  // and stays attached while the camera turns; it goes when he's off screen, behind solid
+  // cover (without flickering at a cover edge) or beyond its distance; it never overlaps the
+  // "Huh" at close, medium or long range; switched off, only the card goes
+  async traitCard() {
+    const page = await touchPage(), Tc = page.touch;
+    await page.evaluate(() => { document.getElementById('mv-stats').hidden = true; MV.guard.patrol.enabled = false; MV.guard.reset(); const g = MV.guard; MV.motor.teleport(g.position.x + 1.2, g.position.z + 6, Math.PI); MV.cam.snap(MV.motor); });
+    await page.waitForTimeout(1200);
+    const geo = () => page.evaluate(() => {
+      const g = MV.guard, c = MV.traitCard, el = document.getElementById('mv-trait'), r = el.getBoundingClientRect(), cam = MV.camera, W = innerWidth, H = innerHeight;
+      const a = g.position.clone().setY(g.position.y + c.cfg.height).project(cam), right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).setY(0).normalize();
+      const e = g.position.clone().setY(g.position.y + c.cfg.height).add(right).project(cam), sx = (a.x + 1) / 2 * W, sy = (1 - a.y) / 2 * H, ppm = Math.abs((e.x + 1) / 2 * W - sx);
+      const near = r.left >= sx ? r.left - sx : sx - r.right;
+      const huds = ['mv-stats', 'mv-reset', 'mv-stats-btn', 'mv-crouch'].map(id => document.getElementById(id)).filter(Boolean).map(x => x.getBoundingClientRect()).concat([...document.querySelectorAll('.mv-head')].map(x => x.getBoundingClientRect()));
+      const hit = huds.some(b => b.width && !(r.right <= b.left || r.left >= b.right || r.bottom <= b.top || r.top >= b.bottom));
+      return { visible: c.visible && !el.hidden, why: c.why, near, nearMax: c.cfg.side * ppm + c.cfg.gap, dy: (r.top + r.bottom) / 2 - sy, ppm, w: r.width, h: r.height, left: r.left, top: r.top, right: r.right, bottom: r.bottom, W, H, hit, parent: el.parentElement.tagName,
+        pri: el.querySelector('.mv-trait-primary').textContent, sec: el.querySelector('.mv-trait-secondary').textContent,
+        priFs: parseFloat(getComputedStyle(el.querySelector('.mv-trait-primary')).fontSize), secFs: parseFloat(getComputedStyle(el.querySelector('.mv-trait-secondary')).fontSize),
+        priCol: getComputedStyle(el.querySelector('.mv-trait-primary')).color, secCol: getComputedStyle(el.querySelector('.mv-trait-secondary')).color };
+    });
+    const A = await geo();
+    const lum = s => { const m = s.match(/[\d.]+/g).map(Number); return (0.3 * m[0] + 0.59 * m[1] + 0.11 * m[2]) * (m[3] == null ? 1 : m[3]); };
+    await page.evaluate(() => useProfile('C')); await page.waitForTimeout(200); const Cx = await geo(); await page.evaluate(() => useProfile('B')); await page.waitForTimeout(200);
+    // following him on his route (W0 → W1 crosses the view)
+    await page.evaluate(() => { const g = MV.guard; g.patrol.enabled = true; g.reset(); MV.motor.teleport(1, -20.5, Math.atan2(11, 9.5)); MV.cam.snap(MV.motor);   // behind him (unseen), watching his W0 → W1 leg
+      window.__f = []; (function f() { const c = MV.traitCard, el = document.getElementById('mv-trait'), r = el.getBoundingClientRect(), a = g.position.clone().setY(g.position.y + c.cfg.height).project(MV.camera); window.__f.push({ st: MV.guard.awareness.state, vis: c.visible, cx: r.left, cy: r.top, sx: (a.x + 1) / 2 * innerWidth, sy: (1 - a.y) / 2 * innerHeight, moving: g.moving, yaw: g.yaw }); if (window.__f.length < 1500 && !window.__stopF) requestAnimationFrame(f); })(); });
+    await page.waitForFunction(() => MV.guard.patrol.state === 'walking' && MV.guard.moving, null, { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(7000);
+    // the camera turns (a drag on the right of the screen) while he walks
+    await Tc('touchStart', [{ x: 620, y: 200, id: 2 }]); for (let i = 1; i <= 12; i++) { await Tc('touchMove', [{ x: 620 - i * 6, y: 200, id: 2 }]); await page.waitForTimeout(60); } await Tc('touchEnd', []);
+    await page.waitForTimeout(600);
+    const F = await page.evaluate(() => { window.__stopF = true; const R = window.__f, L = R.filter(x => x.vis); let jump = 0, movingFrames = 0, flips = 0;
+      // per-frame movement relative to him, between consecutive frames that are both on screen
+      for (let i = 1; i < R.length; i++) { if (!R[i].vis || !R[i - 1].vis) continue; const d = Math.hypot((R[i].cx - R[i].sx) - (R[i - 1].cx - R[i - 1].sx), (R[i].cy - R[i].sy) - (R[i - 1].cy - R[i - 1].sy)); jump = Math.max(jump, d); if (R[i].moving) movingFrames++; }
+      for (let i = 1; i < L.length; i++) if (Math.sign(L[i].cx - L[i].sx) !== Math.sign(L[i - 1].cx - L[i - 1].sx)) flips++;
+      const offs = L.map(x => x.cx - x.sx), mean = offs.reduce((a, b) => a + b, 0) / Math.max(1, offs.length);
+      return { states: [...new Set(R.map(x => x.st))].join('/'), frames: L.length, movingFrames, jump, flips, spread: Math.max(...offs.map(o => Math.abs(o - mean))), screenTravel: L.length ? Math.abs(L[L.length - 1].sx - L[0].sx) : 0 }; });
+    // off screen: the camera looks the other way
+    await page.evaluate(() => { MV.guard.patrol.enabled = false; MV.guard.reset(); MV.cam.yaw += Math.PI; });
+    await page.waitForTimeout(400); const off = await page.evaluate(() => ({ vis: MV.traitCard.visible, why: MV.traitCard.why }));
+    // synthetic cameras (frame loop paused): cover, flicker, distance, overlap with "Huh"
+    const S = await page.evaluate(() => {
+      MV.renderer.setAnimationLoop(null);
+      const g = MV.guard, c = MV.traitCard, cap = MV.caption, W = innerWidth, H = innerHeight, cam = new THREE.PerspectiveCamera(58, W / H, 0.1, 80), head = g.head.getWorldPosition(new THREE.Vector3());
+      const look = (x, y, z) => { cam.position.set(x, y, z); cam.lookAt(head.x, head.y - 0.3, head.z); cam.updateMatrixWorld(true); };
+      const run = (n, each) => { for (let i = 0; i < n; i++) { if (each) each(i); c.update(1 / 60, cam, W, H); } return { vis: c.visible, why: c.why }; };
+      c.hide(); look(2, 2.2, -10); const clear = run(30);
+      c.hide(); look(2, 2.2, -10); run(30); look(-4, 1.6, -4); const crate = run(60);   // shown, then behind the crate: confirmed and faded out within 1 s
+      // flicker: every 0.1 s the view swaps between clear and behind the crate
+      c.hide(); look(2, 2.2, -10); run(30); let toggles = 0, last = c.visible;
+      run(120, i => { if (i % 6 === 0) { if (Math.floor(i / 6) % 2) look(-4, 1.6, -4); else look(2, 2.2, -10); } }); for (let i = 0; i < 1; i++); 
+      c.hide(); look(2, 2.2, -10); run(30); last = c.visible;
+      for (let i = 0; i < 120; i++) { if (i % 6 === 0) { if (Math.floor(i / 6) % 2) look(-4, 1.6, -4); else look(2, 2.2, -10); } c.update(1 / 60, cam, W, H); if (c.visible !== last) { toggles++; last = c.visible; } }
+      c.hide(); look(2, 3, 13); const far = run(30); c.cfg.maxDistance = 40; c.hide(); const farAllowed = run(30); c.cfg.maxDistance = 18;
+      // "Huh" and the card at close, medium and long range
+      const overlap = [];
+      for (const d of [3.5, 9, 15]) {
+        c.hide(); cap.hide(); look(g.position.x + 0.8, 2.0, g.position.z + d); cap.show(); for (let i = 0; i < 20; i++) { c.update(1 / 60, cam, W, H); cap.update(1 / 60, cam, W, H); }
+        const a = document.getElementById('mv-trait').getBoundingClientRect(), b = document.getElementById('mv-caption').getBoundingClientRect();
+        const ix = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)), iy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+        // the developer suspicion bar over his head (0.6 m above his eyes)
+        const bar = g.eye(new THREE.Vector3()); bar.y += 0.6; const bp = bar.project(cam), bx = (bp.x + 1) / 2 * W, by = (1 - bp.y) / 2 * H;
+        overlap.push({ d, both: c.visible && cap.visible, area: ix * iy, barInside: bx > a.left && bx < a.right && by > a.top && by < a.bottom, h: a.height, fs: document.getElementById('mv-trait').style.fontSize });
+      }
+      // switched off: only the card goes ("Huh" still shows)
+      c.cfg.enabled = false; cap.hide(); cap.show(); for (let i = 0; i < 20; i++) { c.update(1 / 60, cam, W, H); cap.update(1 / 60, cam, W, H); }
+      const disabled = { card: c.visible || !document.getElementById('mv-trait').hidden, huh: cap.visible, why: c.why }; c.cfg.enabled = true; cap.hide();
+      return { clear, crate, toggles, far, farAllowed, overlap, disabled };
+    });
+    const ok = A.visible && A.parent === 'BODY' && !A.hit && A.near >= 4 && A.near <= A.nearMax + 4 && Math.abs(A.dy) < 0.45 * A.ppm && A.pri === 'FOCUSED' && A.sec === 'Bored'
+      && Cx.pri === 'CARELESS' && Cx.sec === 'Bored' && A.priFs > A.secFs && lum(A.priCol) > lum(A.secCol) && A.w < A.W * 0.12 && A.h < A.H * 0.12
+      && F.frames > 60 && F.movingFrames > 30 && F.jump < 10 && F.flips <= 2 && F.screenTravel > 20 && !off.vis && off.why === 'off screen'
+      && S.clear.vis && !S.crate.vis && S.crate.why === 'behind cover' && S.toggles <= 2 && !S.far.vis && S.far.why === 'too far' && S.farAllowed.vis
+      && S.overlap.every(o => o.both && o.area === 0 && !o.barInside) && !S.disabled.card && S.disabled.huh && page.errors.length === 0;
+    return { pass: ok, detail: `beside him: ${A.near.toFixed(1)} px from his centre line (≤ ${A.nearMax.toFixed(1)}), ${A.dy.toFixed(1)} px from shoulder height, ${A.w.toFixed(0)}×${A.h.toFixed(0)} px on a ${A.W}×${A.H} screen, in the page body, touching the HUD ${A.hit}; text "${A.pri} / ${A.sec}" (Careless guard: "${Cx.pri} / ${Cx.sec}"), primary ${A.priFs}px vs ${A.secFs}px, brighter ${lum(A.priCol) > lum(A.secCol)}; following him on patrol and through a camera turn: ${F.frames} frames, card offset from him moved at most ${F.jump.toFixed(1)} px per frame on screen, ${F.flips} side change(s) (faded, not jumped), ${F.movingFrames} on-screen frames of him walking (${F.states}), crossing ${F.screenTravel.toFixed(0)} px of screen; camera turned away: ${off.why}; clear view ${S.clear.why}, behind the tall crate ${S.crate.why}, view swapping every 0.1 s: ${S.toggles} toggles; from 30 m ${S.far.why} (allowed at 40 m: ${S.farAllowed.vis}); with "Huh" at ${S.overlap.map(o => o.d + ' m: overlap ' + o.area.toFixed(0) + ' px², ' + o.fs).join(', ')}, suspicion bar inside the card ${S.overlap.some(o => o.barInside)}; switched off: card ${S.disabled.card ? 'still shown' : 'gone'}, "Huh" ${S.disabled.huh ? 'still works' : 'gone'}; page errors ${page.errors.length}` };
+  },
+
+  // the card never changes what the guard does: the same 60 s (patrol, footsteps behind him,
+  // a sighting and its aftermath) on two freshly loaded pages, one with the card updating
+  // every frame and one with it switched off, gives exactly the same states, notes and
+  // positions (fresh pages: RESET doesn't rewind his animation phase)
+  async traitCardAI() {
+    const once = async on => { const page = await simPage(); const r = await page.evaluate(on => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, c = MV.traitCard, cam = MV.camera;
+      const run = on => {
+        c.cfg.enabled = on; useProfile('B'); g.patrol.enabled = true; g.reset(); motor.teleport(-17, 15, 0); c.hide();
+        const trace = [];
+        for (let f = 0; f < 60 * 60; f++) {
+          if (f === 600) { const b = g.position.clone().addScaledVector(g.forward(), -2); for (let k = 0; k < 3; k++) noise.emit(2, 'footstep', b.clone().add(new THREE.Vector3(k * 0.2, 0, 0)), 'concrete', 'player'); }
+          if (f === 1500) { const q = g.position.clone().addScaledVector(g.forward(), 4); motor.teleport(q.x, q.z, g.yaw + Math.PI); }
+          if (f === 1800) motor.teleport(-17, 15, 0);
+          step(0, 'stand'); noise.update(dt); g.update(dt, T);
+          cam.position.set(g.position.x + 3, 2.5, g.position.z + 6); cam.lookAt(g.position.x, 1.4, g.position.z); cam.updateMatrixWorld(true); c.update(dt, cam, 640, 300);
+          if (f % 30 === 0) trace.push([a.state, a.behavior, a.note, g.patrol.state, g.position.x.toFixed(4), g.position.z.toFixed(4), g.yaw.toFixed(4), a.suspicion.toFixed(4)].join(','));
+        }
+        return { trace: trace.join('|'), shown: c.visible, states: [...new Set(trace.map(t => t.split(',')[0]))].join('/') };
+      };
+      return run(on);
+    }, on); await page.close(); return r; };
+    const onR = await once(true), offR = await once(false), r = { same: onR.trace === offR.trace, states: onR.states };
+    return { pass: r.same && /INVESTIGATING|SUSPICIOUS/.test(r.states), detail: `60 s with the card on vs off: identical states, notes, positions and suspicion ${r.same} (through ${r.states})` };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();

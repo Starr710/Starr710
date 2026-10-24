@@ -92,3 +92,12 @@ body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.pla
   font-family: var(--font-mono); font-size: 13px; letter-spacing: 1px; color: rgba(216, 207, 168, 0.92);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 6px rgba(0, 0, 0, 0.5); opacity: 0; will-change: transform, opacity;
 }
+
+/* guard personality card (guard-traitcard.js): small, beside his shoulder, follows him */
+.mv-trait {
+  position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; white-space: nowrap;
+  padding: 0.28em 0.6em 0.32em; border: 1px solid rgba(216, 207, 168, 0.28); border-radius: 2px;
+  background: rgba(14, 17, 13, 0.62); font-family: var(--font-mono); line-height: 1.2; opacity: 0; will-change: transform, opacity;
+}
+.mv-trait-primary { font-size: 1em; letter-spacing: 0.12em; color: rgba(232, 224, 186, 0.98); }
+.mv-trait-secondary { font-size: 0.8em; letter-spacing: 0.06em; color: rgba(160, 162, 140, 0.82); }

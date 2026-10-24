@@ -66,7 +66,7 @@
   const footAudio = new mv.FootstepAudio(noise);
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
-  let footsteps = null, voice = null, caption = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
+  let footsteps = null, voice = null, caption = null, traitCard = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
@@ -99,6 +99,7 @@
     voice = new mv.GuardVoice(() => footAudio.ctx);
     // caption: a TEMPORARY "Huh" above his head while no recording exists (guard-caption.js)
     caption = new mv.GuardCaption($('mv-caption'), guard, world);
+    traitCard = new mv.GuardTraitCard($('mv-trait'), guard, world, null, motor);   // his personality, beside him, clear of the player (UI only)
     guard.awareness.onVocal = line => {
       const rec = voice.say(line, guard.position, motor.position);
       if (caption && !(rec.played && caption.cfg.onlyWithoutRecording)) caption.show();   // caption
@@ -156,6 +157,7 @@
     noise.update(dt);
     cam.update(dt, motor, input.look, input.mouse);
     if (caption) caption.update(dt, camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);   // caption
+    if (traitCard) traitCard.update(dt, camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
     sun.position.set(motor.position.x + 6, 14, motor.position.z + 5);
     sun.target.position.copy(motor.position);
     renderer.render(scene, camera);
@@ -198,5 +200,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { SCmv: mv, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { SCmv: mv, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);
