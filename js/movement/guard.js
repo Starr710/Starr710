@@ -93,7 +93,8 @@
     this.postYaw = this.motor.yaw;               // …and its facing
     this.wantYaw = this.motor.yaw;               // where he's turning to when standing
     this.path = null; this.goal = null; this.moving = false; this.arrived = false; this.navFailed = null;
-    this.root = new THREE.Group(); this.lean = new THREE.Group(); this.root.add(this.lean);
+    // root (position, facing) → fall (Step 14: turns the whole body as he's thrown and lies there; identity otherwise) → lean → model
+    this.root = new THREE.Group(); this.fall = new THREE.Group(); this.lean = new THREE.Group(); this.root.add(this.fall); this.fall.add(this.lean);
     const pivot = this.pivot = new THREE.Group(); pivot.rotation.y = playerVisual.profile.forwardYaw || 0;
     this.model = mv.cloneSkinned(playerVisual.model);
     const byName = {};
@@ -124,6 +125,8 @@
     // Step 10: his two permanent personality traits (o.personality: mv.PersonalityDefaults)
     this.personality = mv.GuardPersonality ? new mv.GuardPersonality(this, o.personality) : null;
     this.awareness = mv.GuardAwareness ? new mv.GuardAwareness(this) : null;
+    // Step 14: consciousness (thrown, unconscious, getting up)
+    this.ko = mv.GuardKnockout ? new mv.GuardKnockout(this) : null;
     this.headYaw = 0; this.tension = 0; this._blBase = new Map();
     if (this.hearing && this.awareness) this.hearing.onHeard = rec => this.awareness.onHeard(rec);
     this.place();
@@ -133,6 +136,7 @@
 
   // back to his post, calm (the lab's RESET)
   mv.Guard.prototype.reset = function () {
+    if (this.ko) this.ko.reset();   // conscious and standing again (Step 14)
     this.motor.teleport(this.post.x, this.post.z, this.postYaw);
     this.restraint = null;
     this.wantYaw = this.postYaw; this.path = null; this.moving = false; this.arrived = false; this.navFailed = null;
@@ -167,8 +171,10 @@
 
   mv.Guard.prototype.place = function () {
     this.root.position.copy(this.position); this.root.rotation.y = this.yaw;
-    if (this.collider) { this.collider.x = this.position.x; this.collider.z = this.position.z; }
+    if (this.collider && !this.isDown()) { this.collider.x = this.position.x; this.collider.z = this.position.z; }   // (down: his lying colliders instead, guard-ko.js)
   };
+  // thrown, unconscious or getting up (Step 14)
+  mv.Guard.prototype.isDown = function () { return !!(this.ko && this.ko.down()); };
 
   // turn (on the spot) to face a world point, or back to the post facing
   mv.Guard.prototype.faceToward = function (p) { this.wantYaw = Math.atan2(p.x - this.position.x, p.z - this.position.z); };
@@ -292,6 +298,8 @@
 
   // target: what the guard can look at (see mv.visionTarget)
   mv.Guard.prototype.update = function (dt, target) {
+    // Step 14: down, his consciousness runs instead of his AI (no movement, senses or decisions)
+    if (this.isDown()) { this.place(); this.ko.update(dt, target); this.place(); this.root.updateMatrixWorld(true); return; }
     if (this.hearing) this.hearing.update(dt);
     this._locomotion(dt, target);
     this.place();

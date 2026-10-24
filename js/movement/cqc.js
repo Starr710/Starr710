@@ -14,7 +14,9 @@
 // his awareness keeps its memory and knows he's in contact with an intruder, so he's ALERT
 // and stays so; he makes no sound. RELEASE pushes him a step away and hands him back to his
 // own AI, still alert to her.
-// Future actions hook in here (state GRAPPLING): knockout, chokehold, quick takedown, and
+// Step 14: while she holds him, THROW (cqc-throw.js) takes him down and knocks him out
+// (state THROWING, then FREE); a guard who is down can't be grabbed.
+// Future actions hook in here (state GRAPPLING): chokehold, quick takedown, and
 // resistance / breaking free (which may make alert or trained guards harder to hold, but
 // never prevent the initial grab).
 (function (mv) {
@@ -50,7 +52,8 @@
   // guards: one guard or a list; she grabs whichever is in reach (the nearest), one at a time
   mv.CQC = function (player, guards, world, opts) {
     this.cfg = Object.assign({}, mv.CQCDefaults, opts || {});
-    this.motor = player.motor; this.visual = player.visual; this.input = player.input;
+    this.motor = player.motor; this.visual = player.visual; this.input = player.input; this.noise = player.noise || null;
+    this.tcfg = Object.assign({}, mv.ThrowDefaults || {}, (opts && opts.throw) || {});   // Step 14 throw settings
     this.guards = Array.isArray(guards) ? guards : [guards];
     this.guard = this.guards[0];   // the guard she holds (or last held / last checked)
     this.world = world;
@@ -58,7 +61,8 @@
   };
 
   mv.CQC.prototype.reset = function () {
-    this.state = 'FREE';       // FREE | GRABBING | GRAPPLING | RELEASING
+    this.state = 'FREE';       // FREE | GRABBING | GRAPPLING | RELEASING | THROWING (Step 14)
+    this.thr = null; this.throwPose = null; this.throws = 0; this.impacts = 0; this.lastThrow = ''; this.lastImpact = null;
     this.t = 0; this.from = null; this.speed = 0; this.grabs = 0; this.releases = 0;
     this.lastTry = ''; this.holdNote = ''; this.armW = 0; this._armBase = new Map();
   };
@@ -80,6 +84,7 @@
   mv.CQC.prototype._checkOne = function (g) {
     const c = this.cfg, m = this.motor;
     if (!g || g.restraint) return 'no guard';
+    if (g.isDown && g.isDown()) return 'he is down';
     const d = Math.hypot(g.position.x - m.position.x, g.position.z - m.position.z);
     if (d > c.range) return 'out of reach';
     const a = new THREE.Vector3(m.position.x, c.reachHeight, m.position.z), b = new THREE.Vector3(g.position.x, c.reachHeight, g.position.z);
@@ -120,6 +125,7 @@
 
   // immediate end (RESET): both are left where they are, the guard back to his AI
   mv.CQC.prototype.cancel = function () {
+    if (this.thr) { if (!this.thr.impacted && this.thr.guard.ko) this.thr.guard.ko.abortThrow(); this.thr = null; this.throwPose = null; this.motor.stance = 'stand'; }
     if (this.guard) { this.guard.restraint = null; this.guard.stopMoving(); }
     for (const g of this.guards) if (g.restraint && g.restraint.by === this.motor) { g.restraint = null; g.stopMoving(); }
     this.state = 'FREE'; this.speed = 0; this.motor.speed = 0; this.motor.targetSpeed = 0; this.motor.angularVelocity = 0;
@@ -153,9 +159,12 @@
     // button events from the input layer
     if (inp.cqcTapped) { inp.cqcTapped = false; this.tap(); }
     if (inp.cqcHeld) { inp.cqcHeld = false; this.hold(); }
+    if (inp.throwTapped) { inp.throwTapped = false; if (this.state === 'GRAPPLING') this.throwTap(); }   // Step 14 (one throw per press; ignored unless holding him)
     const g = this.guard;   // (after the tap: a grab may have just picked a different guard)
-    this.armW += ((this.state === 'GRABBING' || this.state === 'GRAPPLING' ? 1 : 0) - this.armW) * (1 - Math.exp(-8 * dt));
+    const holding = this.state === 'GRABBING' || this.state === 'GRAPPLING' || (this.state === 'THROWING' && this.thr.phase !== 'recover');
+    this.armW += ((holding ? 1 : 0) - this.armW) * (1 - Math.exp(-8 * dt));
     if (this.state === 'FREE') return false;
+    if (this.state === 'THROWING') return this._throwStep(dt);
     if (this.state === 'GRABBING') {
       this.t += dt; const k = ease(this.t / c.grabTime), f = this.from;
       // she stays about where she was (a small step in), he's drawn back against her and turned with her
@@ -227,20 +236,22 @@
   };
 
   // after her animator and posture layer: her arms come up and forward to hold him
-  const _ax = new THREE.Vector3(), _pq = new THREE.Quaternion(), _dq = new THREE.Quaternion();
+  const _ax = new THREE.Vector3(), _pq = new THREE.Quaternion(), _dq = new THREE.Quaternion(), _up = new THREE.Vector3(0, 1, 0);
   mv.CQC.prototype.poseArms = function () {
     const B = this.visual.bones, w = this.armW, D = Math.PI / 180, m = this.motor;
     if (w < 0.001 && !this._armBase.size) return;
     const right = new THREE.Vector3(Math.cos(m.yaw), 0, -Math.sin(m.yaw));
-    const a = this.cfg.arms, list = [[B.leftArm, -a.shoulder], [B.rightArm, -a.shoulder], [B.leftForeArm, -a.elbow], [B.rightForeArm, -a.elbow]];
-    for (const [bone, deg] of list) {
+    // Step 14: during a throw the arm angles and a trunk twist toward the throw come from throw-anim.js
+    const tp = this.throwPose, a = tp ? tp : this.cfg.arms, tw = tp && this.thr ? Math.sign(this.thr.side) * tp.twist : 0;
+    const list = [[B.leftArm, -a.shoulder], [B.rightArm, -a.shoulder], [B.leftForeArm, -a.elbow], [B.rightForeArm, -a.elbow], [B.spine1, tw * 0.5, true], [B.chest, tw * 0.5, true]];
+    for (const [bone, deg, twist] of list) {
       if (!bone) continue;
       const kept = this._armBase.get(bone);
       if (kept && bone.quaternion.equals(kept.written)) bone.quaternion.copy(kept.base);   // not re-posed this frame
       const base = bone.quaternion.clone();
-      if (w > 0.001) {
+      if (w > 0.001 && (!twist || Math.abs(deg) > 1e-3)) {
         bone.parent.getWorldQuaternion(_pq).invert();
-        bone.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(right).applyQuaternion(_pq), deg * D * w));
+        bone.quaternion.premultiply(_dq.setFromAxisAngle(_ax.copy(twist ? _up : right).applyQuaternion(_pq), deg * D * (twist ? 1 : w)));
         bone.updateMatrixWorld(true);
         this._armBase.set(bone, { base, written: bone.quaternion.clone() });
       } else this._armBase.delete(bone);
@@ -251,6 +262,7 @@
   mv.CQC.prototype.status = function () {
     const name = g => g && g.cfg.label || 'guard';
     if (this.state === 'FREE') { const why = this.check(); return `FREE · ${why ? 'no grab: ' + why : 'CQC available: ' + name(this.target)}${this.holdNote ? ' · ' + this.holdNote : ''}`; }
+    if (this.state === 'THROWING') return `THROWING · ${name(this.guard)} · ${this.throwStatus()}`;
     return `${this.state === 'GRAPPLING' ? 'GRAPPLING · ' + name(this.guard) + ' RESTRAINED' : this.state + ' · ' + name(this.guard)}${this.state === 'GRAPPLING' ? ' · ' + this.speed.toFixed(2) + ' m/s' : ''}`;
   };
 })(SC.mv);

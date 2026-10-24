@@ -2798,6 +2798,317 @@ const CHECKS = {
     return { pass: ok, detail: `walked up behind Guard 2 from the stick: button lit ${ready.lit}, status "${ready.status}"; tapped CQC: ${held.state}, button "${held.label}", Guard 2 restrained ${held.g2}, Guard 1 restrained ${held.g1}, he's ${held.aware}, stats "${held.g2row}"; stick: moved him ${mv.moved.toFixed(2)} m, ${mv.d.toFixed(2)} m apart; RELEASE: ${freed.state}, button "${freed.label}", he's ${freed.aware}, ${freed.fromPost.toFixed(2)} m from his post; RESET mid-grapple (${mid}): Guard 1 ${r1.post.toFixed(2)} m / ${r1.yaw.toFixed(1)}° from his post, ${r1.aware}, patrol ${r1.patrol}; Guard 2 ${r2.post.toFixed(2)} m / ${r2.yaw.toFixed(1)}°, ${r2.aware}, restrained ${r2.restrained}; CQC ${rc.cqc}, button "${rc.label}"; page errors ${page.errors.length}` };
   },
 
+  // Step 14, 8–11, 13–14, 17: the throw itself, on Guard 2 grabbed from the rear, side and
+  // front, on Guard 1 out on his patrol, and on a guard grabbed while fully ALERT. Each:
+  // the phases run in order (initiation, off-balance, throw, impact, recovery) in 1.3–1.8 s;
+  // she stays put (< 1 cm) and the two stay connected (his hips within 1.3 m of her) with
+  // no jumps (her < 3 cm, his head < 20 cm per frame); his hips and head end on the ground
+  // (< 0.3 m), skin never below it (> −1 cm) and lying on it (< 2 cm); he lands 0.55 m from
+  // where he stood, on a side with room; he's UNCONSCIOUS and free of the restraint; she's
+  // back to FREE and the stick moves her again at walking speed within a second
+  async throwSequence() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget, A = MV.SCmv.ThrowAnim;
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) motor.update(dt, dx || 0, dz || 0, mag || 0); MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); noise.update(dt); g1.update(dt, T); g2.update(dt, T); };
+      const sim = n => { for (let i = 0; i < n; i++) frame(); }, until = (fn, max) => { let n = 0; while (!fn() && n < max) { frame(); n++; } return n; };
+      const place = (g, rel, d) => { const y = g.yaw + rel, p = g.position.clone().add(new THREE.Vector3(Math.sin(y) * d, 0, Math.cos(y) * d)); motor.teleport(p.x, p.z, Math.atan2(g.position.x - p.x, g.position.z - p.z)); for (let k = 0; k < 2; k++) step(0, 'stand'); };
+      const W = b => b.getWorldPosition(new THREE.Vector3());
+      const fresh = () => { cq.cancel(); g1.patrol.enabled = false; g1.reset(); g2.reset(); motor.teleport(-19, 19, 0); sim(10); };
+      const run = (g, setup) => {
+        setup(); input.cqcTapped = true; sim(40);
+        const out = { grabbed: cq.state === 'GRAPPLING' && cq.guard === g, before: g.awareness.state };
+        const S = g.position.clone(), P = motor.position.clone(), plan = cq.throwCheck();
+        input.throwTapped = true; const phases = []; let n = 0, herMove = 0, herJump = 0, headJump = 0, apart = 0, minSkin = Infinity, lp = motor.position.clone(), lh = W(g.head);
+        while (n < 200) { frame(); n++; if (cq.state !== 'THROWING') break; const ph = cq.thr.phase; if (phases[phases.length - 1] !== ph) phases.push(ph);
+          herMove = Math.max(herMove, motor.position.distanceTo(P)); herJump = Math.max(herJump, motor.position.distanceTo(lp)); lp.copy(motor.position);
+          const h = W(g.head); headJump = Math.max(headJump, h.distanceTo(lh)); lh.copy(h);
+          apart = Math.max(apart, Math.hypot(W(g.bones.hips).x - motor.position.x, W(g.bones.hips).z - motor.position.z));
+          if (g.isDown()) minSkin = Math.min(minSkin, A.lowest(g)); }
+        const land = new THREE.Vector3(S.x + plan.L.x * 0.55, 0, S.z + plan.L.z * 0.55);
+        Object.assign(out, { phases: phases.join('>'), time: n / 60, herMove, herJump, headJump, apart, minSkin, side: plan.side, ok: plan.ok,
+          hipsY: W(g.bones.hips).y, headY: W(g.head).y, lying: A.lowest(g), landErr: Math.hypot(g.position.x - land.x, g.position.z - land.z), ko: g.ko.state, aware: g.awareness.state, restrained: !!g.restraint, cqc: cq.state,
+          clear: cq._landingClear(S, plan.L, P, g) });
+        // her controls back
+        let spd = 0; const f = motor.yaw + Math.PI; for (let i = 0; i < 60; i++) { frame(Math.sin(f), Math.cos(f), 0.78); spd = Math.max(spd, motor.speed); } out.spd = spd;
+        return out;
+      };
+      const out = {};
+      for (const [k, rel] of [['rear', Math.PI], ['side', Math.PI / 2], ['front', 0]]) { fresh(); out['G2 ' + k] = run(g2, () => place(g2, rel, 1.0)); }
+      fresh(); g1.patrol.enabled = true; g1.reset(); until(() => g1.patrol.state === 'walking' && g1.moving, 600); out['G1 on patrol'] = run(g1, () => place(g1, Math.PI, 1.0));
+      fresh(); out['G2 fully ALERT'] = run(g2, () => { place(g2, 0, 1.2); until(() => g2.awareness.state === 'ALERT', 300); sim(150); });
+      out.alertSeen = out['G2 fully ALERT'].before === 'ALERT';
+      cq.cancel(); g1.reset(); g2.reset();
+      return out;
+    });
+    const rows = Object.entries(r).filter(([k]) => k !== 'alertSeen');
+    const good = x => x.grabbed && x.ok && x.phases === 'initiate>offBalance>throw>impact>recover' && x.time >= 1.3 && x.time <= 1.8 && x.herMove < 0.01 && x.herJump < 0.03 && x.headJump < 0.2 && x.apart < 1.3
+      && x.minSkin > -0.01 && x.lying < 0.02 && x.hipsY < 0.3 && x.headY < 0.3 && x.landErr < 0.01 && x.clear === '' && x.ko === 'UNCONSCIOUS' && x.aware === 'UNCONSCIOUS' && !x.restrained && x.cqc === 'FREE' && x.spd > 0.9;
+    const ok = rows.every(([, x]) => good(x)) && r.alertSeen && page.errors.length === 0;
+    return { pass: ok, detail: rows.map(([k, x]) => `${k} (${x.before}): ${x.phases} in ${x.time.toFixed(2)} s, side ${x.side}°, she moved ${(x.herMove * 100).toFixed(1)} cm, head step ≤ ${(x.headJump * 100).toFixed(0)} cm, hips ≤ ${x.apart.toFixed(2)} m from her, skin ≥ ${(x.minSkin * 100).toFixed(1)} cm, lying ${(x.lying * 100).toFixed(1)} cm (hips ${x.hipsY.toFixed(2)}, head ${x.headY.toFixed(2)} m), landed ${(x.landErr * 100).toFixed(1)} cm from plan, ${x.ko}, then she walks at ${x.spd.toFixed(2)} m/s`).join('; ') + `; page errors ${page.errors.length}` };
+  },
+
+  // Step 14, 12: the room he needs. A wall on her right: the throw goes to another side and
+  // his whole lying body is clear of every wall and crate; in the narrow corridor there's
+  // no room on any side: THROW isn't offered, a tap does nothing (still holding him, he's
+  // conscious) and the grapple carries on
+  async throwCollision() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input, world } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget;
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) step(0, 'stand'); else { MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); } noise.update(dt); g1.update(dt, T); g2.update(dt, T); };
+      const sim = n => { for (let i = 0; i < n; i++) frame(); };
+      const boxDist = (x, z) => { let m = Infinity; for (const b of world.boxes) m = Math.min(m, Math.hypot(Math.max(b.minX - x, 0, x - b.maxX), Math.max(b.minZ - z, 0, z - b.maxZ))); return m; };
+      const setup = (gx, gz, yaw) => { cq.cancel(); g1.patrol.enabled = false; g1.reset(); g2.reset(); g2.motor.teleport(gx, gz, yaw); g2.place(); motor.teleport(gx - Math.sin(yaw) * 1.0, gz - Math.cos(yaw) * 1.0, yaw); for (let k = 0; k < 2; k++) step(0, 'stand'); sim(2); input.cqcTapped = true; sim(40); };
+      // along the south perimeter wall, facing west: her right is the wall side
+      setup(-8, -21.0, -Math.PI / 2);
+      const near = { state: cq.state, check: cq.throwCheck(), right: boxDist(motor.position.x + Math.cos(motor.yaw + Math.PI / 2) * 0, motor.position.z) };
+      const first = cq._landingClear(g2.position.clone(), new THREE.Vector3(Math.sin(motor.yaw - Math.PI / 2), 0, Math.cos(motor.yaw - Math.PI / 2)), motor.position.clone(), g2);
+      input.throwTapped = true; sim(100);
+      const b = g2.ko.body; let bodyClear = Infinity; for (let s = -0.95; s <= 0.9; s += 0.05) bodyClear = Math.min(bodyClear, boxDist(b.position.x + b.along.x * s, b.position.z + b.along.z * s));
+      const wall = { side: near.check.side, first, ko: g2.ko.state, bodyClear };
+      // in the narrow corridor
+      let corridor = null;
+      for (const [gx, gz, yaw] of [[17.2, -4, 0], [17.2, -7, 0], [16.9, -2, Math.PI]]) {
+        setup(gx, gz, yaw); const c = cq.throwCheck();
+        if (cq.state === 'GRAPPLING' && !c.ok) { input.throwTapped = true; sim(30); corridor = { at: [gx, gz], why: c.why, state: cq.state, ko: g2.ko.state, restrained: !!g2.restraint }; let mv0 = motor.position.clone(); sim(1); const f = motor.yaw + Math.PI; for (let i = 0; i < 30; i++) frame(Math.sin(f), Math.cos(f), 1); corridor.pulled = motor.position.distanceTo(mv0); break; }
+      }
+      cq.cancel(); g2.reset();
+      return { wall, corridor, boxes: world.boxes.length };
+    });
+    const ok = r.wall.side !== -90 && r.wall.first !== '' && r.wall.ko === 'UNCONSCIOUS' && r.wall.bodyClear > 0.1
+      && !!r.corridor && /no room/.test(r.corridor.why) && r.corridor.state === 'GRAPPLING' && r.corridor.ko === 'CONSCIOUS' && r.corridor.restrained && r.corridor.pulled > 0.05 && page.errors.length === 0;
+    return { pass: ok, detail: `beside the perimeter wall: her right side refused (${r.wall.first}), thrown to ${r.wall.side}°, ${r.wall.ko}, his lying body ${r.wall.bodyClear.toFixed(2)} m from the nearest wall or crate; ${r.corridor ? `in the corridor at (${r.corridor.at}): "${r.corridor.why}", tap → ${r.corridor.state}, he's ${r.corridor.ko}, still restrained ${r.corridor.restrained}, the pull still works (${r.corridor.pulled.toFixed(2)} m)` : 'no corridor spot found'}` };
+  },
+
+  // Step 14, 15–16: the landing makes one sound, from where he lands: a "body impact"
+  // (source 'takedown') at the configured level. It goes through normal hearing: Guard 1,
+  // 9 m away with his back to it (he never sees her), hears it and turns to it (SUSPICIOUS /
+  // INVESTIGATING about the landing spot, not about where she goes afterwards); moved out
+  // of its reach he hears nothing and stays NORMAL. The thrown guard hears nothing
+  async throwNoise() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget;
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) step(0, 'stand'); else { MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); } noise.update(dt); g1.update(dt, T); g2.update(dt, T); };
+      const sim = n => { for (let i = 0; i < n; i++) frame(); };
+      const events = []; const off = noise.on(ev => { if (ev.source !== 'player') events.push({ type: ev.type, level: ev.level, source: ev.source, p: ev.position.clone(), radius: ev.radius }); });
+      const go = g1At => {
+        cq.cancel(); g1.patrol.enabled = false; g1.reset(); g2.reset(); g1.motor.teleport(g1At[0], g1At[1], g1At[2]); g1.place(); g1.post.copy(g1.position); g1.postYaw = g1.yaw; g1.reset();
+        const b = g2.position.clone().addScaledVector(g2.forward(), -1.0); motor.teleport(b.x, b.z, g2.yaw); for (let k = 0; k < 2; k++) step(0, 'stand'); sim(2);
+        input.cqcTapped = true; sim(40); events.length = 0; input.throwTapped = true; sim(95);
+        const land = g2.ko.body.position.clone();
+        // she slips away (out of everyone's sight) after the throw
+        motor.teleport(-19, 19, 0); sim(120);
+        const a = g1.awareness, h = g1.hearing.last;
+        return { events: events.map(e => ({ ...e, d: Math.hypot(e.p.x - land.x, e.p.z - land.z) })), g1: { state: a.state, heard: !!(h && h.heard && h.type === 'body impact'), dist: Math.hypot(g1.position.x - land.x, g1.position.z - land.z),
+          focus: a.heard ? Math.hypot(a.heard.position.x - land.x, a.heard.position.z - land.z) : 99, toHer: a.heard ? Math.hypot(a.heard.position.x - motor.position.x, a.heard.position.z - motor.position.z) : 0, seenHer: g1.vision.meter }, self: g2.hearing.last ? g2.hearing.last.heard : null };
+      };
+      const near = go([-12, -9.6, 0]);   // 9 m north, facing away from the throw (it's behind him)
+      const far = go([8, -6, 0]);        // 23 m away (out of reach on concrete at level 3)
+      off(); cq.cancel(); MV.guard.post.set(2, 0, -16); MV.guard.postYaw = 0; g1.reset(); g2.reset();
+      return { near, far, level: cq.tcfg.noiseLevel };
+    });
+    const ev = r.near.events;
+    const ok = ev.length === 1 && ev[0].type === 'body impact' && ev[0].source === 'takedown' && ev[0].level === r.level && ev[0].d < 0.01
+      && r.near.g1.heard && /SUSPICIOUS|INVESTIGATING/.test(r.near.g1.state) && r.near.g1.focus < 1.5 && r.near.g1.toHer > 5 && r.near.g1.seenHer === 0
+      && r.far.events.length === 1 && !r.far.g1.heard && r.far.g1.state === 'NORMAL' && r.near.self === false && page.errors.length === 0;
+    return { pass: ok, detail: `events from the throw: ${ev.map(e => `${e.type} L${e.level} (${e.source}) ${(e.d * 100).toFixed(1)} cm from where he landed, reach ${e.radius.toFixed(1)} m`).join(', ')}; Guard 1 ${r.near.g1.dist.toFixed(1)} m away, back turned: heard ${r.near.g1.heard}, ${r.near.g1.state}, his idea of the sound ${r.near.g1.focus.toFixed(2)} m from the landing and ${r.near.g1.toHer.toFixed(1)} m from where she is now, saw her ${Math.round(r.near.g1.seenHer * 100)}%; ${r.far.g1.dist.toFixed(1)} m away: heard ${r.far.g1.heard}, ${r.far.g1.state}; the thrown guard heard it: ${r.near.self}` };
+  },
+
+  // Step 14, 18–19: unconscious. For 20 s she walks round him, stands in his face and stamps
+  // beside him: he never sees (meter 0) or hears anything, stays UNCONSCIOUS (no ALERT, no
+  // search, no vocal reaction, no awareness indicator), Guard 1's patrol doesn't move him,
+  // his body doesn't move or animate (position and head < 1 mm), CQC can't grab him; his
+  // standing collider is gone and two low ones lie along his body: she can't walk through
+  // him but can walk round him
+  async unconsciousState() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input, world } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget;
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) motor.update(dt, dx || 0, dz || 0, mag || 0); MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); noise.update(dt); g1.update(dt, T); g2.update(dt, T); MV.indicator.update(dt, MV.camera, 640, 300); };
+      const sim = (n, dx, dz, mag) => { for (let i = 0; i < n; i++) frame(dx, dz, mag); };
+      const W = b => b.getWorldPosition(new THREE.Vector3());
+      // Guard 1 (on his patrol) thrown near his post
+      cq.cancel(); g2.reset(); g1.patrol.enabled = true; g1.reset(); sim(30);
+      const b = g1.position.clone().addScaledVector(g1.forward(), -1.0); motor.teleport(b.x, b.z, g1.yaw); for (let k = 0; k < 2; k++) step(0, 'stand');
+      input.cqcTapped = true; sim(40); input.throwTapped = true; sim(95);
+      const a = g1.awareness, p0 = g1.position.clone(), h0 = W(g1.head), r0 = a.reactions, cyl = world.cylinders.length, standing = g1.collider.x;
+      const lying = g1.ko.colliders.map(c => ({ r: c.r, top: c.top }));
+      let meter = 0, states = new Set(), heard = 0, moved = 0, headMoved = 0, grab = '', ind = 0, closest = Infinity;
+      const B = g1.ko.body, ring = t => new THREE.Vector3(B.position.x + Math.sin(t) * 1.4, 0, B.position.z + Math.cos(t) * 1.4);
+      for (let i = 0; i < 20 * 60; i++) {
+        if (i % 300 === 0) { const q = i < 600 ? ring(i / 100) : B.position.clone().addScaledVector(new THREE.Vector3(-B.along.z, 0, B.along.x), 0.75); motor.teleport(q.x, q.z, Math.atan2(B.position.x - q.x, B.position.z - q.z)); }
+        if (i % 20 === 0) noise.emit(3, 'footstep', motor.position.clone(), 'metal', 'player');
+        // walk straight at his body: she's stopped by it
+        const tx = B.position.x - motor.position.x, tz = B.position.z - motor.position.z, d = Math.hypot(tx, tz) || 1;
+        frame(tx / d, tz / d, 0.5);
+        closest = Math.min(closest, ...g1.ko.colliders.map(c => Math.hypot(c.x - motor.position.x, c.z - motor.position.z) - c.r - motor.cfg.radius));
+        meter = Math.max(meter, g1.vision.meter); states.add(a.state); if (g1.hearing.last && g1.hearing.last.heard) heard++;
+        moved = Math.max(moved, g1.position.distanceTo(p0)); headMoved = Math.max(headMoved, W(g1.head).distanceTo(h0));
+        if (MV.indicator.visible && MV.indicator.kind) ind++;
+      }
+      motor.teleport(B.position.x - B.along.z * 0.9, B.position.z + B.along.x * 0.9, 0); for (let k = 0; k < 2; k++) step(0, 'stand'); grab = cq.check();
+      // walk round him: a circle 1.2 m out
+      let round = 0; motor.teleport(B.position.x + 1.2, B.position.z, 0); const s0 = motor.position.clone();
+      for (let i = 0; i < 240; i++) { const t = Math.atan2(motor.position.x - B.position.x, motor.position.z - B.position.z) + Math.PI / 2; frame(Math.sin(t), Math.cos(t), 0.5); round += 0; }
+      round = motor.position.distanceTo(s0) + 0.0;
+      const out = { meter, states: [...states], heard, moved, headMoved, grab, ind, closest, cyl, standing, lying, reactions: a.reactions - r0, patrol: g1.patrol.state, ko: g1.ko.state, left: g1.ko.left, travelled: round };
+      cq.cancel(); g1.reset(); g2.reset(); out.cylAfter = world.cylinders.length;
+      return out;
+    });
+    const ok = r.meter === 0 && r.states.length === 1 && r.states[0] === 'UNCONSCIOUS' && r.heard === 0 && r.moved < 0.001 && r.headMoved < 0.001 && /down/.test(r.grab) && r.ind === 0
+      && r.reactions === 0 && r.ko === 'UNCONSCIOUS' && r.standing > 1e5 && r.lying.length === 2 && r.lying.every(c => c.top <= 0.3) && r.closest > -0.01 && r.travelled > 1 && r.cylAfter === r.cyl - 2 && page.errors.length === 0;
+    return { pass: ok, detail: `20 s with her circling him, in his face and stamping on metal: detection ${Math.round(r.meter * 100)}%, states ${r.states.join(',')}, sounds heard ${r.heard}, new reactions ${r.reactions}, indicator frames ${r.ind}, body moved ${(r.moved * 1000).toFixed(2)} mm, head ${(r.headMoved * 1000).toFixed(2)} mm, patrol ${r.patrol}, ${r.left.toFixed(0)} s left; CQC by him: "${r.grab}"; standing collider ${r.standing > 1e5 ? 'off' : 'ON'}, lying colliders ${r.lying.map(c => `r ${c.r} top ${c.top}`).join(' / ')}; walking straight at him she stayed ${(r.closest * 100).toFixed(1)} cm clear; walking round him she covered ${r.travelled.toFixed(2)} m; after RESET ${r.cylAfter} colliders (was ${r.cyl})` };
+  },
+
+  // Step 14, 20–24: recovery. The timer runs on game time (10 s → 10 s less); when it runs
+  // out he stirs, sits up and gets up (in that order, ≈3.5 s), skin never below the ground,
+  // no jumps, standing where his body lay, his standing collider back and the lying ones
+  // gone. If she's standing on that spot he waits, and gets up once she moves away. Awake,
+  // he knows he was attacked: an Active Search around where it happened (where she was then),
+  // not where she is now (she left; no heading carried over). Once it all runs out Guard 1
+  // goes back to his patrol and Guard 2 walks back to his post (no teleport)
+  async recovery() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input, world } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget, A = MV.SCmv.ThrowAnim;
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) step(0, 'stand'); else { MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); } noise.update(dt); g1.update(dt, T); g2.update(dt, T); };
+      const sim = n => { for (let i = 0; i < n; i++) frame(); }, until = (fn, max) => { let n = 0; while (!fn() && n < max) { frame(); n++; } return n; };
+      const W = b => b.getWorldPosition(new THREE.Vector3());
+      const throwG = g => { const b = g.position.clone().addScaledVector(g.forward(), -1.0); motor.teleport(b.x, b.z, g.yaw); for (let k = 0; k < 2; k++) step(0, 'stand'); sim(2); input.cqcTapped = true; sim(40); const at = motor.position.clone().setY(0); input.throwTapped = true; sim(95); return at; };
+      const out = {};
+      // Guard 2
+      cq.cancel(); g1.patrol.enabled = false; g1.reset(); g2.reset(); sim(5);
+      const attackAt = throwG(g2), body = g2.ko.body.position.clone();
+      const left0 = g2.ko.left; sim(600); out.timer = left0 - g2.ko.left;
+      // she leaves, out of his sight, while he's out
+      motor.teleport(-19, 19, 0);
+      until(() => g2.ko.state === 'WAKING', 60 * 60); const wakeAt = g2.awareness.clock - g2.ko.body.at;   // game time since he hit the ground
+      const phases = []; let minSkin = Infinity, headJump = 0, lh = W(g2.head), frames = 0;
+      while (g2.ko.state === 'WAKING' && frames < 600) { if (phases[phases.length - 1] !== g2.ko.phase) phases.push(g2.ko.phase); frame(); frames++; if (g2.isDown()) minSkin = Math.min(minSkin, A.lowest(g2)); const h = W(g2.head); headJump = Math.max(headJump, h.distanceTo(lh)); lh.copy(h); }
+      const a = g2.awareness;
+      Object.assign(out, { wakeAt, phases: phases.join('>'), wakeTime: frames / 60, minSkin, headJump, standErr: Math.hypot(g2.position.x - body.x, g2.position.z - body.z), headY: W(g2.head).y,
+        collider: Math.hypot(g2.collider.x - g2.position.x, g2.collider.z - g2.position.z), lyingLeft: g2.ko.colliders.length, state: a.state, note: a.note,
+        anchor: (() => { const e = a.evasion, p = e && (e.visited[0] || (e.dest && e.dest.p)); return p ? Math.hypot(p.x - attackAt.x, p.z - attackAt.z) : 99; })(),   // his first search spot (a sentry can't walk to it: it's marked visited)
+        seenAt: a.seen ? Math.hypot(a.seen.position.x - attackAt.x, a.seen.position.z - attackAt.z) : 99, seenHer: a.seen ? Math.hypot(a.seen.position.x - motor.position.x, a.seen.position.z - motor.position.z) : 0, travel: a.evasion ? a.evasion.travel : 'none', track: a.track.length });
+      // settles, then back to his post on foot
+      a.cfg.evasionTime = 6; a.evasion.end = a.clock + 6; a.cfg.heightenedTime = 6; let jump = 0, lp = g2.position.clone();
+      const home = until(() => { jump = Math.max(jump, g2.position.distanceTo(lp)); lp.copy(g2.position); return a.state === 'NORMAL' && g2.atPost(); }, 60 * 90) / 60;
+      Object.assign(out, { home, homeJump: jump, atPost: g2.atPost() });
+      a.cfg.evasionTime = 30; a.cfg.heightenedTime = 60;
+      // Guard 1: thrown on his patrol, wakes, searches, then patrols again
+      cq.cancel(); g2.reset(); g1.patrol.enabled = true; g1.reset(); until(() => g1.patrol.state === 'walking' && g1.moving, 600);
+      throwG(g1); motor.teleport(-19, 19, 0); g1.ko.left = 0.05; until(() => !g1.isDown(), 600);
+      const b1 = g1.awareness; b1.cfg.evasionTime = 4; b1.evasion.end = b1.clock + 4; b1.cfg.heightenedTime = 4;
+      const p1 = g1.position.clone(); const back = until(() => b1.state === 'NORMAL' && g1.patrol.state !== 'interrupted' && g1.position.distanceTo(p1) > 1.5, 60 * 120) / 60;
+      Object.assign(out, { g1back: back, g1patrol: g1.patrol.state, g1state: b1.state });
+      b1.cfg.evasionTime = 30; b1.cfg.heightenedTime = 60;
+      // no room to get up: she stands where he'd stand
+      cq.cancel(); g1.patrol.enabled = false; g1.reset(); g2.reset(); sim(5); throwG(g2);
+      const spot = g2.ko.body.position.clone(), dir = g2.ko.body.along;
+      motor.teleport(spot.x - dir.z * 0.45, spot.z + dir.x * 0.45, 0); step(0, 'stand'); g2.ko.left = 0.05; sim(120);
+      out.blocked = { state: g2.ko.state, note: g2.ko.note };
+      motor.teleport(-19, 19, 0); sim(40); out.blocked.after = g2.ko.state;
+      cq.cancel(); g1.reset(); g2.reset();
+      return out;
+    });
+    const ok = Math.abs(r.timer - 10) < 0.05 && Math.abs(r.wakeAt - 60) < 0.2 && r.phases === 'stirring>sittingUp>rising' && Math.abs(r.wakeTime - 3.5) < 0.1 && r.minSkin > -0.01 && r.headJump < 0.08
+      && r.standErr < 0.01 && r.headY > 1.3 && r.collider < 0.01 && r.lyingLeft === 0 && (r.state === 'EVASION') && /attacked/.test(r.note) && r.anchor < 1.5 && r.seenAt < 0.01 && r.seenHer > 5 && r.travel === null && r.track === 0
+      && r.home > 0 && r.home < 90 && r.homeJump < 0.06 && r.atPost && r.g1back > 0 && r.g1back < 120 && r.g1state === 'NORMAL' && r.g1patrol !== 'interrupted'
+      && r.blocked.state === 'UNCONSCIOUS' && /no room/.test(r.blocked.note) && r.blocked.after !== 'UNCONSCIOUS' && page.errors.length === 0;
+    return { pass: ok, detail: `10 s of game time took ${r.timer.toFixed(2)} s off his timer; waking began ${r.wakeAt.toFixed(2)} s after he hit the ground; ${r.phases} in ${r.wakeTime.toFixed(2)} s, skin ≥ ${(r.minSkin * 100).toFixed(1)} cm, head step ≤ ${(r.headJump * 100).toFixed(1)} cm, standing ${(r.standErr * 100).toFixed(1)} cm from where he lay (head at ${r.headY.toFixed(2)} m), collider back (${(r.collider * 100).toFixed(1)} cm), lying colliders left ${r.lyingLeft}; awake: ${r.state} ("${r.note}"), first search spot ${r.anchor.toFixed(2)} m from where she attacked, memory of her ${r.seenAt.toFixed(2)} m from there and ${r.seenHer.toFixed(1)} m from where she is now, heading ${r.travel === null ? 'none' : 'KNOWN'}, track ${r.track}; Guard 2 walked home in ${r.home.toFixed(1)} s (step ≤ ${(r.homeJump * 100).toFixed(1)} cm), at post ${r.atPost}; Guard 1 back on patrol ${r.g1back.toFixed(1)} s after waking (${r.g1state}, patrol ${r.g1patrol}); with her on his spot: ${r.blocked.state} ("${r.blocked.note}"), then ${r.blocked.after} once she moved` };
+  },
+
+  // Step 14, 25: independent guards. While Guard 2 is thrown and lies unconscious, Guard 1
+  // patrols on as before (same route positions as a run where Guard 2 is only grabbed and
+  // released; a quiet landing here, out of his hearing), conscious;
+  // both can be out at once, each on his own timer, each with his own pose and colliders
+  async throwIndependence() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget;
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) step(0, 'stand'); else { MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); } noise.update(dt); g1.update(dt, T); g2.update(dt, T); };
+      const sim = n => { for (let i = 0; i < n; i++) frame(); };
+      const track = n => { const t = []; for (let i = 0; i < n; i++) { frame(); if (i % 30 === 0) t.push(g1.position.clone()); } return t; };
+      const prep = () => { cq.cancel(); g1.patrol.enabled = true; g1.reset(); g2.reset(); const b = g2.position.clone().addScaledVector(g2.forward(), -1.0); motor.teleport(b.x, b.z, g2.yaw); for (let k = 0; k < 2; k++) step(0, 'stand'); };
+      // (a quiet landing for this check: hearing it is a legitimate reaction, covered by throwNoise)
+      const lvl = cq.tcfg.noiseLevel; cq.tcfg.noiseLevel = 1;
+      // (both runs alike: grab, then release or throw, then she slips away out of his sight)
+      prep(); input.cqcTapped = true; sim(40); input.cqcTapped = true; sim(95); motor.teleport(-19, 19, 0); const ref = track(900);   // grab and release (no throw)
+      prep(); input.cqcTapped = true; sim(40); input.throwTapped = true; sim(95); motor.teleport(-19, 19, 0); const run = track(900);
+      let dev = 0; for (let i = 0; i < ref.length; i++) dev = Math.max(dev, ref[i].distanceTo(run[i]));
+      const g1state = g1.ko.state, g1aware = g1.awareness.state, g2state = g2.ko.state;
+      // both down: Guard 1 thrown 20 s after Guard 2
+      g2.ko.left = 40; const b = g1.position.clone().addScaledVector(g1.forward(), -1.0); motor.teleport(b.x, b.z, g1.yaw); for (let k = 0; k < 2; k++) step(0, 'stand');
+      input.cqcTapped = true; sim(40); input.throwTapped = true; sim(95);
+      const both = { g1: g1.ko.state, g2: g2.ko.state, l1: g1.ko.left, l2: g2.ko.left, frozen: g1._frozen !== g2._frozen && !!g1._frozen && !!g2._frozen, cols: g1.ko.colliders[0] !== g2.ko.colliders[0], fall: g1.fall !== g2.fall };
+      sim(60 * 39.5); both.g2After = g2.ko.state; both.g1After = g1.ko.state;
+      cq.cancel(); g1.reset(); g2.reset(); cq.tcfg.noiseLevel = lvl;
+      return { dev, g1state, g1aware, g2state, both };
+    });
+    const ok = r.dev < 0.01 && r.g1state === 'CONSCIOUS' && r.g1aware === 'NORMAL' && r.g2state === 'UNCONSCIOUS' && r.both.g1 === 'UNCONSCIOUS' && r.both.g2 === 'UNCONSCIOUS' && r.both.l1 > r.both.l2 + 15
+      && r.both.frozen && r.both.cols && r.both.fall && r.both.g2After === 'WAKING' && r.both.g1After === 'UNCONSCIOUS' && page.errors.length === 0;
+    return { pass: ok, detail: `Guard 1's patrol with Guard 2 thrown vs only grabbed and released: largest difference ${(r.dev * 100).toFixed(2)} cm, he's ${r.g1state} / ${r.g1aware} while Guard 2 is ${r.g2state}; both out: ${r.both.g1} (${r.both.l1.toFixed(1)} s left) and ${r.both.g2} (${r.both.l2.toFixed(1)} s left), own poses ${r.both.frozen}, own colliders ${r.both.cols}; 39.5 s later Guard 2 ${r.both.g2After}, Guard 1 still ${r.both.g1After}` };
+  },
+
+  // Step 14, 1–3, 7, 26–27 with real iPhone touches (frame loop running). THROW is hidden
+  // until she holds a guard, then shows above RELEASE, clear of the CQC and CROUCH buttons
+  // and on the camera side of the screen. Pulling him around with the stick never throws;
+  // RELEASE still frees him. A real tap on THROW (while the stick is held) throws Guard 2;
+  // holding the button and tapping again mid-throw doesn't start a second throw, and the
+  // button is gone while throwing. RESET mid-throw and RESET while he's unconscious both
+  // put both guards back at their posts, standing and conscious, and clear the throw
+  async throwTouch() {
+    const page = await touchPage(), Tc = page.touch;
+    const box = async sel => page.locator(sel).boundingBox();
+    const tapAt = async (b, ms) => { await Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(ms || 80); await Tc('touchEnd', []); await page.waitForTimeout(120); };
+    const behind = async () => { await page.evaluate(() => { const g = MV.guard2; const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); }); await page.waitForTimeout(250); };
+    const grab = async () => { await tapAt(await box('#mv-cqc')); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(300); };
+    await page.evaluate(() => { MV.guard2.reset(); document.getElementById('mv-stats').hidden = false; });
+    const hiddenFree = await page.evaluate(() => document.getElementById('mv-throw').hidden);
+    await behind(); await grab();
+    const shown = await page.evaluate(() => ({ hidden: document.getElementById('mv-throw').hidden, ready: document.getElementById('mv-throw').classList.contains('ready'), cqc: document.getElementById('mv-cqc').textContent }));
+    const tb = await box('#mv-throw'), cb = await box('#mv-cqc'), kb = await box('#mv-crouch'), vw = page.viewportSize().width;
+    const over = (a, b) => !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
+    const layout = { overlap: over(tb, cb) || over(tb, kb), right: tb.x > vw * 0.45 };
+    // pull him around with the stick for 2 s: no throw
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); for (let i = 0; i < 12; i++) { await Tc('touchMove', [{ x: 150 + (i % 2 ? 40 : -40), y: 340, id: 1 }]); await page.waitForTimeout(160); }
+    await Tc('touchEnd', []); await page.waitForTimeout(200);
+    const pulled = await page.evaluate(() => ({ state: MV.cqc.state, throws: MV.cqc.throws, down: MV.guard2.isDown() }));
+    // RELEASE still works
+    await tapAt(await box('#mv-cqc')); await page.waitForFunction(() => MV.cqc.state === 'FREE', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(200);
+    const released = await page.evaluate(() => ({ state: MV.cqc.state, restrained: !!MV.guard2.restraint, down: MV.guard2.isDown(), aware: MV.guard2.awareness.state, hidden: document.getElementById('mv-throw').hidden }));
+    // grab again; THROW with the stick held, holding the button 600 ms, then a second tap mid-throw
+    await page.evaluate(() => { MV.guard2.reset(); }); await behind(); await grab();
+    const t = await box('#mv-throw');
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 310, id: 1 }]);
+    await Tc('touchStart', [{ x: 150, y: 310, id: 1 }, { x: t.x + t.width / 2, y: t.y + t.height / 2, id: 8 }]);
+    await page.waitForTimeout(600); await Tc('touchEnd', [{ x: 150, y: 310, id: 1 }]);
+    const mid = await page.evaluate(() => ({ state: MV.cqc.state, hidden: document.getElementById('mv-throw').hidden, phase: MV.cqc.thr && MV.cqc.thr.phase }));
+    await page.evaluate(() => { MV.input.throwTapped = true; });   // a second request mid-throw
+    await Tc('touchEnd', []);
+    await page.waitForFunction(() => MV.cqc.state === 'FREE', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(300);
+    const after = await page.evaluate(() => ({ state: MV.cqc.state, throws: MV.cqc.throws, impacts: MV.cqc.impacts, ko: MV.guard2.ko.state, stat: document.getElementById('mv-ko').textContent + ' | ' + document.getElementById('mv-g2').textContent, hidden: document.getElementById('mv-throw').hidden }));
+    // RESET while he's unconscious
+    await page.tap('#mv-reset'); await page.waitForTimeout(300);
+    const state = () => page.evaluate(() => ({ cqc: MV.cqc.state, stance: MV.motor.stance, hidden: document.getElementById('mv-throw').hidden, cyl: MV.world.cylinders.length,
+      g: MV.guards.map(g => ({ ko: g.ko.state, aware: g.awareness.state, post: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), tilt: g.fall.quaternion.w, restrained: !!g.restraint, col: Math.hypot(g.collider.x - g.position.x, g.collider.z - g.position.z) })) }));
+    const resetKO = await state();
+    // RESET mid-throw
+    await behind(); await grab(); await tapAt(await box('#mv-throw'));
+    await page.waitForFunction(() => MV.cqc.thr && MV.cqc.thr.phase === 'throw', null, { timeout: 8000, polling: 'raf' }).catch(() => {});
+    const during = await page.evaluate(() => MV.cqc.thr && MV.cqc.thr.phase);
+    await page.tap('#mv-reset'); await page.waitForTimeout(300);
+    const resetMid = await state();
+    const clean = s => s.cqc === 'FREE' && s.stance === 'stand' && s.hidden && s.g.every(g => g.ko === 'CONSCIOUS' && g.aware === 'NORMAL' && g.post < 0.01 && Math.abs(g.tilt) > 0.9999 && !g.restrained && g.col < 0.01);
+    const ok = hiddenFree && !shown.hidden && shown.ready && shown.cqc === 'RELEASE' && !layout.overlap && layout.right && pulled.state === 'GRAPPLING' && pulled.throws === 0 && !pulled.down
+      && released.state === 'FREE' && !released.restrained && !released.down && released.aware === 'ALERT' && released.hidden
+      && mid.state === 'THROWING' && mid.hidden && after.state === 'FREE' && after.throws === 1 && after.impacts === 1 && after.ko === 'UNCONSCIOUS' && /UNCONSCIOUS/.test(after.stat)
+      && clean(resetKO) && during === 'throw' && clean(resetMid) && resetKO.cyl === resetMid.cyl && page.errors.length === 0;
+    return { pass: ok, detail: `free: THROW hidden ${hiddenFree}; holding him: shown ${!shown.hidden}, lit ${shown.ready}, CQC reads "${shown.cqc}", overlaps CQC/CROUCH ${layout.overlap}, on the camera side ${layout.right}; 2 s of pulling: ${pulled.state}, throws ${pulled.throws}; RELEASE: ${released.state}, he's ${released.aware}, down ${released.down}; THROW tapped with the stick held: ${mid.state} (${mid.phase}), button hidden ${mid.hidden}; after a held press and a second request: throws ${after.throws}, impacts ${after.impacts}, he's ${after.ko}, stats "${after.stat}"; RESET while unconscious: ${resetKO.cqc}, guards ${resetKO.g.map(g => g.ko + '/' + g.aware + ' ' + g.post.toFixed(2) + ' m').join(', ')}; RESET mid-throw (${during}): ${resetMid.cqc}, stance ${resetMid.stance}, guards ${resetMid.g.map(g => g.ko + '/' + g.aware + ' ' + g.post.toFixed(2) + ' m').join(', ')}, colliders ${resetMid.cyl}; page errors ${page.errors.length}` };
+  },
+
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
   async groundContact() {
     const page = await simPage();

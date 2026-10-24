@@ -119,3 +119,14 @@ body:not(.playing) #mv-joy-hint, body:not(.playing) .mv-look-hint, body:not(.pla
 #mv-cqc.ready { opacity: 1; border-color: var(--text); }
 #mv-cqc.holding { opacity: 1; background: var(--warn); color: var(--ink); border-color: var(--warn); }
 #mv-cqc.down { transform: scale(0.94); }
+/* THROW (Step 14): appears above RELEASE only while she holds a guard; dim when there's no room to throw */
+#mv-throw {
+  position: absolute; width: 56px; height: 56px; border-radius: 50%;
+  right: calc(123px + env(safe-area-inset-right, 0px)); bottom: calc(176px + env(safe-area-inset-bottom, 0px));
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px; color: var(--text);
+  background: var(--panel); border: 1.5px solid var(--line); touch-action: none; opacity: 0.55;
+}
+#mv-throw[hidden] { display: none; }
+#mv-throw.ready { opacity: 1; border-color: var(--accent); color: var(--accent); }
+#mv-throw.down { transform: scale(0.94); }
+body:not(.playing) #mv-throw { visibility: hidden; }

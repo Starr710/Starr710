@@ -102,7 +102,8 @@
     const key = P.traits.primary + '/' + P.traits.secondary;
     if (key !== this._key) { this._key = key; this.pri.textContent = P.traits.primary.toUpperCase(); this.sec.textContent = label(P.traits.secondary); }
     // anchor: his shoulder height above his feet; screen scale there from the camera's right
-    const a = this._v.copy(g.position).setY(g.position.y + c.height), right = this._r.setFromMatrixColumn(camera.matrixWorld, 0).setY(0).normalize();
+    // (Step 14: on the ground, the card sits a little above his body instead of his standing shoulder)
+    const a = g.isDown && g.isDown() && g.bones.chest ? g.bones.chest.getWorldPosition(this._v).setY(g.position.y + 0.55) : this._v.copy(g.position).setY(g.position.y + c.height), right = this._r.setFromMatrixColumn(camera.matrixWorld, 0).setY(0).normalize();
     const s = this._q.copy(a).project(camera), sx = (s.x + 1) / 2 * w, sy = (1 - s.y) / 2 * h;
     const e = this._p.copy(a).add(right).project(camera), pxPerM = Math.abs((e.x + 1) / 2 * w - sx);
     const scale = Math.max(c.minScale, Math.min(1, pxPerM / c.refPxPerM));

@@ -106,9 +106,16 @@
     }
   };
 
+  // Step 14: unconscious, he sees nothing (and has seen nothing since)
+  mv.GuardVision.prototype.blind = function () {
+    const s = this.seen; this.meter = 0; this.sinceSeen = Infinity; this.acc = Infinity;
+    s.zone = null; s.rate = 0; s.blocked = false; s.exposure = 0; s.rays.length = 0; s.position = null; s.distance = Infinity; s.why = 'unconscious';
+  };
+
   // short state for the developer view
   mv.GuardVision.prototype.state = function () {
     const s = this.seen;
+    if (s.why === 'unconscious' && this.guard.isDown && this.guard.isDown()) return 'UNCONSCIOUS';
     if (this.meter >= 1 && s.rate > 0) return 'RECOGNISED';
     if (s.rate > 0) return 'SEEING';
     if (this.meter > 0) return this.sinceSeen > this.cfg.holdTime ? 'FADING' : 'HOLDING';
@@ -151,6 +158,8 @@
   const _a = new THREE.Vector3(), _b = new THREE.Vector3();
   mv.GuardDebugView.prototype.update = function (camera, target) {
     const g = this.guard, v = g.vision, s = v.seen;
+    this.group.visible = !(g.isDown && g.isDown());   // Step 14: no sight while he's down
+    if (!this.group.visible) return;
     this.zones.position.set(g.position.x, 0, g.position.z); this.zones.rotation.y = g.yaw;
     const eye = g.eye(_a), c = target.centre(_b);
     const pos = this.line.geometry.attributes.position; pos.setXYZ(0, eye.x, eye.y, eye.z); pos.setXYZ(1, c.x, c.y, c.z); pos.needsUpdate = true;

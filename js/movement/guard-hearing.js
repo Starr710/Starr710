@@ -40,10 +40,10 @@
 
   mv.GuardHearing.prototype.hear = function (ev) {
     if (this.cfg.ignoreSources.indexOf(ev.source) >= 0) return;
-    const r = this.evaluate(ev);
+    const r = this.evaluate(ev), out = this.guard.isDown && this.guard.isDown();   // Step 14: unconscious, he hears nothing
     this.last = { type: ev.type, level: ev.level, intensity: ev.intensity, surface: ev.surface, source: ev.source,
-      distance: r.distance, reach: r.reach, heard: r.heard, position: ev.position.clone(), time: this.clock };
-    if (!r.heard) return;
+      distance: r.distance, reach: r.reach, heard: r.heard && !out, position: ev.position.clone(), time: this.clock, why: out ? 'unconscious' : '' };
+    if (!r.heard || out) return;
     this.heard = this.last; this.heardCount++;
     if (this.onHeard) this.onHeard(this.last);
   };

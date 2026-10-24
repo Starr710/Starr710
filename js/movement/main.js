@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), cqcBtn: $('mv-cqc'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -59,7 +59,7 @@
   const world = new mv.CollisionWorld();
   const area = mv.buildTestArea(scene, world, renderer);
   const motor = new mv.CharacterMotor(world);
-  const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), crouch: $('mv-crouch'), cqc: $('mv-cqc') });
+  const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), crouch: $('mv-crouch'), cqc: $('mv-cqc'), throw: $('mv-throw') });
   const cam = new mv.ThirdPersonCamera(camera, world);
   const actions = new mv.ActionSystem();
   const noise = new mv.NoiseSystem(scene);
@@ -106,7 +106,7 @@
     voice = new mv.GuardVoice(() => footAudio.ctx);
     // caption: a TEMPORARY "Huh" above his head while no recording exists (guard-caption.js)
     caption = new mv.GuardCaption($('mv-caption'), guard, world);
-    cqc = new mv.CQC({ motor, visual, input }, [guard, guard2], world);   // Step 13: grab and restraint (whichever guard is in reach)
+    cqc = new mv.CQC({ motor, visual, input, noise }, [guard, guard2], world);   // Step 13: grab and restraint (whichever guard is in reach)
     indicator = new mv.GuardIndicator($('mv-indicator'), guard, world);   // TEMPORARY awareness symbol above him (UI only)
     traitCard = new mv.GuardTraitCard($('mv-trait'), guard, world, null, motor);   // his personality, beside him, clear of the player (UI only)
     guard.awareness.onVocal = line => {
@@ -144,7 +144,7 @@
   const clock = new THREE.Clock();
   const fwd = new THREE.Vector3();
   let fps = 60, fpsT = 0, fpsN = 0, hudT = 0, grace = 2;
-  const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false };
+  const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false, thr: false, thrReady: null, thrShown: null };
   function frame() {
     const dt = Math.min(clock.getDelta(), 1 / 20);
 
@@ -162,7 +162,11 @@
       if (cqc) {
         // the button: RELEASE while holding him; bright when a grab is possible (checked a few times a second)
         const lbl = cqc.state === 'GRAPPLING' ? 'RELEASE' : 'CQC', hold = cqc.active();
-        if ((cqcUi.t += dt) > 0.12) { cqcUi.t = 0; cqcUi.ready = !hold && !cqc.check(); }
+        if ((cqcUi.t += dt) > 0.12) { cqcUi.t = 0; cqcUi.ready = !hold && !cqc.check(); cqcUi.thrReady = cqc.state === 'GRAPPLING' && cqc.throwCheck().ok; }
+        // Step 14: THROW shows only while she holds a guard (lit when there's room to throw him)
+        const thr = cqc.state === 'GRAPPLING';
+        if (cqcUi.thr !== thr) { cqcUi.thr = thr; ui.throwBtn.hidden = !thr; if (thr) { cqcUi.thrReady = cqc.throwCheck().ok; } }
+        if (cqcUi.thrShown !== cqcUi.thrReady) { cqcUi.thrShown = cqcUi.thrReady; ui.throwBtn.classList.toggle('ready', !!cqcUi.thrReady); }
         if (cqcUi.lbl !== lbl) { cqcUi.lbl = lbl; ui.cqcBtn.textContent = lbl; }
         if (cqcUi.hold !== hold) { cqcUi.hold = hold; ui.cqcBtn.classList.toggle('holding', hold); }
         if (cqcUi.shown !== cqcUi.ready) { cqcUi.shown = cqcUi.ready; ui.cqcBtn.classList.toggle('ready', cqcUi.ready); }
@@ -223,7 +227,11 @@
         ui.persona.textContent = guard.personality.status();
         ui.startle.textContent = guard.awareness.startleStatus();
         ui.cqcstat.textContent = cqc.status();
-        if (guard2) { const b = guard2.awareness; ui.g2.textContent = `${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${guard2.personality.traits.primary}/${guard2.personality.traits.secondary} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}`; }
+        ui.throwstat.textContent = cqc.throwStatus();
+        ui.ko.textContent = guard.ko.status() + (guard.awareness.attack ? ` · remembers attack at ${xz(guard.awareness.attack.position)}` : '');
+        if (guard2) { const b = guard2.awareness, tr = `${guard2.personality.traits.primary}/${guard2.personality.traits.secondary}`;
+          ui.g2.textContent = guard2.isDown() ? `${guard2.ko.status()} · ${tr}${b.attack ? ' · remembers attack at ' + xz(b.attack.position) : ''}`
+            : `${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${tr} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}${guard2.ko.knockouts ? ' · ' + guard2.ko.status() : ''}`; }
         ui.post.textContent = `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`;
       }
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';

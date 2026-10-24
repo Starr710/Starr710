@@ -427,6 +427,26 @@
     this.seen = { position: by.position.clone().setY(0), time: this.clock };
     this.state = 'ALERT'; this.behavior = 'restrained'; this.evasion = null; this.hs = null; this.search = null;
   };
+  // Step 14: thrown and knocked out. What he knows stays as it was (an intruder attacked
+  // him, there); nothing new comes in while he's out (no sight, no hearing, no decisions)
+  mv.GuardAwareness.prototype.onKnockedOut = function (by) {
+    const at = by ? by.clone().setY(0) : (this.seen ? this.seen.position.clone() : this.guard.position.clone().setY(0));
+    this.attack = { position: at, time: this.clock };
+    if (!this.confirmed) { this.confirmed = true; this.confirmedAt = this.clock; }
+    this.seen = { position: at.clone(), time: this.clock };
+    this.state = 'UNCONSCIOUS'; this.behavior = 'unconscious'; this.note = 'knocked out by an intruder';
+    this.evasion = null; this.hs = null; this.search = null; this.focus = null; this.startle = null;
+    if (this.incident) this.incident.voiced = true;
+  };
+  // back on his feet: he was attacked and knows it, so he searches from where it happened
+  // (the Active Search, then Heightened Security, then back to his post or route). He has
+  // no idea where she went while he was out: no heading, no newer sighting
+  mv.GuardAwareness.prototype.onWoke = function () {
+    this.track = []; this.suspicion = 1; this.lastContact = this.clock;
+    if (!this.seen) this.seen = { position: (this.attack ? this.attack.position : this.guard.position).clone().setY(0), time: this.clock };
+    this._startEvasion();
+    this.note = 'woke up: searching where he was attacked';
+  };
   mv.GuardAwareness.prototype.onReleased = function (at) {
     this.lastContact = this.clock; this.seen = { position: at.clone().setY(0), time: this.clock };
     this.behavior = 'tracking her'; this.note = 'released: on to her';
