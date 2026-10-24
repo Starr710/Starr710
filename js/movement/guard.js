@@ -30,6 +30,8 @@
     // made by her posture layer's leg IK, which the guard doesn't run)
     animator: { strideScale: [[0, 1], [6, 1]] },
     atPostWithin: 0.6,     // m from his post that counts as being at it
+    stationary: false,     // a sentry: he never walks anywhere except back to his post (senses, awareness and CQC unaffected)
+    label: 'Guard',        // developer name
     waypointWithin: 0.6,   // m: a path waypoint counts as reached
     stuckTime: 2.5,        // s without getting this much…
     stuckProgress: 0.25,   // …(m) closer to the next waypoint means he's stuck: stop safely
@@ -148,6 +150,9 @@
   // pace (stick-equivalent push; default the careful investigation walk); false if no path.
   // opts.noSlow: keep the pace to the end (a patrol point he walks straight through)
   mv.Guard.prototype.goTo = function (p, within, push, opts) {
+    // a stationary sentry refuses every walk except the one back to his post (the awareness
+    // then searches / looks around from where he stands, as for an unreachable spot)
+    if (this.cfg.stationary && Math.hypot(p.x - this.post.x, p.z - this.post.z) > this.cfg.atPostWithin) { this.moving = false; this.path = null; this.navFailed = 'stationary post'; return false; }
     this.push = push || null; this.noSlow = !!(opts && opts.noSlow);
     this.arrived = false; this.navFailed = null;
     const path = this.nav ? this.nav.plan(this.position, p) : [{ x: p.x, z: p.z }];

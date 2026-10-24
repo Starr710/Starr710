@@ -7,6 +7,8 @@
 // - three surface test strips just ahead of the start: concrete, metal, grass
 // - a stationary test guard behind the start (placed by main.js at `guard`), looking
 //   toward it, with a low crate, a tall crate and a 1.5 m crate inside his view
+//   (Guard 1, who walks a patrol since Step 9), and Guard 2, a stationary sentry near the
+//   spawn for practising CQC (`guard2`)
 (function (mv) {
   'use strict';
 
@@ -96,7 +98,13 @@
       C: { primary: 'careless', secondary: 'bored' },   // comparison
     };
     const PROFILE = 'B';
-    const GUARD = { x: 2, z: -16, yaw: 0, patrol: PATROL, personality: PROFILES[PROFILE] };
+    const GUARD = { label: 'Guard 1 — Patrol', x: 2, z: -16, yaw: 0, patrol: PATROL, personality: PROFILES[PROFILE] };
+    // Guard 2: a stationary sentry near the player's spawn, for practising CQC. 6.7 m from the
+    // spawn, facing away from it (south-east, toward the wall 3.5 m off), in open ground well
+    // clear of Guard 1's route and the pillars. Full senses and awareness; he just never walks
+    // anywhere except back to his post
+    const GUARD2 = { label: 'Guard 2 — Stationary CQC Test', x: -12, z: -18.5, yaw: Math.atan2(5, -4.5), stationary: true,
+      patrol: { enabled: false }, personality: { primary: 'careless', secondary: 'curious', seed: 7171 } };
     const SPAWN = { x: -17, z: -14, yaw: Math.PI / 2 };
     const tex = gridTexture(renderer);
     tex.repeat.set(SIZE / 4, SIZE / 4);
@@ -175,6 +183,6 @@
     const pad = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.65, 32).rotateX(-Math.PI / 2), mats.paint);
     pad.position.set(SPAWN.x, 0.006, SPAWN.z); scene.add(pad);
 
-    return { spawn: SPAWN, size: SIZE, guard: GUARD, profiles: PROFILES, profile: PROFILE };
+    return { spawn: SPAWN, size: SIZE, guard: GUARD, guard2: GUARD2, profiles: PROFILES, profile: PROFILE };
   };
 })(SC.mv);

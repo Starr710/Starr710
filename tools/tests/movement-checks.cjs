@@ -106,7 +106,9 @@ const CHECKS = {
     const hold = async (dy) => {
       await page.evaluate(() => { MV.motor.teleport(-6, -20, 0); MV.cam.snap(MV.motor); });
       await T('touchStart', [{ x: X, y: Y0, id: 1 }]); await T('touchMove', [{ x: X, y: Y0 - dy, id: 1 }]);
-      await page.waitForTimeout(1800);
+      // 1.8 s of game time (frames are capped at 1/20 s, so a slow container would otherwise give her less)
+      const t0 = await page.evaluate(() => MV.guard.awareness.clock);
+      await page.waitForFunction(t0 => MV.guard.awareness.clock >= t0 + 1.8, t0, { timeout: 20000, polling: 'raf' });
       const r = await page.evaluate(() => [MV.motor.speed, MV.motor.gait.label]);
       await T('touchEnd', []); await page.waitForTimeout(1200);
       return r;
@@ -1250,7 +1252,7 @@ const CHECKS = {
       let sp = 0; MV.scene.traverse(o => { if (o.isSprite || o.isPoints || (o.geometry && o.geometry.type === 'TextGeometry')) sp++; });
       const g = MV.guard; [g.root].forEach(root => root.traverse(o => { const m = o.material; if (m && [].concat(m).some(x => x.map && x.map.image && x.map.image.getContext)) sp++; }));
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let gl = 0, n;
-      while ((n = walker.nextNode())) { const s = n.textContent.trim(); const el = n.parentElement; if (/^[!?¿¡]+$/.test(s) && el && el.offsetParent !== null && el.id !== 'mv-indicator') gl++; }   // (the approved awareness indicator is its own check)
+      while ((n = walker.nextNode())) { const s = n.textContent.trim(); const el = n.parentElement; if (/^[!?¿¡]+$/.test(s) && el && el.offsetParent !== null && !el.classList.contains('mv-indicator')) gl++; }   // (the approved awareness indicators, one per guard, are their own check)
       return { sp, gl };
     });
     for (const [label, px] of [['sneak', 25], ['stealth walk', 50], ['jog', 64]]) {
@@ -2625,6 +2627,175 @@ const CHECKS = {
     const end = await page.evaluate(() => ({ state: MV.cqc.state, restrained: !!MV.guard.restraint, rev: MV.motor.reverseGait || MV.guard.motor.reverseGait }));
     const ok = runs.every(x => x.along > 0.5 && Math.abs(x.spacing - 0.55) < 0.03 && x.state === 'GRAPPLING') && end.state === 'FREE' && !end.restrained && !end.rev && page.errors.length === 0;
     return { pass: ok, detail: runs.map(x => `${x.name}: ${x.along.toFixed(2)} m along the stick, ${x.spacing.toFixed(2)} m apart`).join('; ') + ` (camera thumb held throughout); RELEASE: ${end.state}, reverse gait cleared ${!end.rev}; page errors ${page.errors.length}` };
+  },
+
+  // Guard 2 (CQC test sentry), 1–3: two independent guards. Guard 2 is his own guard (own
+  // motor, collider, model, mixer, animator, senses, awareness, personality, UI elements) and
+  // labelled; he stands 5–8 m from the spawn in open ground, facing away from it, well clear
+  // of Guard 1's route; with her standing at the spawn for 5 s he neither sees nor hears her.
+  // Guard 1's patrol is untouched (his settings and route as before, and 40 s with both guards
+  // running he walks it, leaving his first waypoint and reaching the next ones) while Guard 2,
+  // unrestrained, never leaves his post
+  async guard2Setup() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, world } = MV, [g1, g2] = MV.guards, dt = 1 / 60, T = MV.seeTarget, sp = MV.area.spawn;
+      const frame = () => { step(0, 'stand'); noise.update(dt); g1.update(dt, T); g2.update(dt, T); };
+      const pairs = [['guard', g1, g2], ['motor', g1.motor, g2.motor], ['collider', g1.collider, g2.collider], ['model', g1.model, g2.model], ['mixer', g1.mixer, g2.mixer], ['animator', g1.animator, g2.animator], ['head bone', g1.head, g2.head],
+        ['vision', g1.vision, g2.vision], ['hearing', g1.hearing, g2.hearing], ['awareness', g1.awareness, g2.awareness], ['personality', g1.personality, g2.personality], ['caption', MV.caption, MV.caption2], ['indicator', MV.indicator, MV.indicator2], ['card', MV.traitCard, MV.traitCard2],
+        ['caption element', MV.caption.el, MV.caption2.el], ['indicator element', MV.indicator.el, MV.indicator2.el], ['card element', MV.traitCard.el, MV.traitCard2.el]];
+      const shared = pairs.filter(([, a, b]) => !a || !b || a === b).map(p => p[0]);
+      const owners = MV.caption2.guard === g2 && MV.indicator2.guard === g2 && MV.traitCard2.guard === g2 && MV.caption.guard === g1 && MV.indicator.guard === g1 && MV.traitCard.guard === g1;
+      const dSpawn = Math.hypot(g2.position.x - sp.x, g2.position.z - sp.z);
+      const toSpawn = Math.atan2(sp.x - g2.position.x, sp.z - g2.position.z), away = Math.abs(Math.atan2(Math.sin(toSpawn - g2.yaw), Math.cos(toSpawn - g2.yaw))) * 57.3;
+      // open ground: nothing solid within 2.5 m of his post
+      let clear = Infinity; for (const b of world.boxes) { const dx = Math.max(b.minX - g2.post.x, 0, g2.post.x - b.maxX), dz = Math.max(b.minZ - g2.post.z, 0, g2.post.z - b.maxZ); clear = Math.min(clear, Math.hypot(dx, dz)); }
+      const pts = g1.patrol.cfg.points; let route = Infinity;
+      for (let i = 0; i < pts.length; i++) { const a = new THREE.Vector3(pts[i].x, 0, pts[i].z), b = new THREE.Vector3(pts[(i + 1) % pts.length].x, 0, pts[(i + 1) % pts.length].z); route = Math.min(route, segDist(g2.post.clone().setY(0), a, b)); }
+      // she stands at the spawn for 5 s, both guards running (patrol on, personalities as shipped)
+      g1.patrol.enabled = true; g1.personality.enabled = true; g1.reset(); g2.reset(); motor.teleport(sp.x, sp.z, sp.yaw);
+      let g2Meter = 0, g2State = 'NORMAL', g2Heard = 0;
+      for (let i = 0; i < 300; i++) { frame(); g2Meter = Math.max(g2Meter, g2.vision.meter); if (g2.awareness.state !== 'NORMAL') g2State = g2.awareness.state; if (g2.hearing.heard) g2Heard++; }
+      // then 40 s with her parked far from both (north-west corner, out of everyone's sight)
+      motor.teleport(-19, 19, 0); const reached = new Set(); let g1Max = 0, g2Off = 0, g1States = new Set();
+      const p0 = g1.position.clone();
+      for (let i = 0; i < 40 * 60; i++) { frame(); g1States.add(g1.awareness.state); g1Max = Math.max(g1Max, g1.position.distanceTo(p0)); if (g1.patrol.state === 'observing') reached.add(g1.patrol.index); g2Off = Math.max(g2Off, Math.hypot(g2.position.x - g2.post.x, g2.position.z - g2.post.z)); }
+      const cfg1 = { label: g1.cfg.label, stationary: !!g1.cfg.stationary, patrol: g1.patrol.enabled, points: pts.length, x: g1.post.x, z: g1.post.z, primary: g1.personality.traits.primary, secondary: g1.personality.traits.secondary };
+      return { shared, owners, labels: [g1.cfg.label, g2.cfg.label], dSpawn, away, clear, route, g2Meter, g2State, g2Heard, reached: [...reached], g1Max, g2Off, g1States: [...g1States], cfg1, g2: { stationary: g2.cfg.stationary, patrol: g2.patrol.enabled, traits: g2.personality.traits.primary + '/' + g2.personality.traits.secondary } };
+    });
+    const ok = r.shared.length === 0 && r.owners && r.labels[0] === 'Guard 1 — Patrol' && r.labels[1] === 'Guard 2 — Stationary CQC Test' && r.dSpawn >= 5 && r.dSpawn <= 8 && r.away > 120 && r.clear > 2.5 && r.route > 6
+      && r.g2Meter === 0 && r.g2State === 'NORMAL' && r.g2Heard === 0
+      && r.cfg1.patrol && !r.cfg1.stationary && r.cfg1.points === 4 && r.cfg1.x === 2 && r.cfg1.z === -16 && r.cfg1.primary === 'focused' && r.cfg1.secondary === 'bored'
+      && r.g1Max > 8 && r.reached.length >= 3 && r.g1States.length === 1 && r.g1States[0] === 'NORMAL' && r.g2Off < 0.01 && r.g2.stationary && !r.g2.patrol && page.errors.length === 0;
+    return { pass: ok, detail: `"${r.labels[0]}" / "${r.labels[1]}"; shared parts: ${r.shared.length ? r.shared.join(', ') : 'none'}; UI owned by the right guard ${r.owners}; Guard 2 ${r.dSpawn.toFixed(2)} m from the spawn, facing ${r.away.toFixed(0)}° away from it, ${r.clear.toFixed(1)} m from anything solid, ${r.route.toFixed(1)} m from Guard 1's route (${r.g2.traits}, stationary ${r.g2.stationary}, patrol ${r.g2.patrol}); her 5 s at the spawn: his detection ${Math.round(r.g2Meter * 100)}%, ${r.g2State}, heard ${r.g2Heard} frames; 40 s: Guard 1 (patrol ${r.cfg1.patrol}, ${r.cfg1.points} waypoints from (${r.cfg1.x}, ${r.cfg1.z}), ${r.cfg1.primary}/${r.cfg1.secondary}) walked up to ${r.g1Max.toFixed(1)} m out, observed at waypoints ${r.reached.join(',')}, states ${r.g1States.join(',')}; Guard 2 drifted ${(r.g2Off * 100).toFixed(1)} cm from his post` };
+  },
+
+  // Guard 2, 3–4: he holds his post but is a real guard. Footsteps beside him: he hears them,
+  // turns toward them and gets suspicious / investigates, without walking off; she steps into
+  // his view: his detection fills and he goes ALERT (and startles); she vanishes: he searches
+  // (EVASION) from his post, then stands down to NORMAL, still at his post the whole time
+  async guard2Senses() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, [g1, g2] = MV.guards, a = g2.awareness, dt = 1 / 60, T = MV.seeTarget, wrap = x => Math.atan2(Math.sin(x), Math.cos(x));
+      let off = 0; const states = new Set();
+      const frame = () => { step(0, 'stand'); noise.update(dt); g1.update(dt, T); g2.update(dt, T); off = Math.max(off, Math.hypot(g2.position.x - g2.post.x, g2.position.z - g2.post.z)); states.add(a.state); };
+      const sim = n => { for (let i = 0; i < n; i++) frame(); }, until = (fn, max) => { let n = 0; while (!fn() && n < max) { frame(); n++; } return n; };
+      g2.reset(); a.cfg.evasionTime = 8; a.cfg.heightenedTime = 8; motor.teleport(-19, 19, 0); sim(10);
+      // footsteps 3.5 m to his right (behind his shoulder): he hears and turns to them
+      const side = g2.yaw - Math.PI / 2, src = g2.position.clone().add(new THREE.Vector3(Math.sin(side) * 3.5, 0, Math.cos(side) * 3.5)), yaw0 = g2.yaw;
+      for (let k = 0; k < 4; k++) { noise.emit(3, 'footstep', src, 'concrete', 'player'); sim(6); }
+      const heard = !!(g2.hearing.last && g2.hearing.last.heard);
+      sim(240); const turned = Math.abs(wrap(g2.yaw - yaw0)) * 57.3, faceErr = Math.abs(wrap(Math.atan2(src.x - g2.position.x, src.z - g2.position.z) - g2.yaw)) * 57.3;
+      const heardState = [...states].filter(s => s !== 'NORMAL').join(','), refused = g2.navFailed, reacted = a.reactions;
+      sim(60 * 12);
+      // she stands 5 m in front of him, in the open
+      g2.reset(); sim(5); const f = g2.forward(); motor.teleport(g2.position.x + f.x * 5, g2.position.z + f.z * 5, g2.yaw + Math.PI); for (let k = 0; k < 2; k++) step(0, 'stand');
+      const toAlert = until(() => a.state === 'ALERT', 600) / 60, meter = g2.vision.meter, startled = a.isStartled();
+      // she vanishes: he searches from his post, then stands down
+      motor.teleport(-19, 19, 0); const toEvasion = until(() => a.state === 'EVASION', 900) / 60;
+      const toCalm = until(() => a.state === 'NORMAL', 60 * 60) / 60;
+      return { heard, turned, faceErr, heardState, refused, reacted, toAlert, meter, startled, toEvasion, toCalm, end: a.state, off, states: [...states] };
+    });
+    const ok = r.heard && r.turned > 45 && /SUSPICIOUS|INVESTIGATING/.test(r.heardState) && r.reacted >= 1
+      && r.toAlert > 0 && r.toAlert < 6 && r.meter >= 0.99 && r.startled && r.toEvasion < 15 && r.end === 'NORMAL' && r.off < 0.7 && page.errors.length === 0;
+    return { pass: ok, detail: `footsteps 3.5 m to his side: heard ${r.heard}, turned ${r.turned.toFixed(0)}° (now ${r.faceErr.toFixed(0)}° off the sound), states ${r.heardState}, reactions ${r.reacted}${r.refused ? ', walk refused (' + r.refused + ')' : ''}; she stands 5 m in front: ALERT after ${r.toAlert.toFixed(2)} s, detection ${Math.round(r.meter * 100)}%, startled ${r.startled}; she vanishes: EVASION after ${r.toEvasion.toFixed(1)} s, back to ${r.end} after ${r.toCalm.toFixed(1)} s more; furthest from his post the whole time ${r.off.toFixed(2)} m (states seen ${r.states.join(', ')})` };
+  },
+
+  // Guard 2, 5–9: CQC on him. Grabbed from the front, side and rear and while fully ALERT
+  // (recovered, watching her); CQC picks whichever guard is in reach (Guard 2 by him, Guard 1
+  // by Guard 1, the nearer one when both are in reach) and only that guard is restrained;
+  // pulling Guard 2 around never moves Guard 1 (and the reverse); no animation state crosses
+  // between them; released away from his post, Guard 2 stays ALERT where she let go (no snap
+  // back), and only later walks back to his post once he stands down
+  async guard2Cqc() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input } = MV, [g1, g2] = MV.guards, cq = MV.cqc, dt = 1 / 60, T = MV.seeTarget;
+      let jump2 = 0, lp2 = g2.position.clone();
+      const frame = (dx, dz, mag) => { const held = cq.update(dt, dx || 0, dz || 0, mag || 0); if (!held) step(0, 'stand'); else { MV.visual.place(motor.position, motor.yaw); MV.animator.update(dt, motor); MV.posture.update(dt, motor, MV.animator); cq.poseArms(); MV.visual.root.updateMatrixWorld(true); } noise.update(dt); g1.update(dt, T); g2.update(dt, T); jump2 = Math.max(jump2, g2.position.distanceTo(lp2)); lp2.copy(g2.position); };
+      const sim = (n, dx, dz, mag) => { for (let i = 0; i < n; i++) frame(dx, dz, mag); }, until = (fn, max) => { let n = 0; while (!fn() && n < max) { frame(); n++; } return n; };
+      const place = (g, rel, d) => { const y = g.yaw + rel, p = g.position.clone().add(new THREE.Vector3(Math.sin(y) * d, 0, Math.cos(y) * d)); motor.teleport(p.x, p.z, Math.atan2(g.position.x - p.x, g.position.z - p.z)); for (let k = 0; k < 2; k++) step(0, 'stand'); };
+      const fresh = () => { cq.cancel(); g1.patrol.enabled = false; g1.reset(); g2.reset(); motor.teleport(-19, 19, 0); sim(10); lp2.copy(g2.position); };
+      const tryGrab = g => { const before = g.awareness.state; input.cqcTapped = true; frame(); sim(40); const out = { before, state: cq.state, held: cq.guard === g, restrained: !!g.restraint, other: !!(g === g1 ? g2 : g1).restraint, after: g.awareness.state, why: cq.lastTry }; cq.cancel(); return out; };
+      const out = { dirs: {} };
+      for (const [k, rel] of [['front', 0], ['side', Math.PI / 2], ['rear', Math.PI]]) { fresh(); place(g2, rel, 1.0); out.dirs[k] = tryGrab(g2); }
+      fresh(); place(g2, 0, 1.2); until(() => g2.awareness.state === 'ALERT', 300); sim(150); out.alertSees = g2.vision.seen.rate > 0; out.alertStartled = g2.awareness.isStartled(); out.alert = tryGrab(g2);
+      // targeting: Guard 1 brought over 2.4 m from Guard 2
+      fresh(); g1.motor.teleport(g2.post.x - 2.4, g2.post.z, Math.PI / 2); g1.place(); sim(2);
+      place(g2, Math.PI, 1.0); cq.check(); out.t2 = cq.target && cq.target.cfg.label; out.g2pick = tryGrab(g2);
+      place(g1, Math.PI, 1.0); cq.check(); out.t1 = cq.target && cq.target.cfg.label; out.g1pick = tryGrab(g1);
+      // both in reach (between them, 1.0 m from Guard 1, 1.4 m from Guard 2): the nearer
+      fresh(); g1.motor.teleport(g2.post.x - 2.4, g2.post.z, Math.PI / 2); g1.place(); sim(2);
+      motor.teleport(g1.position.x + 1.0, g1.position.z, -Math.PI / 2); for (let k = 0; k < 2; k++) step(0, 'stand'); cq.check(); out.both = cq.target && cq.target.cfg.label;
+      out.bothD = [g1, g2].map(g => Math.hypot(g.position.x - motor.position.x, g.position.z - motor.position.z));
+      // moving one doesn't move the other, and nothing of the grapple reaches the other guard
+      fresh(); const g1at = g1.position.clone();   // Guard 1 standing at his own post (patrol off)
+      place(g2, Math.PI, 1.0); input.cqcTapped = true; sim(40); const p0 = g2.position.clone();
+      let g1rev = 0, g2rev = 0, g1move = 0; const back = motor.yaw + Math.PI;
+      for (let i = 0; i < 150; i++) { frame(Math.sin(back), Math.cos(back), 1); if (g1.motor.reverseGait) g1rev++; if (g2.motor.reverseGait) g2rev++; g1move = Math.max(g1move, g1.position.distanceTo(g1at)); }
+      out.move2 = { moved: g2.position.distanceTo(p0), g1move, g1rev, g2rev, g1restrained: !!g1.restraint, g1speed: g1.motor.speed };
+      // release him there, away from his post
+      jump2 = 0; input.cqcTapped = true; sim(40);
+      const rel = { state: cq.state, restrained: !!g2.restraint, aware: g2.awareness.state, fromPost: Math.hypot(g2.position.x - g2.post.x, g2.position.z - g2.post.z) };
+      const relEnd = g2.position.clone(); motor.teleport(-19, 19, 0); let alertFrames = 0, calm = 0, wander = 0;
+      for (let i = 0; i < 180; i++) { frame(); if (g2.awareness.state === 'ALERT' || g2.awareness.state === 'EVASION') alertFrames++; if (g2.awareness.state === 'NORMAL') calm++; wander = Math.max(wander, g2.position.distanceTo(relEnd)); }
+      const relJump = jump2;
+      // then he stands down in time and walks back to his post (no snap)
+      g2.awareness.cfg.evasionTime = 6; g2.awareness.cfg.heightenedTime = 6; jump2 = 0;
+      const home = until(() => g2.awareness.state === 'NORMAL' && g2.atPost() && !g2.moving, 60 * 90) / 60;
+      out.rel = { ...rel, alertFrames, calm, wander, relJump, home, homeJump: jump2, atPost: g2.atPost() };
+      // and the reverse: pulling Guard 1 doesn't move Guard 2
+      fresh(); const g2at = g2.position.clone();
+      place(g1, Math.PI, 1.0); input.cqcTapped = true; sim(40); const q0 = g1.position.clone(); let g2move = 0, g2rev1 = 0; const bk = motor.yaw + Math.PI / 2;
+      for (let i = 0; i < 150; i++) { frame(Math.sin(bk), Math.cos(bk), 1); g2move = Math.max(g2move, g2.position.distanceTo(g2at)); if (g2.motor.reverseGait) g2rev1++; }
+      out.move1 = { moved: g1.position.distanceTo(q0), g2move, g2rev: g2rev1, held: cq.guard === g1, g2restrained: !!g2.restraint };
+      cq.cancel(); g1.reset(); g2.reset(); g2.awareness.cfg.evasionTime = 30; g2.awareness.cfg.heightenedTime = 60;
+      return out;
+    });
+    const okGrab = x => x.state === 'GRAPPLING' && x.held && x.restrained && !x.other && x.after === 'ALERT';
+    const ok = Object.values(r.dirs).every(okGrab) && okGrab(r.alert) && r.alert.before === 'ALERT' && r.alertSees && !r.alertStartled
+      && r.t2 === 'Guard 2 — Stationary CQC Test' && okGrab(r.g2pick) && r.t1 === 'Guard 1 — Patrol' && okGrab(r.g1pick) && r.both === 'Guard 1 — Patrol' && r.bothD[0] < r.bothD[1] && r.bothD[1] < 1.45
+      && r.move2.moved > 1 && r.move2.g1move < 0.01 && r.move2.g1rev === 0 && r.move2.g2rev > 0 && !r.move2.g1restrained
+      && r.rel.state === 'FREE' && !r.rel.restrained && r.rel.aware === 'ALERT' && r.rel.fromPost > 1 && r.rel.alertFrames === 180 && r.rel.calm === 0 && r.rel.wander < 0.5 && r.rel.relJump < 0.06
+      && r.rel.home > 0 && r.rel.home < 90 && r.rel.atPost && r.rel.homeJump < 0.06
+      && r.move1.moved > 1 && r.move1.held && r.move1.g2move < 0.01 && r.move1.g2rev === 0 && !r.move1.g2restrained && page.errors.length === 0;
+    const d = (k, x) => `${k} (${x.before}): ${x.state === 'GRAPPLING' && x.held ? 'grabbed' : 'FAILED ' + x.why}${x.other ? ', OTHER GUARD RESTRAINED' : ''}`;
+    return { pass: ok, detail: `Guard 2 ${Object.entries(r.dirs).map(([k, x]) => d(k, x)).join('; ')}; ${d('fully ALERT and watching her', r.alert)} | targets: by Guard 2 → ${r.t2}, by Guard 1 → ${r.t1}, both in reach (${r.bothD[0].toFixed(2)} / ${r.bothD[1].toFixed(2)} m) → ${r.both} | pulling Guard 2 ${r.move2.moved.toFixed(2)} m: Guard 1 moved ${(r.move2.g1move * 100).toFixed(1)} cm, his reverse gait ${r.move2.g1rev} frames (Guard 2's ${r.move2.g2rev}); pulling Guard 1 ${r.move1.moved.toFixed(2)} m: Guard 2 moved ${(r.move1.g2move * 100).toFixed(1)} cm | released ${r.rel.fromPost.toFixed(1)} m from his post: ${r.rel.aware}, alert/searching ${r.rel.alertFrames}/180 frames, wandered ${r.rel.wander.toFixed(2)} m, largest step ${(r.rel.relJump * 100).toFixed(1)} cm; stood down and walked home in ${r.rel.home.toFixed(1)} s (largest step ${(r.rel.homeJump * 100).toFixed(1)} cm), at post ${r.rel.atPost}` };
+  },
+
+  // Guard 2, 10 + touch: real iPhone touches with the frame loop running. She walks from the
+  // spawn up behind Guard 2 with the stick, the CQC button lights and the status names him;
+  // tapping CQC restrains Guard 2 (not Guard 1), the button reads RELEASE, the stick moves
+  // him; RELEASE frees him still ALERT; she grabs him again and RESET restores both guards
+  // (each at his own post and facing, NORMAL, free, Guard 1 back on his patrol)
+  async guard2Touch() {
+    const page = await touchPage(), Tc = page.touch;
+    const btn = async () => { const b = await page.locator('#mv-cqc').boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const tap = async () => { const c = await btn(); await Tc('touchStart', [{ x: c.x, y: c.y, id: 7 }]); await page.waitForTimeout(80); await Tc('touchEnd', []); await page.waitForTimeout(150); };
+    await page.evaluate(() => { MV.guard.patrol.enabled = true; MV.guard.reset(); const g = MV.guard2; g.reset(); const b = g.position.clone().addScaledVector(g.forward(), -2.4); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); for (const f of MV.footsteps.feet) { f.down = true; f.prev = null; f.at = null; } document.getElementById('mv-stats').hidden = false; });
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 276, id: 1 }]);
+    await page.waitForFunction(() => Math.hypot(MV.guard2.position.x - MV.motor.position.x, MV.guard2.position.z - MV.motor.position.z) < 1.2, null, { timeout: 10000, polling: 30 }).catch(() => {});
+    await Tc('touchEnd', []); await page.waitForTimeout(400);
+    const ready = await page.evaluate(() => ({ lit: document.getElementById('mv-cqc').classList.contains('ready'), status: document.getElementById('mv-cqcstat').textContent }));
+    await tap(); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(150);
+    const held = await page.evaluate(() => ({ state: MV.cqc.state, label: document.getElementById('mv-cqc').textContent, g2: !!MV.guard2.restraint, g1: !!MV.guard.restraint, aware: MV.guard2.awareness.state, g2row: document.getElementById('mv-g2').textContent, status: MV.cqc.status() }));
+    const p0 = await page.evaluate(() => [MV.guard2.position.x, MV.guard2.position.z, MV.guard.position.x, MV.guard.position.z]);
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); for (let i = 0; i < 10; i++) { await Tc('touchMove', [{ x: 150, y: 350, id: 1 }]); await page.waitForTimeout(150); }   // toward the camera: she pulls him back
+    await Tc('touchEnd', []); await page.waitForTimeout(400);
+    const mv = await page.evaluate(p0 => ({ moved: Math.hypot(MV.guard2.position.x - p0[0], MV.guard2.position.z - p0[1]), d: Math.hypot(MV.guard2.position.x - MV.motor.position.x, MV.guard2.position.z - MV.motor.position.z), state: MV.cqc.state }), p0);
+    await tap(); await page.waitForFunction(() => MV.cqc.state === 'FREE', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(200);
+    const freed = await page.evaluate(() => ({ state: MV.cqc.state, label: document.getElementById('mv-cqc').textContent, g2: !!MV.guard2.restraint, aware: MV.guard2.awareness.state, fromPost: Math.hypot(MV.guard2.position.x - MV.guard2.post.x, MV.guard2.position.z - MV.guard2.post.z) }));
+    // grab him again, then RESET
+    await page.evaluate(() => { const g = MV.guard2, b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); }); await page.waitForTimeout(200);
+    await tap(); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); const mid = await page.evaluate(() => MV.cqc.state + ' ' + (MV.cqc.guard === MV.guard2 ? 'Guard 2' : 'Guard 1'));
+    await page.tap('#mv-reset'); await page.waitForTimeout(300);
+    const reset = await page.evaluate(() => MV.guards.map(g => ({ post: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), yaw: Math.abs(Math.atan2(Math.sin(g.yaw - g.postYaw), Math.cos(g.yaw - g.postYaw))) * 57.3, aware: g.awareness.state, restrained: !!g.restraint, patrol: g.patrol.state, ind: !g.awareness || document.getElementById(g === MV.guard ? 'mv-indicator' : 'mv-indicator-2').hidden })).concat([{ cqc: MV.cqc.state, label: document.getElementById('mv-cqc').textContent }]));
+    const [r1, r2, rc] = reset;
+    const ok = ready.lit && /Guard 2/.test(ready.status) && held.state === 'GRAPPLING' && held.label === 'RELEASE' && held.g2 && !held.g1 && held.aware === 'ALERT' && /RESTRAINED/.test(held.g2row) && /Guard 2/.test(held.status)
+      && mv.state === 'GRAPPLING' && mv.moved > 0.4 && Math.abs(mv.d - 0.55) < 0.03 && freed.state === 'FREE' && freed.label === 'CQC' && !freed.g2 && freed.aware === 'ALERT'
+      && /GRAPPLING Guard 2/.test(mid) && rc.cqc === 'FREE' && rc.label === 'CQC' && [r1, r2].every(x => x.post < 0.01 && x.yaw < 0.5 && x.aware === 'NORMAL' && !x.restrained && x.ind) && r1.patrol === 'observing' && page.errors.length === 0;
+    return { pass: ok, detail: `walked up behind Guard 2 from the stick: button lit ${ready.lit}, status "${ready.status}"; tapped CQC: ${held.state}, button "${held.label}", Guard 2 restrained ${held.g2}, Guard 1 restrained ${held.g1}, he's ${held.aware}, stats "${held.g2row}"; stick: moved him ${mv.moved.toFixed(2)} m, ${mv.d.toFixed(2)} m apart; RELEASE: ${freed.state}, button "${freed.label}", he's ${freed.aware}, ${freed.fromPost.toFixed(2)} m from his post; RESET mid-grapple (${mid}): Guard 1 ${r1.post.toFixed(2)} m / ${r1.yaw.toFixed(1)}° from his post, ${r1.aware}, patrol ${r1.patrol}; Guard 2 ${r2.post.toFixed(2)} m / ${r2.yaw.toFixed(1)}°, ${r2.aware}, restrained ${r2.restrained}; CQC ${rc.cqc}, button "${rc.label}"; page errors ${page.errors.length}` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)

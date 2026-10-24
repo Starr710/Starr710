@@ -47,7 +47,7 @@
     this.obs = null; this.lookPoint = null; this.clock = 0;
     const p = this.cfg.points[0], g = this.guard;
     if (p && Math.hypot(p.x - g.position.x, p.z - g.position.z) <= this.cfg.arriveWithin) this._observe();
-    else this._setOff(0);
+    else if (p) this._setOff(0);   // (a guard with no route has nothing to set off for)
   };
 
   mv.GuardPatrol.prototype.point = function (i) { const p = this.cfg.points[i]; return p ? new THREE.Vector3(p.x, 0, p.z) : null; };

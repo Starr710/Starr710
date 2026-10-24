@@ -47,10 +47,13 @@
   const ease = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
 
   // player: { motor, visual, input }, guard: mv.Guard, world: the collision world
-  mv.CQC = function (player, guard, world, opts) {
+  // guards: one guard or a list; she grabs whichever is in reach (the nearest), one at a time
+  mv.CQC = function (player, guards, world, opts) {
     this.cfg = Object.assign({}, mv.CQCDefaults, opts || {});
     this.motor = player.motor; this.visual = player.visual; this.input = player.input;
-    this.guard = guard; this.world = world;
+    this.guards = Array.isArray(guards) ? guards : [guards];
+    this.guard = this.guards[0];   // the guard she holds (or last held / last checked)
+    this.world = world;
     this.reset();
   };
 
@@ -63,8 +66,19 @@
 
   // can she grab him right now? ('' = yes, otherwise why not)
   mv.CQC.prototype.check = function () {
-    const c = this.cfg, g = this.guard, m = this.motor;
     if (this.state !== 'FREE') return 'busy';
+    // the nearest guard she could grab; otherwise why the nearest one can't be
+    let best = null, bestD = Infinity, nearWhy = 'no guard', nearD = Infinity;
+    for (const g of this.guards) {
+      const why = this._checkOne(g), d = Math.hypot(g.position.x - this.motor.position.x, g.position.z - this.motor.position.z);
+      if (!why && d < bestD) { best = g; bestD = d; }
+      if (d < nearD) { nearD = d; nearWhy = why; }
+    }
+    this.target = best;
+    return best ? '' : nearWhy;
+  };
+  mv.CQC.prototype._checkOne = function (g) {
+    const c = this.cfg, m = this.motor;
     if (!g || g.restraint) return 'no guard';
     const d = Math.hypot(g.position.x - m.position.x, g.position.z - m.position.z);
     if (d > c.range) return 'out of reach';
@@ -79,7 +93,7 @@
     if (this.state !== 'FREE') return 'busy';
     const why = this.check(); this.lastTry = why || 'grabbed';
     if (why) return why;
-    this._grab(); return 'grab';
+    this.guard = this.target; this._grab(); return 'grab';
   };
   // HOLD: a future quick takedown; reserved, nothing happens
   mv.CQC.prototype.hold = function () { this.holdNote = 'hold: quick takedown not available yet'; return 'reserved'; };
@@ -107,6 +121,7 @@
   // immediate end (RESET): both are left where they are, the guard back to his AI
   mv.CQC.prototype.cancel = function () {
     if (this.guard) { this.guard.restraint = null; this.guard.stopMoving(); }
+    for (const g of this.guards) if (g.restraint && g.restraint.by === this.motor) { g.restraint = null; g.stopMoving(); }
     this.state = 'FREE'; this.speed = 0; this.motor.speed = 0; this.motor.targetSpeed = 0; this.motor.angularVelocity = 0;
     this.motor.reverseGait = false; if (this.guard) this.guard.motor.reverseGait = false; this.vel = null; this.av = 0; this.dir = null;
   };
@@ -134,10 +149,11 @@
   // per frame, before the player's motor would run. stick: world direction (dx, dz) and
   // push 0…1. Returns true while CQC drives both characters (the normal motor stays off)
   mv.CQC.prototype.update = function (dt, dx, dz, mag) {
-    const c = this.cfg, m = this.motor, g = this.guard, inp = this.input;
+    const c = this.cfg, m = this.motor, inp = this.input;
     // button events from the input layer
     if (inp.cqcTapped) { inp.cqcTapped = false; this.tap(); }
     if (inp.cqcHeld) { inp.cqcHeld = false; this.hold(); }
+    const g = this.guard;   // (after the tap: a grab may have just picked a different guard)
     this.armW += ((this.state === 'GRABBING' || this.state === 'GRAPPLING' ? 1 : 0) - this.armW) * (1 - Math.exp(-8 * dt));
     if (this.state === 'FREE') return false;
     if (this.state === 'GRABBING') {
@@ -233,7 +249,8 @@
 
   // short status for the developer view
   mv.CQC.prototype.status = function () {
-    if (this.state === 'FREE') { const why = this.check(); return `FREE · ${why ? 'no grab: ' + why : 'CQC available'}${this.holdNote ? ' · ' + this.holdNote : ''}`; }
-    return `${this.state === 'GRAPPLING' ? 'GRAPPLING · guard RESTRAINED' : this.state}${this.state === 'GRAPPLING' ? ' · ' + this.speed.toFixed(2) + ' m/s' : ''}`;
+    const name = g => g && g.cfg.label || 'guard';
+    if (this.state === 'FREE') { const why = this.check(); return `FREE · ${why ? 'no grab: ' + why : 'CQC available: ' + name(this.target)}${this.holdNote ? ' · ' + this.holdNote : ''}`; }
+    return `${this.state === 'GRAPPLING' ? 'GRAPPLING · ' + name(this.guard) + ' RESTRAINED' : this.state + ' · ' + name(this.guard)}${this.state === 'GRAPPLING' ? ' · ' + this.speed.toFixed(2) + ' m/s' : ''}`;
   };
 })(SC.mv);

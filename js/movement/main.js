@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), cqcBtn: $('mv-cqc'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), cqcBtn: $('mv-cqc'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -67,6 +67,9 @@
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
   let footsteps = null, voice = null, caption = null, traitCard = null, indicator = null, cqc = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
+  let guard2 = null, guard2View = null, aware2View = null, caption2 = null, indicator2 = null, traitCard2 = null;
+  // a second copy of a guard's screen-space element (caption, indicator, card), same classes, its own id
+  const cloneUi = id => { const src = $(id), el = src.cloneNode(true); el.id = id + '-2'; src.parentNode.insertBefore(el, src.nextSibling); return el; };
   const profile = mv.CHARACTER_PROFILES[window.SC_CHARACTER || 'testSoldier'];
   const visual = new mv.CharacterVisual(profile);
   let animator = null, posture = null;
@@ -90,8 +93,12 @@
     // unarmed by default; '#rifle' previews the rifle carry kept for later stages
     posture = new mv.TacticalPosture(visual, { carry: location.hash === '#rifle' ? 'rifle' : 'unarmed' });
     footsteps = new mv.FootstepEmitter(noise, visual, motor, 'player');
-    // one stationary test guard sharing the player's model and clips
+    // Guard 1 — Patrol, sharing the player's model and clips
     guard = new mv.Guard(scene, world, visual, Object.assign({ vision: 'regular', hearing: 'regular' }, area.guard), noise);
+    // Guard 2 — Stationary CQC Test: the same model and systems, held at his post (no patrol)
+    guard2 = new mv.Guard(scene, world, visual, Object.assign({ vision: 'regular', hearing: 'regular' }, area.guard2), noise);
+    guard2View = new mv.GuardDebugView(scene, guard2);
+    aware2View = new mv.GuardAwarenessView(scene, guard2);
     guardView = new mv.GuardDebugView(scene, guard);
     awareView = new mv.GuardAwarenessView(scene, guard);
     patrolView = new mv.GuardPatrolView(scene, guard.patrol);
@@ -99,12 +106,19 @@
     voice = new mv.GuardVoice(() => footAudio.ctx);
     // caption: a TEMPORARY "Huh" above his head while no recording exists (guard-caption.js)
     caption = new mv.GuardCaption($('mv-caption'), guard, world);
-    cqc = new mv.CQC({ motor, visual, input }, guard, world);   // Step 13: grab and restraint
+    cqc = new mv.CQC({ motor, visual, input }, [guard, guard2], world);   // Step 13: grab and restraint (whichever guard is in reach)
     indicator = new mv.GuardIndicator($('mv-indicator'), guard, world);   // TEMPORARY awareness symbol above him (UI only)
     traitCard = new mv.GuardTraitCard($('mv-trait'), guard, world, null, motor);   // his personality, beside him, clear of the player (UI only)
     guard.awareness.onVocal = line => {
       const rec = voice.say(line, guard.position, motor.position);
       if (caption && !(rec.played && caption.cfg.onlyWithoutRecording)) caption.show();   // caption
+    };
+    caption2 = new mv.GuardCaption(cloneUi('mv-caption'), guard2, world);
+    indicator2 = new mv.GuardIndicator(cloneUi('mv-indicator'), guard2, world);
+    traitCard2 = new mv.GuardTraitCard(cloneUi('mv-trait'), guard2, world, null, motor);
+    guard2.awareness.onVocal = line => {
+      const rec = voice.say(line, guard2.position, motor.position);
+      if (!(rec.played && caption2.cfg.onlyWithoutRecording)) caption2.show();
     };
     seeTarget = mv.visionTarget(visual, motor);
     const s = animator.stride;
@@ -123,7 +137,7 @@
     document.body.classList.add('playing');
   });
   // RESET puts the player back at the start and the guard back at his post, calm
-  ui.reset.addEventListener('click', () => { if (cqc) cqc.cancel(); spawn(); if (guard) guard.reset(); if (caption) caption.hide(); if (indicator) indicator.hide(); });
+  ui.reset.addEventListener('click', () => { if (cqc) cqc.cancel(); spawn(); if (guard) guard.reset(); if (guard2) guard2.reset(); for (const u of [caption, indicator, caption2, indicator2]) if (u) u.hide(); });
   ui.statsBtn.addEventListener('click', () => { ui.stats.hidden = !ui.stats.hidden; ui.statsBtn.setAttribute('aria-pressed', String(!ui.stats.hidden)); });
 
   // ---------------------------------------------------------------- loop
@@ -166,12 +180,17 @@
       guard.hearing.updateDebug(scene);
       awareView.update(camera);
       patrolView.update(guard.awareness.cfg.debug);
+      guard2.update(dt, seeTarget);
+      guard2View.update(camera, seeTarget);
+      guard2.hearing.updateDebug(scene);
+      aware2View.update(camera);
     }
     noise.update(dt);
     cam.update(dt, motor, input.look, input.mouse);
     if (caption) caption.update(dt, camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);   // caption
     if (traitCard) traitCard.update(dt, camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
     if (indicator) indicator.update(dt, camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+    for (const u of [caption2, traitCard2, indicator2]) if (u) u.update(dt, camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
     sun.position.set(motor.position.x + 6, 14, motor.position.z + 5);
     sun.target.position.copy(motor.position);
     renderer.render(scene, camera);
@@ -204,6 +223,7 @@
         ui.persona.textContent = guard.personality.status();
         ui.startle.textContent = guard.awareness.startleStatus();
         ui.cqcstat.textContent = cqc.status();
+        if (guard2) { const b = guard2.awareness; ui.g2.textContent = `${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${guard2.personality.traits.primary}/${guard2.personality.traits.secondary} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}`; }
         ui.post.textContent = `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`;
       }
       ui.rate.textContent = animator ? animator.playRate.toFixed(2) + '×' : '–';
@@ -216,5 +236,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { SCmv: mv, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { SCmv: mv, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);
