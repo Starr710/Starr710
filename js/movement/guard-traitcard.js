@@ -14,6 +14,12 @@
 (function (mv) {
   'use strict';
 
+  // DOM writes only when a value changes (repeated identical writes still cost style work every frame)
+  function setDom(o, hidden, styles) {
+    if (o._hid !== hidden) { o._hid = hidden; o.el.hidden = hidden; }
+    for (const k in styles) { const v = styles[k]; if (o._st[k] !== v) { o._st[k] = v; o.el.style[k] = v; } }
+  }
+
   mv.TraitCardDefaults = {
     enabled: true,
     reveal: 'always',        // 'always' | 'discovered' (future scanner) | 'never'
@@ -42,12 +48,12 @@
   mv.GuardTraitCard = function (el, guard, world, opts, avoid) {
     this.avoid = avoid || null;
     this.cfg = Object.assign({}, mv.TraitCardDefaults, opts || {});
-    this.el = el; this.guard = guard; this.world = world;
+    this.el = el; this.guard = guard; this.world = world; this._st = {}; this._hid = null;
     this.pri = el.querySelector('.mv-trait-primary'); this.sec = el.querySelector('.mv-trait-secondary');
     this.opacity = 0; this.visible = false; this.wantVisible = false; this.why = 'starting';
     this._acc = Infinity; this._pending = null; this._since = 0; this._sx = null; this._sy = null; this._key = '';
     this._v = new THREE.Vector3(); this._r = new THREE.Vector3(); this._p = new THREE.Vector3(); this._q = new THREE.Vector3();
-    this.el.style.opacity = '0'; this.el.hidden = true;
+    setDom(this, true, { opacity: '0' });
   };
 
   mv.GuardTraitCard.prototype.revealed = function () {
@@ -91,7 +97,7 @@
     this.opacity = target > this.opacity ? Math.min(1, this.opacity + rate) : Math.max(0, this.opacity - rate);
     if (this._why === 'off screen' || this._why === 'too far') this.opacity = 0;
     if (flipping && this.opacity <= 0) { this._side = this._flipTo; this._flipTo = null; }
-    if (this.opacity <= 0) { this.el.hidden = true; this.el.style.opacity = '0'; this.visible = false; if (!flipping) this._sx = null; return; }
+    if (this.opacity <= 0) { setDom(this, true, { opacity: '0' }); this.visible = false; if (!flipping) this._sx = null; return; }
     // text (only when it changes)
     const key = P.traits.primary + '/' + P.traits.secondary;
     if (key !== this._key) { this._key = key; this.pri.textContent = P.traits.primary.toUpperCase(); this.sec.textContent = label(P.traits.secondary); }
@@ -105,8 +111,7 @@
     this._sx = this._sx == null ? sx : this._sx + (sx - this._sx) * k; this._sy = this._sy == null ? sy : this._sy + (sy - this._sy) * k;
     this._ppm = this._ppm == null ? pxPerM : this._ppm + (pxPerM - this._ppm) * k;
     const off = c.side * this._ppm + c.gap;
-    this.el.hidden = false;
-    this.el.style.fontSize = (c.fontSize * scale).toFixed(2) + 'px';
+    setDom(this, false, { fontSize: (c.fontSize * scale).toFixed(2) + 'px' });
     const bw = this.el.offsetWidth, bh = this.el.offsetHeight;
     // beside his shoulder on the side away from the player on screen (right by default);
     // flipped if that would run off the screen. The side is held unless it must change
@@ -121,10 +126,9 @@
     let x = this._side === 'right' ? this._sx + off : this._sx - off - bw;
     x = Math.max(c.margin, Math.min(w - c.margin - bw, x));
     const y = Math.max(c.margin, Math.min(h - c.margin - bh, this._sy - bh / 2));
-    this.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-    this.el.style.opacity = (this.opacity * c.opacity).toFixed(3);
+    setDom(this, false, { transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`, opacity: (this.opacity * c.opacity).toFixed(3) });
     this.visible = !flipping; this.side = this._side;
   };
 
-  mv.GuardTraitCard.prototype.hide = function () { this.opacity = 0; this.visible = false; this.wantVisible = false; this._pending = null; this._sx = null; this.el.hidden = true; this.el.style.opacity = '0'; };
+  mv.GuardTraitCard.prototype.hide = function () { this.opacity = 0; this.visible = false; this.wantVisible = false; this._pending = null; this._sx = null; setDom(this, true, { opacity: '0' }); };
 })(SC.mv);

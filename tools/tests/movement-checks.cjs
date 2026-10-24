@@ -1250,7 +1250,7 @@ const CHECKS = {
       let sp = 0; MV.scene.traverse(o => { if (o.isSprite || o.isPoints || (o.geometry && o.geometry.type === 'TextGeometry')) sp++; });
       const g = MV.guard; [g.root].forEach(root => root.traverse(o => { const m = o.material; if (m && [].concat(m).some(x => x.map && x.map.image && x.map.image.getContext)) sp++; }));
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let gl = 0, n;
-      while ((n = walker.nextNode())) { const s = n.textContent.trim(); const el = n.parentElement; if (/^[!?¿¡]+$/.test(s) && el && el.offsetParent !== null) gl++; }
+      while ((n = walker.nextNode())) { const s = n.textContent.trim(); const el = n.parentElement; if (/^[!?¿¡]+$/.test(s) && el && el.offsetParent !== null && el.id !== 'mv-indicator') gl++; }   // (the approved awareness indicator is its own check)
       return { sp, gl };
     });
     for (const [label, px] of [['sneak', 25], ['stealth walk', 50], ['jog', 64]]) {
@@ -1295,7 +1295,8 @@ const CHECKS = {
     await page.waitForTimeout(300);
     // ten stealth-walk steps to his right, 0.35 s apart (he turns away from her to listen)
     for (let k = 0; k < 10; k++) { await page.evaluate(k => MV.noise.emit(2, 'footstep', new THREE.Vector3(5 + (k % 2) * 0.3, 0, -16 + k * 0.1), 'concrete', 'player'), k); await page.waitForTimeout(350); }
-    await page.waitForTimeout(1500);
+    // until it has finished in game time (a slow machine runs the game clock slower than the wall clock)
+    await page.waitForFunction(() => !MV.caption.active, null, { timeout: 20000, polling: 100 }).catch(() => {}); await page.waitForTimeout(200);
     const A = await page.evaluate(() => {
       const L = window.__cap, on = L.filter(x => !x.hidden && x.op > 0);
       let ups = 0, phase = 'in', restarts = 0; for (let i = 1; i < on.length; i++) { const d = on[i].op - on[i - 1].op; if (phase === 'in' && d < -1e-3) phase = 'out'; else if (phase === 'out' && d > 1e-3) restarts++; }
@@ -2100,6 +2101,137 @@ const CHECKS = {
     }, on); await page.close(); return r; };
     const onR = await once(true), offR = await once(false), r = { same: onR.trace === offR.trace, states: onR.states };
     return { pass: r.same && /INVESTIGATING|SUSPICIOUS/.test(r.states), detail: `60 s with the card on vs off: identical states, notes, positions and suspicion ${r.same} (through ${r.states})` };
+  },
+
+  // Awareness indicator (UI only): one full cycle per display preset, read from the real
+  // awareness states with a camera watching him. NORMAL nothing; SUSPICIOUS and
+  // INVESTIGATING one yellow "?" that never restarts as footsteps keep coming; ALERT a red
+  // "!" (a cross-fade, not a jump); EVASION the search symbol and HEIGHTENED its subdued form
+  // (Easy / developer override only); RETURNING fades it out; back to nothing at NORMAL; a
+  // sound interrupting the walk back brings it back. Presets show only their kinds
+  async awareIndicator() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, ind = MV.indicator, el = document.getElementById('mv-indicator');
+      const cam = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 80);
+      const run = (preset, dev) => {
+        ind.cfg.preset = preset; ind.cfg.devShowAll = dev; ind.hide();
+        g.patrol.enabled = false; g.reset(); a.cfg.evasionTime = 6; a.cfg.heightenedTime = 8; motor.teleport(-17, 15, 0);
+        const shown = {}, byState = {}; let restarts = 0, lastOp = 0, stateWas = '', stateSince = 0, susStart = null, susDrops = 0, changesAtSus = null, returnFadeEnd = null, f = 0, alertSwap = null, retStart = null;
+        const frame = () => {
+          step(0, 'stand'); noise.update(dt); g.update(dt, T);
+          cam.position.set(g.position.x + 3, 2.4, g.position.z + 6.5); cam.lookAt(g.position.x, 1.6, g.position.z); cam.updateMatrixWorld(true);
+          ind.update(dt, cam, innerWidth, innerHeight); f++;
+          const vis = !el.hidden && +el.style.opacity > 0, txt = vis ? el.textContent : '';
+          if (vis) { const key = ind.kind; shown[key] = el.style.color; }
+          if (a.state !== stateWas) stateSince = a.clock;
+          if (a.clock - stateSince > 0.6) (byState[a.state] = byState[a.state] || new Set()).add(vis ? ind.kind : '-');   // settled in the state (a change cross-fades)
+          // the "?" through SUSPICIOUS → INVESTIGATING while footsteps continue: never dips
+          if ((a.state === 'SUSPICIOUS' || a.state === 'INVESTIGATING') && ind.kind === 'suspicion') { if (susStart == null) { susStart = f; changesAtSus = ind.changes; } if (+el.style.opacity < lastOp - 1e-6 && lastOp < 1) susDrops++; }
+          if (a.state === 'RETURNING' && retStart == null) retStart = a.clock;
+          if (retStart != null && returnFadeEnd == null && !vis) returnFadeEnd = a.clock - retStart;
+          lastOp = vis ? +el.style.opacity : 0; stateWas = a.state;
+        };
+        for (let k = 0; k < 30; k++) frame();
+        const normalShown = !el.hidden;
+        // footsteps building to an investigation (one incident)
+        for (let k = 0; k < 6; k++) { noise.emit(1, 'footstep', new THREE.Vector3(g.position.x + 1.4, 0, g.position.z - 1.2 + k * 0.1), 'concrete', 'player'); for (let q = 0; q < 80; q++) frame(); }
+        const susChanges = ind.changes - (changesAtSus || 0), reactions = a.reactions;
+        // she's recognised
+        let n = 0, dip = false, alertAt = null, shownAt = null;
+        while (n < 600 && !(a.state === 'ALERT' && ind.kind === 'alert' && +el.style.opacity > 0.9)) {
+          if (a.state !== 'ALERT') { const q = g.position.clone().addScaledVector(g.forward(), 2); motor.teleport(q.x, q.z, g.yaw + Math.PI); }   // right in front of him
+          frame(); n++; if (a.state === 'ALERT' && alertAt == null) alertAt = a.clock; if (alertAt != null && el.hidden) dip = true; if (alertAt != null && shownAt == null && ind.kind === 'alert' && !el.hidden) shownAt = a.clock;
+        }
+        const alertDelay = shownAt != null ? shownAt - alertAt : null;
+        const alertTxt = el.textContent, alertCol = el.style.color;
+        motor.teleport(-17, 15, 0);
+        // the cycle; a sound during the walk back interrupts it once
+        let t = 0, interrupted = false, backAfter = false;
+        while (a.standDowns === 0 && t < 80) { frame(); t += dt; if (a.state === 'RETURNING' && !interrupted && a.clock - retStart > 2) { interrupted = true; noise.emit(3, 'footstep', new THREE.Vector3(9, 0, -12), 'metal', 'player'); } if (interrupted && a.state === 'HEIGHTENED' && !el.hidden) backAfter = true; }
+        for (let k = 0; k < 60; k++) frame();
+        const endShown = !el.hidden;
+        const sets = {}; for (const s in byState) sets[s] = [...byState[s]].filter(x => x !== '-').sort().join('/');
+        return { alertDelay, shown: Object.keys(shown).sort().join(','), colors: shown, sets, normalShown, susChanges, susDrops, reactions, alertTxt, alertCol, dip, returnFadeEnd, backAfter, interrupted, endShown, standDowns: a.standDowns };
+      };
+      const out = {};
+      for (const [k, p, d] of [['easy', 'easy', false], ['normal', 'normal', false], ['hard', 'hard', false], ['extreme', 'extreme', false], ['dev', 'extreme', true]]) out[k] = run(p, d);
+      ind.cfg.preset = 'normal'; ind.cfg.devShowAll = false; a.cfg.evasionTime = 30; a.cfg.heightenedTime = 60; g.reset(); ind.hide();
+      out.kinds = ind.cfg.kinds; out.returnFade = ind.cfg.returnFade;
+      return out;
+    });
+    const E = r.easy, N = r.normal, H = r.hard, X = r.extreme, D = r.dev, K = r.kinds;
+    const stateOk = x => !x.normalShown && (x.sets.SUSPICIOUS || '') === 'suspicion' && (x.sets.INVESTIGATING || '') === 'suspicion' && x.sets.ALERT === 'alert' && x.sets.EVASION === 'search' && x.sets.HEIGHTENED === 'searchSubdued' && !x.endShown;
+    const ok = stateOk(E) && stateOk(D) && E.susChanges === 0 && E.susDrops === 0 && E.reactions === 1 && E.alertTxt === '!' && E.dip && E.alertDelay != null && E.alertDelay <= 0.2 && E.backAfter && E.returnFadeEnd != null && E.returnFadeEnd <= r.returnFade + 0.1
+      && E.shown === 'alert,search,searchSubdued,suspicion' && N.shown === 'alert,suspicion' && H.shown === 'alert' && X.shown === '' && D.shown === E.shown
+      && [E, N, H, X, D].every(x => x.standDowns === 1 && x.interrupted && !x.normalShown && !x.endShown)
+      && K.suspicion.text === '?' && K.alert.text === '!' && K.searchSubdued.opacity < K.search.opacity;
+    return { pass: ok, detail: `Easy: NORMAL nothing, SUSPICIOUS ${E.sets.SUSPICIOUS}, INVESTIGATING ${E.sets.INVESTIGATING} (6 footsteps: restarted ${E.susChanges}×, dips ${E.susDrops}, "huh" ×${E.reactions}), ALERT ${E.sets.ALERT} "${E.alertTxt}" ${E.alertCol} (cross-faded ${E.dip}, "!" showing ${E.alertDelay == null ? '-' : E.alertDelay.toFixed(2)} s after ALERT), EVASION ${E.sets.EVASION}, HEIGHTENED ${E.sets.HEIGHTENED}, RETURNING faded out in ${E.returnFadeEnd == null ? '-' : E.returnFadeEnd.toFixed(2)} s (≤ ${r.returnFade}), back with the interrupting sound ${E.backAfter}, gone at NORMAL ${!E.endShown}; kinds shown — Easy ${E.shown}, Normal ${N.shown}, Hard ${H.shown}, Extreme ${X.shown || 'none'}, developer override ${D.shown}; same cycle in every preset (stand-downs ${[E, N, H, X, D].map(x => x.standDowns).join('/')})` };
+  },
+
+  // the indicator on an iPhone-landscape page (frame loop running): above his head, small,
+  // following him; clear of the "Huh" and of the personality card at close, medium and long
+  // range; hidden off screen, behind the tall crate and beyond its distance; switched off,
+  // only the indicator goes
+  async awareIndicatorView() {
+    const page = await touchPage();
+    const r = await page.evaluate(() => {
+      MV.renderer.setAnimationLoop(null);
+      const g = MV.guard, ind = MV.indicator, card = MV.traitCard, cap = MV.caption, a = g.awareness, W = innerWidth, H = innerHeight, cam = new THREE.PerspectiveCamera(58, W / H, 0.1, 80);
+      ind.cfg.devShowAll = true; g.reset();
+      a.state = 'SUSPICIOUS';   // a display state for the view checks (the AI isn't stepped here)
+      const head = () => g.head.getWorldPosition(new THREE.Vector3());
+      const look = (x, y, z) => { const h = head(); cam.position.set(x, y, z); cam.lookAt(h.x, h.y - 0.3, h.z); cam.updateMatrixWorld(true); };
+      const frames = n => { for (let i = 0; i < n; i++) { ind.update(1 / 60, cam, W, H); card.update(1 / 60, cam, W, H); cap.update(1 / 60, cam, W, H); } };
+      const rect = id => document.getElementById(id).getBoundingClientRect(), inter = (p, q) => Math.max(0, Math.min(p.right, q.right) - Math.max(p.left, q.left)) * Math.max(0, Math.min(p.bottom, q.bottom) - Math.max(p.top, q.top));
+      const out = { dist: [] };
+      for (const d of [3.5, 9, 15]) {
+        ind.hide(); card.hide(); cap.hide(); look(g.position.x + 0.8, 2.0, g.position.z + d); cap.show(); frames(40);
+        const ri = rect('mv-indicator'), rc = rect('mv-caption'), rt = rect('mv-trait'), hp = head().clone(); hp.y += ind.cfg.height; const p = hp.project(cam), hx = (p.x + 1) / 2 * W, hy = (1 - p.y) / 2 * H;
+        out.dist.push({ d, all: ind.visible && cap.visible && card.visible, huh: inter(ri, rc), card: inter(ri, rt), above: ri.bottom <= rc.top + 0.5, dx: (ri.left + ri.right) / 2 - hx, h: ri.height, w: ri.width, fs: document.getElementById('mv-indicator').style.fontSize });
+      }
+      // follows him: moved 2 m, the indicator moves with his head (no lag)
+      ind.hide(); look(g.position.x + 0.8, 2.0, g.position.z + 9); frames(30); const r0 = rect('mv-indicator');
+      g.motor.teleport(g.position.x + 1, g.position.z, g.yaw); g.place(); g.root.updateMatrixWorld(true); frames(1);
+      const r1 = rect('mv-indicator'), hp = head().clone(); hp.y += ind.cfg.height; const p1 = hp.project(cam); out.follow = Math.abs((r1.left + r1.right) / 2 - (p1.x + 1) / 2 * W); out.moved = Math.abs(r1.left - r0.left);
+      g.reset(); a.state = 'SUSPICIOUS';
+      // hidden: off screen, behind the crate, too far
+      ind.hide(); look(2, 2.2, -10); frames(30); out.clear = ind.visible;
+      look(2, 2.2, -10); cam.position.set(2, 2.2, -10); cam.lookAt(2, 2, 5); cam.updateMatrixWorld(true); frames(10); out.off = { vis: ind.visible, why: ind.why };
+      ind.hide(); look(2, 2.2, -10); frames(30); look(-4, 1.6, -4); frames(60); out.crate = { vis: ind.visible, why: ind.why };
+      ind.hide(); look(2, 3, 13); frames(30); out.far = { vis: ind.visible, why: ind.why };
+      // switched off: only the indicator goes
+      ind.hide(); card.hide(); cap.hide(); look(2, 2.2, -10); cap.show(); ind.cfg.enabled = false; frames(30); out.off2 = { ind: ind.visible || !document.getElementById('mv-indicator').hidden, card: card.visible, huh: cap.visible };
+      ind.cfg.enabled = true; ind.cfg.devShowAll = false; a.state = 'NORMAL'; g.reset(); ind.hide(); cap.hide();
+      return out;
+    });
+    const ok = r.dist.every(x => x.all && x.huh === 0 && x.card === 0 && x.above && Math.abs(x.dx) < 2 && x.h < 24 && x.w < 24) && r.follow < 1 && r.moved > 5
+      && r.clear && !r.off.vis && r.off.why === 'off screen' && !r.crate.vis && r.crate.why === 'behind cover' && !r.far.vis && r.far.why === 'too far'
+      && !r.off2.ind && r.off2.card && r.off2.huh && page.errors.length === 0;
+    return { pass: ok, detail: r.dist.map(x => `${x.d} m: "?" ${x.w.toFixed(0)}×${x.h.toFixed(0)} px (${x.fs}) centred over his head (${x.dx.toFixed(1)} px), above the "Huh" ${x.above}, overlap with "Huh" ${x.huh.toFixed(0)} px² and with the card ${x.card.toFixed(0)} px²`).join('; ') + `; follows his head within ${r.follow.toFixed(2)} px when he moves; clear view shown ${r.clear}, ${r.off.why}, ${r.crate.why}, ${r.far.why}; switched off: indicator ${r.off2.ind ? 'still shown' : 'gone'}, card ${r.off2.card}, "Huh" ${r.off2.huh}; page errors ${page.errors.length}` };
+  },
+
+  // switching the indicators never changes what the guard does: the same 60 s on two
+  // fresh pages, one with every indicator shown (developer override) and one with them all
+  // off (Extreme), gives exactly the same states, notes, positions and suspicion
+  async awareIndicatorAI() {
+    const once = async dev => { const page = await simPage(); const r = await page.evaluate(dev => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, T = MV.seeTarget, dt = 1 / 60, ind = MV.indicator, cam = MV.camera;
+      ind.cfg.preset = dev ? 'easy' : 'extreme'; ind.cfg.devShowAll = dev; useProfile('B'); g.patrol.enabled = true; g.reset(); motor.teleport(-17, 15, 0);
+      const trace = []; let showed = 0;
+      for (let f = 0; f < 60 * 60; f++) {
+        if (f === 600) { const b = g.position.clone().addScaledVector(g.forward(), -2); for (let k = 0; k < 3; k++) noise.emit(2, 'footstep', b.clone().add(new THREE.Vector3(k * 0.2, 0, 0)), 'concrete', 'player'); }
+        if (f === 1500) { const q = g.position.clone().addScaledVector(g.forward(), 3); motor.teleport(q.x, q.z, g.yaw + Math.PI); }
+        if (f === 1700) motor.teleport(-17, 15, 0);
+        step(0, 'stand'); noise.update(dt); g.update(dt, T);
+        cam.position.set(g.position.x + 3, 2.5, g.position.z + 6); cam.lookAt(g.position.x, 1.4, g.position.z); cam.updateMatrixWorld(true); ind.update(dt, cam, 640, 300); if (ind.visible) showed++;
+        if (f % 30 === 0) trace.push([a.state, a.behavior, a.note, g.patrol.state, g.position.x.toFixed(4), g.position.z.toFixed(4), g.yaw.toFixed(4), a.suspicion.toFixed(4)].join(','));
+      }
+      return { trace: trace.join('|'), showed, states: [...new Set(trace.map(t => t.split(',')[0]))].join('/') };
+    }, dev); await page.close(); return r; };
+    const on = await once(true), off = await once(false);
+    const ok = on.trace === off.trace && on.showed > 60 && off.showed === 0 && /SUSPICIOUS|INVESTIGATING/.test(on.states);
+    return { pass: ok, detail: `60 s with every indicator shown (${on.showed} frames visible) vs all off (${off.showed}): identical states, notes, positions and suspicion ${on.trace === off.trace} (through ${on.states})` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
