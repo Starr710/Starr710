@@ -898,6 +898,8 @@ const CHECKS = {
       const behind = g.position.clone().addScaledVector(g.forward(), -4);
       const heard0 = g.hearing.heardCount || 0; noise.emit(3, 'footstep', behind, 'concrete', 'player'); sim(2);
       const heard = g.hearing.heardCount > heard0 && g.hearing.heard.position.distanceTo(behind) < 0.01;
+      // (he turns to the sound first: once he's settled, she stands 6 m in front of him)
+      for (let k = 0; k < 4 * 60 && !(g.isStill() && Math.abs(g.motor.angularVelocity) < 0.02); k++) sim(1);
       const front = g.position.clone().addScaledVector(g.forward(), 6); motor.teleport(front.x, front.z, g.yaw + Math.PI); sim(30);
       const seen = g.vision.seen.rate > 0 && g.vision.meter > 0;
       const mean = v => v.length ? v.reduce((x, y) => x + y, 0) / v.length : 0;
@@ -1305,6 +1307,87 @@ const CHECKS = {
       && B.clear.w === 'showing' && !B.clear.hid && B.wall.w === 'behind cover' && B.wall.hid && B.far.w === 'too far' && B.far.hid
       && C.alerted && C.shownBefore && !C.visibleOnAlert && C.dismissed >= 1 && page.errors.length === 0;
     return { pass: ok, detail: `10 footsteps, one incident: shown ${A.shown}× ("${A.text}", ${A.fs}px, ${A.h.toFixed(0)}px tall), ${A.reactions} vocal reaction, restarted ${A.restarts}×; on screen ${A.span.toFixed(2)} s (fully shown ${A.full.toFixed(2)} s, then faded), within ${A.anchor.toFixed(1)} px of the point above his head, gone afterwards ${A.endHidden}; clear view: ${B.clear.w}; behind the tall crate: ${B.wall.w}; from 30 m: ${B.far.w}; a new incident turned ALERT: caption on screen after the alert ${C.visibleOnAlert} (${C.why}); page errors ${page.errors.length}` };
+  },
+
+  // Step 8.2, glimpse: she sneaks 9 m away 45° off his facing (his slower peripheral zone).
+  // His first partial sighting opens an incident: a brief pause, then one "huh" (caption
+  // shown once however many times he looks), his head then his body turn toward where he
+  // saw her and the cone follows (she ends up in a faster zone); the meter never drops
+  // while she's in view. She slips away before 100%: he faces the last place he actually
+  // saw her, keeps his suspicion and stays wary (no ALERT, no reset)
+  async glimpseReact() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, v = g.vision, T = MV.seeTarget, dt = 1 / 60, c = a.cfg, cap = MV.caption;
+      const wrapD = x => Math.abs(Math.atan2(Math.sin(x), Math.cos(x))) * 57.3;
+      g.reset(); cap.hide(); const cap0 = cap.shown;
+      const off = Math.PI / 4, D = 9, P = new THREE.Vector3(g.position.x + Math.sin(off) * D, 0, g.position.z + Math.cos(off) * D), ux = Math.sin(off), uz = Math.cos(off);
+      motor.teleport(P.x, P.z, off + Math.PI);
+      let f = 0, firstZone = null, firstSeenF = null, incF = null, reactF = null, headF = null, bodyF = null, looks = 0, drops = 0, lastMeter = 0, yaw0 = g.yaw, lastAcc = v.acc;
+      const sim = dir => { step(0.22, 'stand', dir * ux, dir * uz); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); cap.update(dt, MV.camera, 640, 300); f++;
+        if (v.acc === 0) looks++;
+        const seen = v.seen.rate > 0;
+        if (seen && firstSeenF == null) { firstSeenF = f; firstZone = v.seen.zone; }
+        if (seen && v.meter < lastMeter - 1e-9) drops++; lastMeter = v.meter;
+        if (incF == null && a.incident) incF = f;
+        if (reactF == null && a.reactions > 0) reactF = f;
+        if (headF == null && Math.abs(g.headYaw) > 0.01) headF = f;
+        if (bodyF == null && wrapD(g.yaw - yaw0) > 0.5) bodyF = f; };
+      // sneaking back and forth along his line of sight (so the angle stays 45°) until he's turned toward her
+      let n = 0; while (n < 8 * 60 && !(bodyF != null && wrapD(g.yaw - Math.atan2(motor.position.x - g.position.x, motor.position.z - g.position.z)) < 12) && v.meter < 0.85) { sim(Math.floor(n / 30) % 2 ? 1 : -1); n++; }
+      const zoneAfterTurn = v.seen.zone, meterAtHide = v.meter, incKind = a.incident && a.incident.kind, lastSeen = a.seen.position.clone();
+      // she slips away out of sight, silently
+      motor.teleport(-17, 15, 0);
+      for (let k = 0; k < 120; k++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); }
+      const faceLast = wrapD(g.yaw - Math.atan2(lastSeen.x - g.position.x, lastSeen.z - g.position.z)), focusErr = a.focus ? a.focus.position.distanceTo(lastSeen) : 99;
+      const stateAfter = a.state, suspAfter = a.suspicion, conf = a.confirmed;
+      for (let k = 0; k < 120; k++) { step(0, 'stand'); noise.update(dt); g.update(dt, T); }
+      return { firstZone, firstSeenF, incF, incKind, reactF, headF, bodyF, looks, drops, zoneAfterTurn, meterAtHide, reactions: a.reactions, captions: cap.shown - cap0, delay: c.visualReactDelay,
+        faceLast, focusErr, stateAfter, suspAfter, conf, susp4: a.suspicion, state4: a.state, suspAt: c.suspiciousAt };
+    });
+    const ms = x => (x / 60).toFixed(2) + ' s';
+    const ok = r.firstZone === 'slower' && r.incKind === 'seen' && r.reactions === 1 && r.captions === 1 && r.looks >= 10
+      && r.reactF != null && Math.abs((r.reactF - r.incF) / 60 - r.delay) < 0.03 && r.headF >= r.reactF && r.bodyF >= r.reactF
+      && r.drops === 0 && (r.zoneAfterTurn === 'fastest' || r.zoneAfterTurn === 'normal') && r.meterAtHide < 1
+      && r.faceLast < 5 && r.focusErr < 0.01 && !r.conf && r.stateAfter !== 'NORMAL' && r.suspAfter >= r.suspAt && r.state4 !== 'NORMAL' && r.state4 !== 'ALERT';
+    return { pass: ok, detail: `first seen in his ${r.firstZone} zone at ${ms(r.firstSeenF)}; incident (${r.incKind}) at ${ms(r.incF)}, one "huh" ${((r.reactF - r.incF) / 60).toFixed(2)} s later (pause ${r.delay}), captions ${r.captions}, over ${r.looks} vision looks; head turned at ${ms(r.headF)}, body at ${ms(r.bodyF)}; meter drops while in view ${r.drops}; after the turn she was in his ${r.zoneAfterTurn} zone, meter ${(r.meterAtHide * 100).toFixed(0)}% when she slipped away; then he faced the last place he saw her within ${r.faceLast.toFixed(1)}° (focus ${r.focusErr.toFixed(2)} m from it), ${r.stateAfter} with ${(r.suspAfter * 100).toFixed(0)}% suspicion, confirmed ${r.conf}; 2 s later ${r.state4} ${(r.susp4 * 100).toFixed(0)}%` };
+  },
+
+  // Step 8.2, shared and priority: a footstep's "huh", then a glimpse in the same incident:
+  // no second reaction (and the reverse: glimpse first, then footsteps). A glimpse that
+  // she lets turn into full recognition: ALERT on the very frame the meter reaches 100%
+  // and the caption is dismissed at once
+  async glimpseShared() {
+    const page = await simPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise } = MV, g = MV.guard, a = g.awareness, v = g.vision, T = MV.seeTarget, dt = 1 / 60, cap = MV.caption;
+      const sim = (n, m, x, z) => { for (let i = 0; i < n; i++) { step(m || 0, 'stand', x, z); MV.footsteps.update(dt); noise.update(dt); g.update(dt, T); cap.update(dt, MV.camera, 640, 300); } };
+      const off = Math.PI / 4, ux = Math.sin(off), uz = Math.cos(off);
+      const peripheral = D => { motor.teleport(g.position.x + ux * D, g.position.z + uz * D, off + Math.PI); };
+      const glimpse = frames => { for (let i = 0; i < frames; i++) sim(1, 0.22, (Math.floor(i / 30) % 2 ? 1 : -1) * ux, (Math.floor(i / 30) % 2 ? 1 : -1) * uz); };
+      const out = {};
+      // sound first, then a glimpse
+      g.reset(); cap.hide(); motor.teleport(-12, -18, 0); sim(10);
+      noise.emit(1, 'footstep', new THREE.Vector3(g.position.x + 1.4, 0, g.position.z - 1), 'concrete', 'player'); sim(60);
+      out.a1 = a.reactions; const c0 = cap.shown;
+      peripheral(9); glimpse(90); out.aSeen = a.seen != null;
+      out.a2 = a.reactions; out.aInc = a.incidents; out.aCap = cap.shown - c0;
+      // glimpse first, then footsteps
+      g.reset(); cap.hide(); peripheral(9); glimpse(90); out.b1 = a.reactions; const c1 = cap.shown;
+      motor.teleport(-17, 15, 0); sim(10);
+      for (let k = 0; k < 5; k++) { noise.emit(2, 'footstep', new THREE.Vector3(g.position.x - 2, 0, g.position.z + 2 + k * 0.2), 'concrete', 'player'); sim(30); }
+      out.b2 = a.reactions; out.bInc = a.incidents; out.bCap = cap.shown - c1;
+      // a glimpse she lets become full recognition
+      g.reset(); cap.hide(); peripheral(9); let meterFullF = null, alertF = null, capAfter = 0, f = 0, capDuring = false;
+      while (alertF == null && f < 15 * 60) { glimpse(1); f++; if (cap.active) capDuring = true; if (meterFullF == null && v.meter >= 1) meterFullF = f; if (alertF == null && a.state === 'ALERT') alertF = f; }
+      sim(1); if (cap.active || !document.getElementById('mv-caption').hidden) capAfter++;
+      out.c = { reactions: a.reactions, meterFullF, alertF, capDuring, capAfter, why: cap.why };
+      return out;
+    });
+    const C = r.c;
+    const ok = r.a1 === 1 && r.aSeen && r.a2 === 1 && r.aInc === 1 && r.aCap === 0 && r.b1 === 1 && r.b2 === 1 && r.bInc === 1 && r.bCap === 0
+      && C.meterFullF != null && C.alertF === C.meterFullF && C.reactions === 1 && C.capDuring && C.capAfter === 0;
+    return { pass: ok, detail: `footstep then glimpse: reactions ${r.a1} → ${r.a2}, incidents ${r.aInc}, extra captions ${r.aCap}; glimpse then footsteps: ${r.b1} → ${r.b2}, incidents ${r.bInc}, extra captions ${r.bCap}; glimpse to full recognition: "huh" ${C.reactions}, meter 100% on frame ${C.meterFullF}, ALERT on frame ${C.alertF}, caption shown before ${C.capDuring}, after ALERT ${C.capAfter ? 'still showing' : 'dismissed'} (${C.why})` };
   },
 
   // crouch idle: both feet on the ground (lowest skinned vertex near each foot)
