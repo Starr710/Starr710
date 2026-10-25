@@ -140,6 +140,7 @@
     if (this.ko) this.ko.reset();   // conscious and standing again (Step 14)
     if (this.health) this.health.reset();   // full health again (Step 20)
     if (this.weapon) this.weapon.reset();   // pistol holstered (Step 21)
+    if (this.gunfire) this.gunfire.reset();   // no shot pending, counts cleared (Step 22)
     this.poseHook = null; if (mv.ThrowAnim && mv.ThrowAnim.clearLive) mv.ThrowAnim.clearLive(this);
     this.motor.teleport(this.post.x, this.post.z, this.postYaw);
     this.restraint = null;
@@ -303,7 +304,7 @@
   // target: what the guard can look at (see mv.visionTarget)
   mv.Guard.prototype.update = function (dt, target) {
     // Step 14: down, his consciousness runs instead of his AI (no movement, senses or decisions)
-    if (this.isDown()) { if (this.weapon && this.weapon.state !== 'LOWERED') this.weapon.stow(this.ko.state === 'DEAD' ? 'defeated' : 'unconscious'); this.place(); this.ko.update(dt, target); this.place(); this.root.updateMatrixWorld(true); return; }
+    if (this.isDown()) { if (this.weapon && this.weapon.state !== 'LOWERED') this.weapon.stow(this.ko.state === 'DEAD' ? 'defeated' : 'unconscious'); if (this.gunfire) this.gunfire.update(dt); this.place(); this.ko.update(dt, target); this.place(); this.root.updateMatrixWorld(true); return; }
     if (this.hearing) this.hearing.update(dt);
     this._locomotion(dt, target);
     this.place();
@@ -320,5 +321,6 @@
     if (target) this.vision.update(dt, target);
     if (this.awareness) this.awareness.update(dt, target);
     if (this.weapon) this.weapon.decide(dt);      // Step 21: weapon readiness from what he now knows
+    if (this.gunfire) this.gunfire.update(dt);    // Step 22: and he fires, when (and only when) canFire allows
   };
 })(SC.mv);

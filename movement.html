@@ -76,6 +76,9 @@
 <button type="button" id="mv-aim" aria-pressed="false">AIM</button>  <!-- Step 18: TAP to aim / stop aiming (no shooting yet) -->
 <div id="mv-crosshair" aria-hidden="true" hidden><i></i><i></i><i></i><i></i><b></b><s id="mv-hitmark"><u></u><u></u><u></u><u></u></s></div>  <!-- Step 18: the aim point (the screen centre) while aiming -->
 
+<div id="mv-dmg" aria-hidden="true"></div>  <!-- Step 22: a brief red tint at the screen edges when she's hit -->
+<div id="mv-defeat" role="status" hidden>DEFEATED — PRESS RESET TO RETRY</div>
+
 <div class="mv-overlay" id="mv-loader" role="status" aria-live="polite">
   <div class="mv-box">
     <div class="mv-title">SHADOW CELL</div>
@@ -135,6 +138,8 @@
 <script src="js/movement/aim-pose.js"></script>
 <script src="js/movement/pistol.js"></script>
 <script src="js/movement/guard-weapon.js"></script>
+<script src="js/movement/guard-gunfire.js"></script>
+<script src="js/movement/player-health.js"></script>
 <script src="js/movement/main.js"></script>
 <!-- SCRIPTS:END -->
 </body>

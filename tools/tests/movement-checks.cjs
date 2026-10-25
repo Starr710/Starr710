@@ -65,8 +65,16 @@ async function simPage() {
     // the checks written before Step 9 cover the stationary guard (still a setting): patrol off
     MV.guard.patrol.enabled = false; MV.guard.personality.enabled = false; MV.guard.reset();   // and no personality influence (Step 10)
   });
+  await _noDamageUnlessCombat(page);
   page.errors = errors;
   return page;
+}
+
+// Step 22: guards can shoot her. The checks written before it test other things with her in a
+// guard's sight for a long time, so there her health takes no damage (the guards still see,
+// draw, fire and make their noise; only the damage is off). The Step 22 checks turn it on
+async function _noDamageUnlessCombat(page) {
+  await page.evaluate(() => { const P = MV.playerHealth; if (!P || P.__wrapped) return; const t = P.take.bind(P); P.take = ev => window.__combat ? t(ev) : { applied: false, why: 'test: damage off' }; P.__wrapped = true; });
 }
 
 // Step 9: the same page with the guard on his patrol route, from its clean start
@@ -91,6 +99,7 @@ async function touchPage() {
   });
   const cdp = await ctx.newCDPSession(page);
   page.touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+  await _noDamageUnlessCombat(page);
   page.errors = errors;
   return page;
 }
@@ -1259,7 +1268,7 @@ const CHECKS = {
       await page.evaluate(() => {
         const g = MV.guard; g.post.set(0, 0, 1.5); g.postYaw = Math.PI; g.reset();
         MV.motor.teleport(-4.6, 5.2, Math.PI / 2); MV.cam.snap(MV.motor);
-        window.__r = { heard: 0, surfaces: {}, v0: MV.voice.log.length };
+        window.__r = { heard: 0, surfaces: {}, v0: MV.voice.log.length, r2: MV.guard2.awareness.reactions };
         if (!window.__hooked) { window.__hooked = true; MV.noise.on(e => { if (e.source === 'player' && window.__r) setTimeout(() => { const h = MV.guard.hearing.heard; if (h && h.position.distanceTo(e.position) < 1e-6) { window.__r.heard++; window.__r.surfaces[e.surface] = (window.__r.surfaces[e.surface] || 0) + 1; } }, 0); }); }
       });
       await page.waitForTimeout(400);
@@ -1267,7 +1276,7 @@ const CHECKS = {
       const s1 = await scan(); glyphs += s1.gl; sprites += s1.sp;
       await page.waitForTimeout(1500);
       const s2 = await scan(); glyphs += s2.gl; sprites += s2.sp;
-      const r = await page.evaluate(() => ({ heard: window.__r.heard, surfaces: window.__r.surfaces, voice: MV.voice.log.length - window.__r.v0, reactions: MV.guard.awareness.reactions, incidents: MV.guard.awareness.incidents, state: MV.guard.awareness.state, gait: MV.motor.gait.label }));
+      const r = await page.evaluate(() => ({ heard: window.__r.heard, surfaces: window.__r.surfaces, voice: MV.voice.log.length - window.__r.v0 - (MV.guard2.awareness.reactions - window.__r.r2), g2voice: MV.guard2.awareness.reactions - window.__r.r2, reactions: MV.guard.awareness.reactions,   /* (Step 22: the voice log is shared; Guard 2 can now hear Guard 1's gunfire and react in his own voice) */ incidents: MV.guard.awareness.incidents, state: MV.guard.awareness.state, gait: MV.motor.gait.label }));
       runs.push(Object.assign({ label }, r));
     }
     // his body language moves only his own bones: the player's skeleton shares none of them
@@ -1275,7 +1284,7 @@ const CHECKS = {
     await page.evaluate(() => { const g = MV.guard; g.post.set(2, 0, -16); g.postYaw = 0; g.reset(); });
     const ok = runs.every(x => x.heard >= 3 && x.voice <= 1 && x.reactions <= 1 && x.incidents <= 1 && x.voice === x.reactions) && runs.filter(x => x.reactions === 1).length >= 2
       && runs.some(x => Object.keys(x.surfaces).length >= 2) && glyphs === 0 && sprites === 0 && shared === 0 && page.errors.length === 0;
-    return { pass: ok, detail: runs.map(x => `${x.label}: ${x.heard} steps heard (${Object.entries(x.surfaces).map(([k, n]) => k + ' ' + n).join(', ')}) → ${x.voice} vocal reaction, ${x.incidents} incident, ${x.state}`).join('; ') + `; floating ?/! glyphs ${glyphs}, sprites/text/icons on him ${sprites}; bones shared with the player ${shared}; page errors ${page.errors.length}` };
+    return { pass: ok, detail: runs.map(x => `${x.label}: ${x.heard} steps heard (${Object.entries(x.surfaces).map(([k, n]) => k + ' ' + n).join(', ')}) → ${x.voice} vocal reaction${x.g2voice ? ` (+${x.g2voice} from Guard 2, hearing the gunfire)` : ''}, ${x.incidents} incident, ${x.state}`).join('; ') + `; floating ?/! glyphs ${glyphs}, sprites/text/icons on him ${sprites}; bones shared with the player ${shared}; page errors ${page.errors.length}` };
   },
 
   // Step 8.1: the TEMPORARY "Huh" caption, on an iPhone-landscape page with the frame loop
@@ -3074,7 +3083,16 @@ const CHECKS = {
     const box = async sel => { const b = await page.locator(sel).boundingBox(); if (!b) throw new Error(`${sel} not shown at "${step}": ` + JSON.stringify(await page.evaluate(() => ({ cqc: MV.cqc.state, last: MV.cqc.lastTry, tap: MV.input.cqcLast, heldFor: MV.input.cqcHeldFor, takedown: MV.cqc.lastTakedown, ko: MV.guard2.ko.state, aware: MV.guard2.awareness.state })))); return b; };
     const tapAt = async (b, ms) => { { const down = Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(ms || 80); const up = Tc('touchEnd', []); await down; await up; /* finger-up on time, not after the page acknowledges finger-down */ } await page.waitForTimeout(120); };
     const behind = async () => { await page.evaluate(() => { const g = MV.guard2; const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); }); await page.waitForTimeout(250); };
-    const grab = async () => { await tapAt(await box('#mv-cqc')); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(300); };
+    // (the harness can deliver a finger-up late under load: a tap its own events time at < the hold time, read as a HOLD
+    // because the finger-up reached the page only after two frames past the threshold. Recognised by exactly that and
+    // retapped once; anything else is a real result)
+    let retaps = 0;
+    const grab = async () => {
+      await tapAt(await box('#mv-cqc')); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {});
+      const late = await page.evaluate(() => MV.cqc.state !== 'GRAPPLING' && MV.input.cqcLast === 'HOLD' && MV.input.cqcHeldFor < MV.input.cqcHoldTime);
+      if (late && !retaps) { retaps++; await page.evaluate(() => { MV.cqc.cancel(); MV.guard2.reset(); }); await behind(); await tapAt(await box('#mv-cqc')); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); }
+      await page.waitForTimeout(300);
+    };
     await page.evaluate(() => { MV.guard2.reset(); document.getElementById('mv-stats').hidden = false; });
     const hiddenFree = await page.evaluate(() => document.getElementById('mv-throw').hidden);
     step = 'first grab'; await behind(); await grab();
@@ -3116,7 +3134,7 @@ const CHECKS = {
       && released.state === 'FREE' && !released.restrained && !released.down && released.aware === 'ALERT' && released.hidden
       && mid.state === 'THROWING' && mid.hidden && after.state === 'FREE' && after.throws === 1 && after.impacts === 1 && after.ko === 'UNCONSCIOUS' && /UNCONSCIOUS/.test(after.stat)
       && clean(resetKO) && during === 'throw' && clean(resetMid) && resetKO.cyl === resetMid.cyl && page.errors.length === 0;
-    return { pass: ok, detail: `free: THROW hidden ${hiddenFree}; holding him: shown ${!shown.hidden}, lit ${shown.ready}, CQC reads "${shown.cqc}", overlaps CQC/CROUCH ${layout.overlap}, on the camera side ${layout.right}; 2 s of pulling: ${pulled.state}, throws ${pulled.throws}; RELEASE: ${released.state}, he's ${released.aware}, down ${released.down}; THROW tapped with the stick held: ${mid.state} (${mid.phase}), button hidden ${mid.hidden}; after a held press and a second request: throws ${after.throws}, impacts ${after.impacts}, he's ${after.ko}, stats "${after.stat}"; RESET while unconscious: ${resetKO.cqc}, guards ${resetKO.g.map(g => g.ko + '/' + g.aware + ' ' + g.post.toFixed(2) + ' m').join(', ')}; RESET mid-throw (${during}): ${resetMid.cqc}, stance ${resetMid.stance}, guards ${resetMid.g.map(g => g.ko + '/' + g.aware + ' ' + g.post.toFixed(2) + ' m').join(', ')}, colliders ${resetMid.cyl}; page errors ${page.errors.length}` };
+    return { pass: ok, detail: `${retaps ? '(1 retap: a finger-up delivered late by the harness) ' : ''}free: THROW hidden ${hiddenFree}; holding him: shown ${!shown.hidden}, lit ${shown.ready}, CQC reads "${shown.cqc}", overlaps CQC/CROUCH ${layout.overlap}, on the camera side ${layout.right}; 2 s of pulling: ${pulled.state}, throws ${pulled.throws}; RELEASE: ${released.state}, he's ${released.aware}, down ${released.down}; THROW tapped with the stick held: ${mid.state} (${mid.phase}), button hidden ${mid.hidden}; after a held press and a second request: throws ${after.throws}, impacts ${after.impacts}, he's ${after.ko}, stats "${after.stat}"; RESET while unconscious: ${resetKO.cqc}, guards ${resetKO.g.map(g => g.ko + '/' + g.aware + ' ' + g.post.toFixed(2) + ' m').join(', ')}; RESET mid-throw (${during}): ${resetMid.cqc}, stance ${resetMid.stance}, guards ${resetMid.g.map(g => g.ko + '/' + g.aware + ' ' + g.post.toFixed(2) + ' m').join(', ')}, colliders ${resetMid.cyl}; page errors ${page.errors.length}` };
   },
 
   // HUD: the developer stats are a bar along the top edge on iPhone landscape (844×390,
@@ -3770,6 +3788,252 @@ const CHECKS = {
     return { pass: rows.every(([k, v]) => v[0] >= (k === 'crouch idle' ? 0.15 : 0.12) && v[1] >= 0.15), detail: rows.map(([k, v]) => `${k}: hand–shin ${cm(v[0])}, thigh–body ${cm(v[1])}`).join('; ') };
   },
 
+  // ---------------------------------------------------------------- Step 22: guard gunfire, player health and defeat
+  async _gunPage(touch) {
+    const page = touch ? await touchPage() : await simPage();
+    await page.evaluate(() => { window.__combat = true; });   /* (Step 22 checks: damage on) */
+    await page.evaluate(() => {
+      const dt = 1 / 60;
+      window.sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      // Guard 1 at an open post (patrol off), her d m in front of him in plain view
+      window.range = (d, yawOff) => { const g1 = MV.guard; g1.patrol.enabled = false; g1.personality.enabled = false; g1.post.set(-6, 0, -16); g1.postYaw = 0; g1.reset(); MV.guard2.reset(); MV.playerHealth.reset(); MV.motor.teleport(-6 + (yawOff || 0), -16 + d, Math.PI); MV.cam.snap(MV.motor); };
+      window.keepAlive = () => { const P = MV.playerHealth; if (P.current < P.max) P.current = P.max; P.state = 'OK'; };
+      window.shotLog = []; for (const g of MV.guards) { const G = g.gunfire, f = G.fire.bind(G); G.fire = cf => { const s = f(cf); if (s) window.shotLog.push({ g: g.cfg.label.split(' —')[0], t: g.awareness.clock, kind: s.kind, what: s.what, point: s.point && s.point.clone(), from: s.from.clone(), dir: s.dir.clone(), dmg: s.damage ? s.damage.applied : false, visible: g.weapon.target.visible, state: g.weapon.state, startled: g.awareness.isStartled(), noise: s.noise }); return s; }; }
+    });
+    return page;
+  },
+
+  // her health: 100, each guard hit 20 (configurable), five hits to 0, never below; one shot
+  // applies once; nothing after defeat; RESET back to 100
+  async playerHealth() {
+    const page = await CHECKS._gunPage();
+    const r = await page.evaluate(() => {
+      const P = MV.playerHealth, d = MV.guard.gunfire.cfg.damage;
+      const out = { start: [P.current, P.max, P.percent(), P.state], damage: d, cfg2: MV.guard2.gunfire.cfg.damage };
+      const hp = []; for (let i = 0; i < 5; i++) { P.take({ amount: d, source: 'Guard 2', id: 'h' + i }); hp.push(P.current); }
+      out.hp = hp; out.state = P.state;
+      out.after = P.take({ amount: d, source: 'Guard 2', id: 'h9' }); out.hpAfter = P.current;
+      P.reset(); const a = P.take({ amount: 20, source: 'Guard 1', id: 'dup' }), b = P.take({ amount: 20, source: 'Guard 1', id: 'dup' });
+      out.dup = [a.applied, b.applied, P.current]; P.reset(); P.take({ amount: 500, source: 'x', id: 'big' }); out.big = [P.current, P.state];
+      document.getElementById('mv-reset').click(); sim(2); out.reset = [P.current, P.state, P.history.length, P.percent()];
+      out.last = (P.take({ amount: 20, source: 'Guard 1 — Patrol', id: 'l' }), [P.lastDamage.amount, P.lastDamage.source, P.received]);
+      return out;
+    });
+    const o = r, ok = o.start.join() === '100,100,100,OK' && o.damage === 20 && o.cfg2 === 20 && o.hp.join() === '80,60,40,20,0' && o.state === 'PLAYER_DEFEATED' && !o.after.applied && o.hpAfter === 0
+      && o.dup.join() === 'true,false,80' && o.big.join() === '0,PLAYER_DEFEATED' && o.reset.join() === '100,OK,0,100' && o.last.join() === '20,Guard 1 — Patrol,20' && page.errors.length === 0;
+    return { pass: ok, detail: `start ${o.start.join(', ')}; guard damage ${o.damage} / ${o.cfg2}; five hits: ${o.hp.join(' → ')} → ${o.state}; a sixth: applied ${o.after.applied}, ${o.hpAfter} HP; one shot twice: ${o.dup.slice(0, 2).join('/')}, ${o.dup[2]} HP; 500 → ${o.big.join(', ')}; RESET → ${o.reset.join(', ')}; recorded ${o.last.join(', ')}; page errors ${page.errors.length}` };
+  },
+
+  // when he may fire: never with the pistol lowered, never during his startle, never on
+  // footsteps or a gunshot alone (nothing visible), only READY on a target he can see; he
+  // stops once she's behind cover; his cooldown; the two guards on their own rhythms;
+  // down or restrained, never
+  async gunfireRules() {
+    const page = await CHECKS._gunPage();
+    const r = await page.evaluate(() => {
+      const { motor, noise, input } = MV, g1 = MV.guard, g2 = MV.guard2, cq = MV.cqc;
+      const out = {};
+      // in plain view from the start: the first shots
+      range(7); shotLog.length = 0; let first = null, startleEnd = null, lowered = 0;
+      for (let i = 0; i < 60 * 12; i++) { keepAlive(); MV.tick(1 / 60, true); if (g1.awareness.isStartled()) startleEnd = g1.awareness.clock; }
+      out.all = shotLog.map(s => s.state + (s.startled ? '!' : '') + (s.visible ? 'v' : '-')).join(' ');
+      out.legit = shotLog.every(s => s.state === 'READY' && !s.startled && s.visible);
+      out.firstAt = shotLog.length ? shotLog[0].t : null; out.alertAt = g1.awareness.confirmedAt; out.startleEnd = startleEnd; out.n = shotLog.length;
+      const gaps = shotLog.slice(1).map((s, i) => s.t - shotLog[i].t); out.minGap = Math.min(...gaps); out.maxGap = Math.max(...gaps);
+      // footsteps / a gunshot heard, nothing seen: no shots
+      g1.reset(); g2.reset(); motor.teleport(-19, 19, 0); MV.cam.snap(motor); sim(5); shotLog.length = 0;
+      const gp = g2.position.clone(), f = g2.forward();
+      for (let k = 0; k < 8; k++) { noise.emit(2, 'footstep', new THREE.Vector3(gp.x - f.x * 3, 0, gp.z - f.z * 3), 'concrete', 'player'); sim(20); }
+      out.steps = { shots: shotLog.length, w: g2.weapon.state };
+      noise.emit(5, 'gunshot', new THREE.Vector3(gp.x - f.x * 6, 0, gp.z - f.z * 6), 'concrete', 'player'); sim(300);
+      out.gun = { shots: shotLog.length, w: g2.weapon.state, type: g2.weapon.target.type, visible: g2.weapon.target.visible };
+      // behind the tall crate: no more shots once he's lost her
+      range(7); for (let i = 0; i < 60 * 6; i++) { keepAlive(); MV.tick(1 / 60, true); }
+      shotLog.length = 0; motor.teleport(-2, -6.9, 0); MV.cam.snap(motor); for (let i = 0; i < 60 * 6; i++) { keepAlive(); MV.tick(1 / 60, true); }
+      out.hidden = { shots: shotLog.length, late: shotLog.filter(s => s.t > (shotLog[0] ? shotLog[0].t : 0) + 0.2).length, hits: shotLog.filter(s => s.kind === 'player').length, aware: g1.awareness.state, type: g1.weapon.target.type };
+      // two guards seeing her: not in step
+      g1.post.set(-6, 0, -16); g1.postYaw = 0; g1.reset(); g2.reset(); MV.playerHealth.reset();
+      g2.motor.teleport(-3.5, -13, -Math.PI / 4); g2.post.copy(g2.position); g2.postYaw = -Math.PI / 4; g2.reset();
+      motor.teleport(-6, -9, Math.PI); MV.cam.snap(motor); shotLog.length = 0;
+      for (let i = 0; i < 60 * 14; i++) { keepAlive(); MV.tick(1 / 60, true); }
+      const a = shotLog.filter(s => s.g === 'Guard 1').map(s => s.t), b = shotLog.filter(s => s.g === 'Guard 2').map(s => s.t);
+      let close = 0; for (const t of a) if (b.some(u => Math.abs(u - t) < 0.05)) close++;
+      out.two = { a: a.length, b: b.length, close };
+      // grabbed: Guard 1 can't fire while held
+      g2.reset(); range(7); for (let i = 0; i < 60 * 5; i++) { keepAlive(); MV.tick(1 / 60, true); }
+      const q = g1.position.clone().addScaledVector(g1.forward(), 1.0); motor.teleport(q.x, q.z, g1.yaw + Math.PI); MV.cam.snap(motor); shotLog.length = 0;
+      input.cqcTapped = true; let held = 0; for (let i = 0; i < 180; i++) { keepAlive(); MV.tick(1 / 60, true); if (g1.restraint) held++; }
+      out.grab = { held, shots: shotLog.filter(s => s.g === 'Guard 1').length, why: g1.gunfire.why };
+      cq.cancel();
+      // down: unconscious / defeated never fire
+      g1.reset(); range(7); g1.ko.knockOut({ position: g1.position.clone(), along: new THREE.Vector3(1, 0, 0), by: motor.position.clone() }); shotLog.length = 0;
+      for (let i = 0; i < 60 * 5; i++) { keepAlive(); MV.tick(1 / 60, true); }
+      out.uncon = shotLog.filter(s => s.g === 'Guard 1').length;
+      g1.reset(); range(7); for (let k = 0; k < 3; k++) g1.health.take({ amount: 35, source: 'pistol', id: 'k' + k }); shotLog.length = 0;
+      for (let i = 0; i < 60 * 5; i++) { keepAlive(); MV.tick(1 / 60, true); }
+      out.dead = shotLog.filter(s => s.g === 'Guard 1').length;
+      return out;
+    });
+    const o = r, cfg = { interval: 1.5, jitter: 0.2 };
+    const ok = o.n >= 4 && o.legit && o.firstAt > o.startleEnd && o.minGap >= cfg.interval - cfg.jitter - 0.02 && o.maxGap <= 4
+      && o.steps.shots === 0 && o.steps.w === 'LOWERED' && o.gun.shots === 0 && o.gun.w !== 'LOWERED' && !o.gun.visible
+      && o.hidden.late === 0 && o.hidden.hits === 0 && ['EVASION', 'ALERT'].indexOf(o.hidden.aware) >= 0
+      && o.two.a >= 3 && o.two.b >= 3 && o.two.close < Math.min(o.two.a, o.two.b) / 2
+      && o.grab.held > 150 && o.grab.shots === 0 && o.uncon === 0 && o.dead === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `in plain view at 7 m: ${o.n} shots in 12 s, all READY / not startled / target visible ${o.legit}; first shot ${o.firstAt != null ? (o.firstAt - o.startleEnd).toFixed(2) : '–'} s after his startle ended; gaps ${o.minGap.toFixed(2)}–${o.maxGap.toFixed(2)} s; footsteps: ${o.steps.shots} shots (pistol ${o.steps.w}); a gunshot heard: ${o.gun.shots} shots (pistol ${o.gun.w} → ${o.gun.type}); behind the tall crate: ${o.hidden.shots} shots (${o.hidden.late} after the moment he lost her, ${o.hidden.hits} hits), ${o.hidden.aware}; both guards seeing her: ${o.two.a} / ${o.two.b} shots, ${o.two.close} within 50 ms of each other; grabbed ${o.grab.held} frames: ${o.grab.shots} shots (${o.grab.why}); unconscious ${o.uncon}, defeated ${o.dead} shots; page errors ${page.errors.length}` };
+  },
+
+  // the bullets: from his real muzzle along where his pistol points; walls and crates stop them;
+  // crouched behind the low crate only what shows above it can be hit; misses do nothing, every
+  // hit is one 20 HP event; accuracy worse moving and far (seeded); one flash, sound and noise
+  // event per shot, heard by the other guard, not by himself
+  async gunfireShots() {
+    const page = await CHECKS._gunPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, noise } = MV, g1 = MV.guard, g2 = MV.guard2, G = g1.gunfire, W = g1.weapon, P = MV.playerHealth;
+      const out = {};
+      // muzzle: on his pistol, along his aim
+      range(7); for (let i = 0; i < 60 * 6; i++) { keepAlive(); MV.tick(1 / 60, true); }
+      const m = W.muzzle(new THREE.Vector3()), gunPos = W.gun.getWorldPosition(new THREE.Vector3()), gunFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(W.gun.getWorldQuaternion(new THREE.Quaternion()));
+      out.muzzle = { fromGun: m.distanceTo(gunPos), along: m.clone().sub(gunPos).normalize().dot(gunFwd), aimVsGun: W.aimDir.angleTo(gunFwd) * 57.3 };
+      // accuracy (seeded; her health kept up so the count runs): still at 5 / 10 / 15 m, walking at 7.5 m
+      const rate = (d, walk) => { range(d); G.reset(); let i = 0; while (G.shots < 40 && i < 60 * 80) { keepAlive(); if (walk) { input.move.x = Math.sin(i / 90) > 0 ? 0.55 : -0.55; } MV.tick(1 / 60, true); i++; } input.move.x = 0; return G.hits / Math.max(1, G.shots); };
+      out.acc = { d5: rate(5), d10: rate(10), d15: rate(15), still75: rate(7.5), walk75: rate(7.5, true) };
+      // repeatable: the same seed, the same shots
+      const seq = () => { range(7); G.reset(); const ks = []; let i = 0; while (G.shots < 8 && i < 60 * 30) { keepAlive(); MV.tick(1 / 60, true); i++; if (G.lastShot && ks.length < G.shots) ks.push((G.lastShot.offset / G.lastShot.spread).toFixed(5)); } return ks.join(); };   // (the seeded part of the spread: the same draws in the same order)
+      out.repeat = seq() === seq();
+      // each hit is one 20 HP damage event; misses nothing
+      range(7); G.reset(); let lost = 0, hp0 = P.current, i = 0; const kinds = [];
+      while (G.shots < 4 && i < 60 * 20) { MV.tick(1 / 60, true); i++; }
+      out.dmg = { shots: G.shots, hits: G.hits, lost: 100 - P.current, events: P.history.length, miss: G.misses };
+      // walls / crates: fired along a line through the tall crate and the long wall, never her
+      const shootAt = (from, to) => { const d = to.clone().sub(from).normalize(); return G._resolve(from, d); };
+      motor.teleport(-2, -6.9, 0); sim(3);
+      out.crate = shootAt(new THREE.Vector3(-2, 1.3, -10.5), new THREE.Vector3(-2, 1.2, -6.9)).kind + '/' + shootAt(new THREE.Vector3(-2, 1.3, -10.5), new THREE.Vector3(-2, 1.2, -6.9)).what;
+      motor.teleport(4, 14.5, 0); sim(3);
+      out.wall = shootAt(new THREE.Vector3(4, 1.4, 10), new THREE.Vector3(4, 1.2, 14.5)).what;
+      // crouched behind the low crate (0.9 m), a guard standing 6 m off at shooting height: rays in a fan across her
+      motor.teleport(3, -4.0, Math.PI); input.setCrouch(true); sim(90);
+      const hb = P.hitbox({}), from = new THREE.Vector3(3, 1.45, -11); let low = 0, high = 0, lowHits = 0, highHits = 0;
+      for (let y = 0.1; y <= hb.top + 0.2; y += 0.05) for (let x = -0.3; x <= 0.3; x += 0.1) {
+        const res = shootAt(from, new THREE.Vector3(hb.x + x, y, hb.z)); const yAtCrate = from.y + (y - from.y) * ((-5.5 - from.z) / (hb.z - from.z));
+        if (yAtCrate < 0.88) { low++; if (res.kind === 'player') lowHits++; } else { high++; if (res.kind === 'player') highHits++; } }
+      input.setCrouch(false); sim(30);
+      out.cover = { top: hb.top, low, lowHits, high, highHits };
+      // effects and the noise event: once per shot, from him, heard by Guard 2, not by himself
+      g2.reset(); range(7); const evs = []; const off = noise.on(e => { if (e.type === 'gunshot') evs.push(e); });
+      const s0 = G.sounds || 0, f0 = G.flashes || 0, h1 = g1.hearing.heardCount, h2 = g2.hearing.heardCount; G.reset();
+      i = 0; while (G.shots < 3 && i < 60 * 20) { keepAlive(); MV.tick(1 / 60, true); i++; }
+      out.fx = { shots: G.shots, events: evs.length, by: evs.every(e => e.by === g1 && e.level === 5), at: evs.length ? evs[evs.length - 1].position.distanceTo(new THREE.Vector3(G.lastShot.from.x, 0, G.lastShot.from.z)) : null, /* (the last event is the last shot's) */ sounds: (G.sounds || 0) - s0, flashes: (G.flashes || 0) - f0, selfHeard: g1.hearing.heardCount - h1, otherHeard: g2.hearing.heardCount - h2 };
+      return out;
+    });
+    const o = r, A = o.acc, ok = o.muzzle.fromGun < 0.25 && o.muzzle.along > 0.9 && o.muzzle.aimVsGun < 12
+      && A.d5 >= 0.55 && A.d5 <= 0.9 && A.still75 >= 0.5 && A.still75 <= 0.85 && A.d10 >= 0.45 && A.walk75 < A.still75 - 0.2 && A.d15 < A.d5 && o.repeat
+      && o.dmg.lost === 20 * o.dmg.hits && o.dmg.events === o.dmg.hits && o.dmg.miss === o.dmg.shots - o.dmg.hits
+      && o.crate === 'world/crate' && o.wall === 'wall' && o.cover.lowHits === 0 && o.cover.highHits > 0 && o.cover.top < 1.35
+      && o.fx.shots === 3 && o.fx.events === 3 && o.fx.by && o.fx.at < 1e-6 && o.fx.sounds === 3 && o.fx.flashes === 3 && o.fx.selfHeard === 0 && o.fx.otherHeard >= 1 && page.errors.length === 0;
+    const pc = v => Math.round(v * 100) + '%';
+    return { pass: ok, detail: `muzzle ${cm(o.muzzle.fromGun)} from his pistol, along it ${o.muzzle.along.toFixed(2)}, aim vs pistol ${o.muzzle.aimVsGun.toFixed(1)}°; hit rate (40 seeded shots each): still 5 m ${pc(A.d5)}, 7.5 m ${pc(A.still75)}, 10 m ${pc(A.d10)}, 15 m ${pc(A.d15)}; walking at 7.5 m ${pc(A.walk75)}; repeatable ${o.repeat}; 4 shots → ${o.dmg.hits} hits, ${o.dmg.lost} HP lost in ${o.dmg.events} events, ${o.dmg.miss} misses cost nothing; through the tall crate → ${o.crate}, the long wall → ${o.wall}; crouched behind the low crate (her top ${o.cover.top.toFixed(2)} m): rays crossing the crate below its top ${o.cover.lowHits}/${o.cover.low} hit her, above it ${o.cover.highHits}/${o.cover.high}; 3 shots: ${o.fx.events} gunshot events (level 5, his, at his muzzle ${o.fx.at != null ? o.fx.at.toFixed(3) : '–'} m), ${o.fx.sounds} sounds, ${o.fx.flashes} flashes; heard by himself ${o.fx.selfHeard}, by Guard 2 ${o.fx.otherHeard}; page errors ${page.errors.length}` };
+  },
+
+  // hurt, she carries on (moves, aims, shoots as before); at 0 HP PLAYER_DEFEATED: down on the
+  // ground, nothing works but RESET, no more damage, the message; RESET: 100 HP, up, controls
+  // back, the guards' firing cleared
+  async playerDefeat() {
+    const page = await CHECKS._gunPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, P = MV.playerHealth, A = MV.aim, g1 = MV.guard, msg = document.getElementById('mv-defeat');
+      const out = {};
+      range(30); P.take({ amount: 20, source: 'Guard 1', id: 'a' }); P.take({ amount: 20, source: 'Guard 1', id: 'b' }); sim(40);
+      // still moving (her normal speeds), aiming and shooting
+      motor.teleport(-6, -20, 0); cam.snap(motor); input.move.y = 1; let spd = 0; for (let i = 0; i < 110; i++) { MV.tick(1 / 60, true); spd = Math.max(spd, motor.speed); } input.move.y = 0; sim(60);
+      input.aimTapped = true; sim(60); const aimOn = A.active; const s0 = MV.pistol.shots; window.__t = (window.__t || 1e4) + 1000; input._firePress(window.__t); MV.tick(1 / 60, true);
+      out.hurt = { hp: P.current, spd, aimOn, shot: MV.pistol.shots - s0 };
+      // three more hits: defeated (while aiming)
+      for (const id of ['c', 'd', 'e']) P.take({ amount: 20, source: 'Guard 2', id }); MV.tick(1 / 60, true);
+      const p0 = motor.position.clone();
+      input.move.y = 1; input.aimTapped = true; input.cqcTapped = true; window.__t += 1000; input._firePress(window.__t); sim(120); input.move.y = 0;
+      const R = MV.visual.root;
+      out.down = { state: P.state, aim: A.active, moved: motor.position.distanceTo(p0), cqc: MV.cqc.state, shots: MV.pistol.shots - s0, msg: !msg.hidden && /DEFEATED/.test(msg.textContent), tilt: R.rotation.x * 57.3, low: MV.SCmv.ThrowAnim.lowest({ model: MV.visual.model, bones: MV.visual.bones }) - motor.position.y, more: P.take({ amount: 20, source: 'Guard 1', id: 'z' }).applied, hp: P.current, gait: document.getElementById('mv-gait').textContent };
+      // the guards stop firing at a defeated player
+      range(7); P.take({ amount: 500, source: 'test', id: 'end' }); shotLog.length = 0; for (let i = 0; i < 60 * 8; i++) MV.tick(1 / 60, true);
+      out.noFire = { shots: shotLog.length, why: g1.gunfire.why };
+      // RESET
+      document.getElementById('mv-reset').click(); sim(3);
+      out.reset = { hp: P.current, state: P.state, msg: msg.hidden, tilt: R.rotation.x, spawn: Math.hypot(motor.position.x - MV.area.spawn.x, motor.position.z - MV.area.spawn.z), g: [g1, MV.guard2].map(g => [g.gunfire.shots, g.gunfire.cooldown, g.weapon.state].join(',')), body: document.body.classList.contains('mv-defeated') };
+      input.move.y = 1; let spd2 = 0; for (let i = 0; i < 110; i++) { MV.tick(1 / 60, true); spd2 = Math.max(spd2, motor.speed); } input.move.y = 0;
+      out.reset.spd = spd2;
+      return out;
+    });
+    const o = r, ok = o.hurt.hp === 60 && o.hurt.spd > 3.1 && o.hurt.aimOn && o.hurt.shot === 1
+      && o.down.state === 'PLAYER_DEFEATED' && !o.down.aim && o.down.moved < 0.05 && o.down.cqc === 'FREE' && o.down.shots === 1 && o.down.msg && o.down.tilt > 70 && o.down.low > -0.01 && o.down.low < 0.1 && !o.down.more && o.down.hp === 0 && /PLAYER_DEFEATED/.test(o.down.gait)
+      && o.noFire.shots === 0 && o.noFire.why === 'target down'
+      && o.reset.hp === 100 && o.reset.state === 'OK' && o.reset.msg && o.reset.tilt === 0 && o.reset.spawn < 0.01 && o.reset.g.every(x => x === '0,0,LOWERED') && !o.reset.body && o.reset.spd > 3.1 && page.errors.length === 0;
+    return { pass: ok, detail: `at ${o.hurt.hp} HP: jogs at ${o.hurt.spd.toFixed(2)} m/s, AIM ${o.hurt.aimOn}, FIRE → ${o.hurt.shot} shot; three more hits: ${o.down.state}, AIM ${o.down.aim}, moved ${cm(o.down.moved)} with the stick held, CQC ${o.down.cqc}, FIRE presses after: ${o.down.shots - 1} shots, message ${o.down.msg}, tilted ${o.down.tilt.toFixed(0)}°, lowest point ${cm(o.down.low)}, more damage ${o.down.more}, STATS "${o.down.gait}"; guards at a defeated player: ${o.noFire.shots} shots (${o.noFire.why}); RESET: ${o.reset.hp} HP ${o.reset.state}, message hidden ${o.reset.msg}, upright ${o.reset.tilt === 0}, at the spawn, guards ${o.reset.g.join(' / ')}, jogs ${o.reset.spd.toFixed(2)} m/s; page errors ${page.errors.length}` };
+  },
+
+  // CQC against armed, ALERT guards: grab (his firing stops), THROW and CHOKE knock him out,
+  // the quick takedown works, break-free: he must get READY again before he can fire; the
+  // other guard can still fire while she holds someone
+  async gunfireCqc() {
+    const page = await CHECKS._gunPage();
+    const r = await page.evaluate(() => {
+      const { motor, input } = MV, g1 = MV.guard, g2 = MV.guard2, cq = MV.cqc, P = MV.playerHealth;
+      const out = {};
+      const armed = () => { range(7); for (let i = 0; i < 60 * 5; i++) { keepAlive(); MV.tick(1 / 60, true); } const q = g1.position.clone().addScaledVector(g1.forward(), 1.0); motor.teleport(q.x, q.z, g1.yaw + Math.PI); MV.cam.snap(motor); sim(1); return g1.weapon.state; };
+      out.ready = armed(); input.cqcTapped = true; sim(40); out.grab = cq.state; input.throwTapped = true; let n = 0; while (g1.ko.state !== 'UNCONSCIOUS' && n < 200) { keepAlive(); MV.tick(1 / 60, true); n++; } out.thrown = g1.ko.state;
+      cq.cancel(); armed(); input.cqcTapped = true; sim(40); input._chokeKey = true; input.chokePresses++; n = 0; while (g1.ko.state !== 'UNCONSCIOUS' && n < 600) { keepAlive(); MV.tick(1 / 60, true); n++; } input._chokeKey = false; out.choked = g1.ko.state;
+      cq.cancel(); armed(); cq.input._cqcPress(performance.now() - 1000); n = 0; while (g1.ko.state !== 'UNCONSCIOUS' && n < 300) { keepAlive(); MV.tick(1 / 60, true); n++; } cq.input._cqcUp(performance.now()); out.takedown = g1.ko.state;
+      // break-free: back up, steadied, then fires
+      cq.cancel(); armed(); input.cqcTapped = true; sim(40); cq.bf.left = 0.05; n = 0; while (cq.state !== 'FREE' && n < 120) { keepAlive(); MV.tick(1 / 60, true); n++; }
+      shotLog.length = 0; const t0 = g1.awareness.clock; for (let i = 0; i < 60 * 6; i++) { keepAlive(); MV.tick(1 / 60, true); }
+      const s = shotLog.filter(x => x.g === 'Guard 1');
+      out.broke = { first: s.length ? s[0].t - t0 : null, legit: s.every(x => x.state === 'READY' && x.visible) };
+      // the other guard fires while she holds Guard 1 (Guard 2 brought to an open spot facing them)
+      cq.cancel(); armed(); input.cqcTapped = true; sim(40);
+      { const px = motor.position.x - 4, pz = motor.position.z + 0.5, yaw = Math.atan2(motor.position.x - px, motor.position.z - pz); g2.reset(); g2.motor.teleport(px, pz, yaw); g2.post.copy(g2.position); g2.postYaw = yaw; g2.wantYaw = yaw; g2.place(); } shotLog.length = 0;   // (4 m to her side, facing her, calm)
+      for (let i = 0; i < 60 * 10 && cq.state === 'GRAPPLING'; i++) { keepAlive(); if (cq.bf) cq.bf.left = 9; MV.tick(1 / 60, true); }
+      out.other = { g2: shotLog.filter(x => x.g === 'Guard 2').length, g1: shotLog.filter(x => x.g === 'Guard 1').length, cqc: cq.state };
+      cq.cancel();
+      return out;
+    });
+    const o = r, ok = o.ready === 'READY' && o.grab === 'GRAPPLING' && o.thrown === 'UNCONSCIOUS' && o.choked === 'UNCONSCIOUS' && o.takedown === 'UNCONSCIOUS'
+      && o.broke.first != null && o.broke.first > 0.45 && o.broke.legit && o.other.g1 === 0 && o.other.g2 >= 1 && page.errors.length === 0;
+    return { pass: ok, detail: `armed, READY Guard 1 at arm's length: TAP → ${o.grab}, THROW → ${o.thrown}; CHOKE → ${o.choked}; HOLD (quick takedown) → ${o.takedown}; broke free: first shot ${o.broke.first != null ? o.broke.first.toFixed(2) + ' s' : 'none'} later, only READY on a visible target ${o.broke.legit}; holding Guard 1 in Guard 2's view: Guard 2 fired ${o.other.g2}, Guard 1 ${o.other.g1}; page errors ${page.errors.length}` };
+  },
+
+  // iPhone: in Guard 2's view he fires and she's hit (HP drops by 20s); she walks behind the
+  // tall crate by touch and the hits stop; the controls answer throughout; frame rate while
+  // both guards are firing at her moving
+  async gunfireTouch() {
+    const page = await CHECKS._gunPage(true), Tc = page.touch;
+    await page.evaluate(() => { const g = MV.guard2, gp = g.position.clone(), f = g.forward(); MV.motor.teleport(gp.x + f.x * 3, gp.z + f.z * 3, Math.atan2(-f.x, -f.z)); MV.cam.snap(MV.motor); });
+    await page.waitForFunction(() => MV.playerHealth.current < 100 || MV.guard2.gunfire.shots >= 3, null, { timeout: 30000, polling: 'raf' }).catch(() => {});
+    const r0 = await page.evaluate(() => ({ hp: MV.playerHealth.current, shots: MV.guard2.gunfire.shots, hits: MV.guard2.gunfire.hits, stat: document.getElementById('mv-gait').textContent }));
+    // walking by touch with shots landing: the stick keeps working
+    await page.evaluate(() => { MV.motor.teleport(-6, -10, Math.PI); MV.cam.snap(MV.motor); const g1 = MV.guard; g1.patrol.enabled = false; g1.post.set(-6, 0, -16); g1.postYaw = 0; g1.reset(); MV.playerHealth.reset(); window.__hk = setInterval(() => { const P = MV.playerHealth; if (P.current < 60) { P.current = 100; P.state = 'OK'; } }, 50); });
+    await page.waitForFunction(() => MV.guard.gunfire.shots >= 1, null, { timeout: 20000, polling: 'raf' }).catch(() => {});
+    // performance: the frame rate here drifts ±25% from one window to the next whatever the game does, so firing
+    // and not firing are measured in alternating 2 s windows (drift hits both alike), and the guards' own work per
+    // frame is timed directly
+    await page.evaluate(() => { window.__f = 0; (function f() { window.__f++; requestAnimationFrame(f); })(); window.__gt = 0; window.__gn = 0;
+      for (const g of MV.guards) { const u = g.update.bind(g); g.update = (dt, t) => { const t0 = performance.now(); u(dt, t); window.__gt += performance.now() - t0; window.__gn++; }; g.gunfire.__u = g.gunfire.update; } });
+    const win = async firing => { await page.evaluate(f => { for (const g of MV.guards) g.gunfire.update = f ? g.gunfire.__u : () => {}; window.__f = 0; window.__w0 = performance.now(); window.__gt = 0; window.__gn = 0; }, firing); await page.waitForTimeout(2000);
+      return page.evaluate(() => ({ fps: window.__f / ((performance.now() - window.__w0) / 1000), ms: window.__gt / Math.max(1, window.__gn) * 2 })); };
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); let moved = 0;   /* (held sideways, a steady stealth walk, under fire) */
+    const W = { on: [], off: [] };
+    for (let k = 0; k < 4; k++) { await Tc('touchMove', [{ x: 150 + (k % 2 ? -52 : 52), y: 300, id: 1 }]); const w = await win(k % 2 === 0); (k % 2 === 0 ? W.on : W.off).push(w); moved = Math.max(moved, await page.evaluate(() => MV.motor.speed)); }
+    await Tc('touchEnd', []);
+    for (const g of [0, 1]) await page.evaluate(i => { MV.guards[i].gunfire.update = MV.guards[i].gunfire.__u; }, g);
+    const sum = a => a.reduce((t, x) => t + x.fps, 0), fps = sum(W.on) / W.on.length, calm = sum(W.off) / W.off.length, gms = Math.max(...W.on.map(x => x.ms));
+    const r1 = await page.evaluate(() => ({ shots: MV.guard.gunfire.shots, joy: MV.input.joy }));
+    await page.evaluate(() => clearInterval(window.__hk));
+    await page.tap('#mv-reset'); await page.waitForTimeout(400);
+    const r2 = await page.evaluate(() => ({ hp: MV.playerHealth.current, state: MV.playerHealth.state, shots: MV.guard.gunfire.shots + MV.guard2.gunfire.shots }));
+    const ok = r0.shots >= 1 && (r0.hp === 100 - 20 * r0.hits) && moved > 1 && r1.shots >= 2 && fps > calm * 0.7 && gms < 4 && r2.hp === 100 && r2.state === 'OK' && r2.shots === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `in Guard 2's view: ${r0.shots} shots, ${r0.hits} hits → ${r0.hp} HP (STATS "${r0.stat.slice(0, 60)}"); strafing by touch under fire: up to ${moved.toFixed(2)} m/s, Guard 1 fired ${r1.shots}; frame rate strafing under fire ${fps.toFixed(1)} fps vs ${calm.toFixed(1)} not fired at, alternating windows (≥ 70%); both guards' own work ${gms.toFixed(2)} ms a frame under fire (< 4 ms); RESET → ${r2.hp} HP ${r2.state}, shots cleared ${r2.shots === 0}; page errors ${page.errors.length}` };
+  },
+
   // ---------------------------------------------------------------- Step 21: guard weapon readiness and aiming (nothing fires)
   async _weaponPage(touch) {
     const page = touch ? await touchPage() : await simPage();
@@ -3872,14 +4136,14 @@ const CHECKS = {
       // Guard 1: on patrol, she steps into his view: ALERT → he draws while his patrol gives way
       g2.reset(); g1.patrol.enabled = true; g1.personality.enabled = false; g1.reset(); sim(120);
       front(g1, 6); const log = []; wlog(g1, 300, 'g1', log);
-      const g1r = { states: [...new Set(log.map(x => x.state))], aware: g1.awareness.state, w: g1.weapon.state, g2: g2.weapon.state, g2k: g2.weapon.k };
+      const g1r = { states: [...new Set(log.map(x => x.state))], aware: g1.awareness.state, w: g1.weapon.state, g2: g2.weapon.state, g2k: g2.weapon.k, g2type: g2.weapon.target.type, g2vis: g2.weapon.target.visible, g2shots: g2.gunfire ? g2.gunfire.shots : 0 };
       return { steps, gun, settled, g1r };
     });
     const o = r, ok = ['SUSPICIOUS', 'INVESTIGATING'].indexOf(o.steps.aware) >= 0 && o.steps.w === 'LOWERED' && o.steps.k === 0
       && o.gun.w !== 'LOWERED' && o.gun.k > 0.5 && o.gun.type === 'sound estimate' && o.gun.at < 1e-6 && o.gun.her > 5 && !o.gun.visible && o.gun.seen === null
       && o.settled.aware === 'NORMAL' && o.settled.w === 'LOWERED' && o.settled.k === 0 && o.settled.lowers >= 1
-      && o.g1r.aware === 'ALERT' && o.g1r.states.indexOf('DRAWING') >= 0 && (o.g1r.w === 'READY' || o.g1r.w === 'AIMING') && o.g1r.g2 === 'LOWERED' && o.g1r.g2k === 0 && page.errors.length === 0;
-    return { pass: ok, detail: `footsteps behind Guard 2: ${o.steps.aware}, pistol ${o.steps.w}; a gunshot behind him (she 30 m away, unseen): ${o.gun.aware}, pistol ${o.gun.w} ${Math.round(o.gun.k * 100)}% → ${o.gun.type} ${o.gun.at != null ? o.gun.at.toFixed(3) + ' m from the shot' : ''} (${o.gun.her != null ? o.gun.her.toFixed(0) : '–'} m from her), no sighting ${o.gun.seen === null}; once he settled (${o.settled.aware}): ${o.settled.w}; Guard 1 seen on patrol: ${o.g1r.aware}, pistol ${o.g1r.states.join(' → ')}; Guard 2 meanwhile ${o.g1r.g2}; page errors ${page.errors.length}` };
+      && o.g1r.aware === 'ALERT' && o.g1r.states.indexOf('DRAWING') >= 0 && (o.g1r.w === 'READY' || o.g1r.w === 'AIMING') && o.g1r.g2 !== 'READY' && !o.g1r.g2vis && o.g1r.g2type !== 'visual' && o.g1r.g2shots === 0 && page.errors.length === 0;   /* (Step 22: Guard 1 now fires; Guard 2 may raise his toward the gunshots he hears, never onto her) */
+    return { pass: ok, detail: `footsteps behind Guard 2: ${o.steps.aware}, pistol ${o.steps.w}; a gunshot behind him (she 30 m away, unseen): ${o.gun.aware}, pistol ${o.gun.w} ${Math.round(o.gun.k * 100)}% → ${o.gun.type} ${o.gun.at != null ? o.gun.at.toFixed(3) + ' m from the shot' : ''} (${o.gun.her != null ? o.gun.her.toFixed(0) : '–'} m from her), no sighting ${o.gun.seen === null}; once he settled (${o.settled.aware}): ${o.settled.w}; Guard 1 seen on patrol: ${o.g1r.aware}, pistol ${o.g1r.states.join(' → ')}; Guard 2 meanwhile ${o.g1r.g2} → ${o.g1r.g2type} (never on her: ${!o.g1r.g2vis}, ${o.g1r.g2shots} shots); page errors ${page.errors.length}` };
   },
 
   // interruptions: a hit knocks the aim (not READY through the reaction) and he comes back to
@@ -3891,6 +4155,7 @@ const CHECKS = {
     const r = await page.evaluate(() => {
       const { motor, input, noise } = MV, g1 = MV.guard, g2 = MV.guard2, W = g2.weapon, cq = MV.cqc;
       const guardShots = []; noise.on(ev => { if (ev.type === 'gunshot' && ev.source !== 'player') guardShots.push(ev); });
+      let fired = 0; for (const g of [g1, g2]) { const f = g.gunfire.fire.bind(g.gunfire); g.gunfire.fire = cf => { const x = f(cf); if (x) fired++; return x; }; }   /* (Step 22: every shot either guard fires) */
       g1.patrol.enabled = false; g1.reset(); g2.reset(); sim(5); front(g2, 3); sim(330);
       const ready0 = W.state;
       // a hit (as the pistol hands it: from her)
@@ -3919,16 +4184,16 @@ const CHECKS = {
       document.getElementById('mv-reset').click(); sim(3);
       const reset = [g1, g2].map(g => [g.weapon.state, g.weapon.k, g.weapon.target.type, g.weapon.gun.visible, g.weapon.holster.visible].join(','));
       const fire = g2.weapon.canFire();
-      return { ready0, hit, grab, broke, ko, dead, reset, guardShots: guardShots.length, playerHealth: 'health' in MV.motor || 'hp' in MV.motor, canFireShape: Object.keys(fire).sort().join(',') };
+      return { ready0, hit, grab, broke, ko, dead, reset, guardShots: guardShots.length, firedTotal: fired, playerHealth: 'health' in MV.motor || 'hp' in MV.motor, canFireShape: Object.keys(fire).sort().join(',') };
     });
     const o = r, ok = o.ready0 === 'READY' && o.hit.notReady && o.hit.dipped < 0.75 && o.hit.hp === 65 && o.hit.after === 'READY'
       && o.grab.cqc === 'GRAPPLING' && o.grab.kEnd === 0 && o.grab.state === 'LOWERED' && o.grab.maxLate === 0 && o.grab.tracked === 0 && !o.grab.gun
       && o.broke.cqc === 'FREE' && ['ALERT', 'EVASION'].indexOf(o.broke.aware) >= 0 && o.broke.k > 0.5 && ['visual', 'last seen', 'search'].indexOf(o.broke.type) >= 0
       && o.ko.ko === 'UNCONSCIOUS' && o.ko.w === 'LOWERED' && o.ko.k === 0 && !o.ko.gun && o.ko.type === 'none'
       && o.dead.ko === 'DEAD' && o.dead.w === 'LOWERED' && o.dead.k === 0 && !o.dead.gun && o.dead.type === 'none'
-      && o.reset.every(x => x === 'LOWERED,0,none,false,true') && o.guardShots === 0 && !o.playerHealth
+      && o.reset.every(x => x === 'LOWERED,0,none,false,true') && o.guardShots === o.firedTotal && !o.playerHealth   /* (Step 22: guards fire now; one gunshot event per shot) */
       && o.canFireShape === 'blocked,dir,err,free,muzzle,offense,ok,ready,target,visible,why' && page.errors.length === 0;
-    return { pass: ok, detail: `READY at 3 m: ${o.ready0}; hit (${o.hit.hp} HP): not READY through the reaction ${o.hit.notReady}, his aim knocked to ${Math.round(o.hit.dipped * 100)}% raised, back to ${o.hit.after}; grabbed: ${o.grab.cqc}, pistol ${o.grab.state} (${o.grab.kEnd}), raised while held ${o.grab.maxLate}, frames tracking ${o.grab.tracked}; broke free: ${o.broke.aware}, pistol up ${Math.round(o.broke.k * 100)}% → ${o.broke.type}; thrown: ${o.ko.ko}, pistol ${o.ko.w}; shot down: ${o.dead.ko}, pistol ${o.dead.w}; RESET: ${o.reset.join(' / ')}; guard gunshots ${o.guardShots}, player health ${o.playerHealth}; canFire() reports ${o.canFireShape}; page errors ${page.errors.length}` };
+    return { pass: ok, detail: `READY at 3 m: ${o.ready0}; hit (${o.hit.hp} HP): not READY through the reaction ${o.hit.notReady}, his aim knocked to ${Math.round(o.hit.dipped * 100)}% raised, back to ${o.hit.after}; grabbed: ${o.grab.cqc}, pistol ${o.grab.state} (${o.grab.kEnd}), raised while held ${o.grab.maxLate}, frames tracking ${o.grab.tracked}; broke free: ${o.broke.aware}, pistol up ${Math.round(o.broke.k * 100)}% → ${o.broke.type}; thrown: ${o.ko.ko}, pistol ${o.ko.w}; shot down: ${o.dead.ko}, pistol ${o.dead.w}; RESET: ${o.reset.join(' / ')}; guard gunshot events ${o.guardShots} for ${o.firedTotal} shots; canFire() reports ${o.canFireShape}; page errors ${page.errors.length}` };
   },
 
   // iPhone: walk up to Guard 2 in view by touch, he goes ALERT and comes up READY on her; she

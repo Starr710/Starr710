@@ -52,14 +52,15 @@
   mv.NoiseSystem.prototype.on = function (fn) { this.listeners.push(fn); return () => { this.listeners = this.listeners.filter(f => f !== fn); }; };
 
   // level 1–5, type ('footstep', …), position (Vector3), surface, source (who made it)
-  mv.NoiseSystem.prototype.emit = function (level, type, position, surface, source) {
+  // by (optional): the one who made it, if it matters who (Step 22: a guard doesn't hear his own shot)
+  mv.NoiseSystem.prototype.emit = function (level, type, position, surface, source, by) {
     const c = this.cfg, lv = Math.max(1, Math.min(5, Math.round(level)));
     surface = surface || 'concrete';
     const mod = c.surfaces[surface] || c.surfaces.concrete || { intensity: 0, range: 1 };
     // level: the action's loudness (unchanged by the surface); intensity: what the surface makes of it
     const intensity = Math.max(0, Math.min(5, lv + (mod.intensity || 0)));
     const ev = { level: lv, intensity, type, position: position.clone(), surface, source: source || null,
-      radius: this.reachOf(intensity) * (mod.range != null ? mod.range : 1), time: performance.now() / 1000 };
+      radius: this.reachOf(intensity) * (mod.range != null ? mod.range : 1), time: performance.now() / 1000, by: by || null };
     this.last = ev;
     for (const fn of this.listeners) fn(ev);
     if (c.debug && this.scene) this._ring(ev);

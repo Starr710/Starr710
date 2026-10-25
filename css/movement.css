@@ -225,3 +225,11 @@ body:not(.playing) #mv-aim { visibility: hidden; }
 /* Step 20: the hit marker when the shot put him down: red, held a little longer */
 #mv-hitmark.down u { background: #ff4a3d; width: 11px; }
 #mv-hitmark.down { animation-duration: 0.6s; }
+/* Step 22: hit: a brief red tint at the screen edges (never over the middle, never in the way of a touch) */
+#mv-dmg { position: absolute; inset: 0; pointer-events: none; z-index: 3; opacity: 0; box-shadow: inset 0 0 60px 8px rgba(190, 25, 15, 0.5); }
+#mv-dmg.hit { animation: mv-dmg 0.45s ease-out forwards; }
+@keyframes mv-dmg { from { opacity: 1; } to { opacity: 0; } }
+/* defeated: a short message (RESET stays where it is and keeps working) */
+#mv-defeat { position: absolute; left: 50%; top: 38%; transform: translateX(-50%); pointer-events: none; z-index: 4; padding: 8px 16px; font-family: var(--font-mono); font-size: 14px; letter-spacing: 2px; color: #ffd9cf; background: rgba(20, 10, 8, 0.72); border: 1px solid #c9483b; white-space: nowrap; }
+#mv-defeat[hidden] { display: none; }
+body.mv-defeated #mv-aim, body.mv-defeated #mv-cqc, body.mv-defeated #mv-crouch { opacity: 0.25; }

@@ -40,6 +40,7 @@
 
   mv.GuardHearing.prototype.hear = function (ev) {
     if (this.cfg.ignoreSources.indexOf(ev.source) >= 0) return;
+    if (ev.by === this.guard) return;   // (Step 22: his own gunshot)
     const r = this.evaluate(ev), out = this.guard.isDown && this.guard.isDown();   // Step 14: unconscious, he hears nothing
     this.last = { type: ev.type, level: ev.level, intensity: ev.intensity, surface: ev.surface, source: ev.source,
       distance: r.distance, reach: r.reach, heard: r.heard && !out, position: ev.position.clone(), time: this.clock, why: out ? 'unconscious' : '' };

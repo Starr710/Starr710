@@ -187,12 +187,11 @@
     if (this.marker) { this.marker.classList.remove('hit', 'down'); void this.marker.offsetWidth; this.marker.classList.add('hit'); if (shot.damage && shot.damage.defeated) this.marker.classList.add('down'); this.markerT = c.hitMarkerTime * (shot.damage && shot.damage.defeated ? 2 : 1); }
   };
 
-  // a temporary synthesized gunshot: a sharp crack, a low boom and a short tail
-  mv.Pistol.prototype._sound = function () {
-    this.sounds++;
-    const a = this.audio, ctx = a && a.ctx; if (!ctx || ctx.state !== 'running') return;
-    const t = ctx.currentTime + 0.003, v = this.cfg.volume, out = ctx.createGain(); out.gain.value = v; out.connect(a.out || ctx.destination);
-    const noise = this._noise || (this._noise = (() => { const b = ctx.createBuffer(1, ctx.sampleRate * 0.6, ctx.sampleRate), d = b.getChannelData(0); let s = 7; for (let i = 0; i < d.length; i++) { s = (s * 16807) % 2147483647; d[i] = s / 1073741823.5 - 1; } return b; })());
+  // a temporary synthesized gunshot: a sharp crack, a low boom and a short tail (shared with the guards' pistols, Step 22)
+  function gunshot(audio, volume, cache) {
+    const a = audio, ctx = a && a.ctx; if (!ctx || ctx.state !== 'running') return false;
+    const t = ctx.currentTime + 0.003, v = volume, out = ctx.createGain(); out.gain.value = v; out.connect(a.out || ctx.destination);
+    const noise = cache._noise || (cache._noise = (() => { const b = ctx.createBuffer(1, ctx.sampleRate * 0.6, ctx.sampleRate), d = b.getChannelData(0); let s = 7; for (let i = 0; i < d.length; i++) { s = (s * 16807) % 2147483647; d[i] = s / 1073741823.5 - 1; } return b; })());
     const burst = (type, f, q, peak, decay, delay) => {
       const src = ctx.createBufferSource(); src.buffer = noise; const flt = ctx.createBiquadFilter(); flt.type = type; flt.frequency.value = f; flt.Q.value = q;
       const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t + delay); g.gain.exponentialRampToValueAtTime(peak, t + delay + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + delay + decay);
@@ -203,7 +202,11 @@
     const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(38, t + 0.2);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(1.2, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
     o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.26);
-  };
+    return true;
+  }
+  mv.Pistol.prototype._sound = function () { this.sounds++; gunshot(this.audio, this.cfg.volume, this); };
+  // the pieces the guards' pistols reuse (Step 22)
+  mv.PistolFx = { buildFlash, buildPuff, gunshot };
 
   // short status for the developer view
   mv.Pistol.prototype.status = function () {

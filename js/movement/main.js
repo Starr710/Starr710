@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), chokeBtn: $('mv-choke'), chokestat: $('mv-chokestat'), tkdnstat: $('mv-tkdnstat'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), aimBtn: $('mv-aim'), crosshair: $('mv-crosshair'), aimstat: $('mv-aimstat'), hitmark: $('mv-hitmark'), shotstat: $('mv-shotstat'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), chokeBtn: $('mv-choke'), chokestat: $('mv-chokestat'), tkdnstat: $('mv-tkdnstat'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), aimBtn: $('mv-aim'), crosshair: $('mv-crosshair'), aimstat: $('mv-aimstat'), hitmark: $('mv-hitmark'), shotstat: $('mv-shotstat'), dmg: $('mv-dmg'), defeat: $('mv-defeat'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -67,7 +67,7 @@
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
   let footsteps = null, voice = null, caption = null, traitCard = null, indicator = null, cqc = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
-  let aim = null, aimPose = null, pistol = null;   // Step 18, Step 19
+  let aim = null, aimPose = null, pistol = null, playerHealth = null, wasDown = false;   // Step 18, Step 19, Step 22
   let guard2 = null, guard2View = null, aware2View = null, caption2 = null, indicator2 = null, traitCard2 = null;
   // a second copy of a guard's screen-space element (caption, indicator, card), same classes, its own id
   const cloneUi = id => { const src = $(id), el = src.cloneNode(true); el.id = id + '-2'; src.parentNode.insertBefore(el, src.nextSibling); return el; };
@@ -127,6 +127,9 @@
     // Step 19: the pistol, fired with the CQC button (FIRE) while aiming
     // Step 21: each guard's pistol (aiming only: nothing fires); the same rig as hers, so her hand calibration applies
     guard.weapon = new mv.GuardWeapon(guard, scene, posture); guard2.weapon = new mv.GuardWeapon(guard2, scene, posture);
+    // Step 22: her health, and the guards' gunfire at her (only through weapon.canFire)
+    playerHealth = new mv.PlayerHealth(visual, motor); playerHealth.tintEl = ui.dmg; playerHealth.audio = footAudio;
+    for (const g of [guard, guard2]) g.gunfire = new mv.GuardGunfire(g, { player: { motor, health: playerHealth }, guards: [guard, guard2], world, noise, scene, audio: footAudio });
     pistol = new mv.Pistol({ aim, aimPose, cam, world, guards: [guard, guard2], noise, scene, audio: footAudio, marker: ui.hitmark });
     seeTarget = mv.visionTarget(visual, motor);
     const s = animator.stride;
@@ -148,7 +151,7 @@
     document.body.classList.add('playing');
   });
   // RESET puts the player back at the start and the guard back at his post, calm
-  ui.reset.addEventListener('click', () => { input._cqcDrop(); /* a CQC press still down is cancelled too: no TAP or HOLD after RESET */ if (cqc) cqc.cancel(); if (aim) aim.reset(); if (pistol) pistol.reset(); input._fireDrop(); spawn(); if (guard) guard.reset(); if (guard2) guard2.reset(); for (const u of [caption, indicator, caption2, indicator2]) if (u) u.hide(); });
+  ui.reset.addEventListener('click', () => { input._cqcDrop(); /* a CQC press still down is cancelled too: no TAP or HOLD after RESET */ if (cqc) cqc.cancel(); if (aim) aim.reset(); if (pistol) pistol.reset(); input._fireDrop(); if (playerHealth) playerHealth.reset(); wasDown = false; ui.defeat.hidden = true; document.body.classList.remove('mv-defeated'); spawn(); if (guard) guard.reset(); if (guard2) guard2.reset(); for (const u of [caption, indicator, caption2, indicator2]) if (u) u.hide(); });
   // the stats bar leaves room for RESET / STATS in its top-right corner
   const chipRoom = () => document.documentElement.style.setProperty('--chips-w', document.querySelector('.mv-topright').offsetWidth + 8 + 'px');
   chipRoom(); window.addEventListener('resize', chipRoom);
@@ -179,13 +182,17 @@
       const l = Math.hypot(dx, dz); if (l > 1e-4) { dx /= l; dz /= l; }
 
       motor.stance = input.crouch ? 'crouch' : 'stand';
+      // Step 22: defeated: everything she does stops (CQC let go, AIM off, no movement) until RESET
+      const down = !!(playerHealth && playerHealth.defeated());
+      if (down && !wasDown) { wasDown = true; if (cqc) cqc.cancel(); if (aim) aim.exit('defeated'); input._cqcDrop(); input._fireDrop(); input.move.x = input.move.y = 0; ui.defeat.hidden = false; document.body.classList.add('mv-defeated'); }
+      if (down) { input.move.x = input.move.y = 0; motor.stance = 'crouch'; }
       // Step 18: AIM (only while she's free); anything else taking over ends it; while aiming CQC is unavailable
       if (aim && cqc) {
-        const allowed = cqc.state === 'FREE' && !actions.busy();
+        const allowed = cqc.state === 'FREE' && !actions.busy() && !down;
         if (input.aimTapped) { input.aimTapped = false; if (aim.cfg.mode !== 'hold') aim.toggle(allowed); }
         if (aim.cfg.mode === 'hold') { if (input.aiming()) aim.enter(allowed); else if (aim.active) aim.exit('AIM let go'); }
         if (aim.active && !allowed) aim.exit('interrupted');
-        cqc.blocked = aim.active; input.fireMode = aim.active;   // Step 19: while aiming the CQC button is FIRE
+        cqc.blocked = aim.active || down; input.fireMode = aim.active;   // Step 19: while aiming the CQC button is FIRE
         const on = aim.active, locked = !on && !allowed;
         if (cqcUi.aim !== on) { cqcUi.aim = on; ui.aimBtn.classList.toggle('on', on); ui.aimBtn.setAttribute('aria-pressed', String(on)); ui.cqcBtn.classList.toggle('fire', on); }
         if (cqcUi.aimLocked !== locked) { cqcUi.aimLocked = locked; ui.aimBtn.classList.toggle('locked', locked); }
@@ -217,16 +224,18 @@
         if (cqcUi.hold !== hold) { cqcUi.hold = hold; ui.cqcBtn.classList.toggle('holding', hold); }
         if (cqcUi.shown !== cqcUi.ready) { cqcUi.shown = cqcUi.ready; ui.cqcBtn.classList.toggle('ready', cqcUi.ready); }
       }
-      if (!actions.busy() && !grappling) { if (aim && aim.active) aim.step(dt, dx, dz, mag, input.crouch); else motor.update(dt, dx, dz, mag); }
+      if (!actions.busy() && !grappling) { if (aim && aim.active) aim.step(dt, dx, dz, mag, input.crouch); else motor.update(dt, down ? 0 : dx, down ? 0 : dz, down ? 0 : mag); }
       if (aim && !aim.active) aim.idle(dt);
       actions.update({ motor, world, visual, input }, dt, false);
       visual.place(motor.position, motor.yaw + (aim ? aim.legYaw : 0));   // (aiming: the legs turn toward the travel, the upper body stays on the aim)
       animator.update(dt, motor);
       posture.update(dt, motor, animator);
       if (cqc) cqc.poseArms();
+      if (playerHealth) playerHealth.poseReact(dt);   // Step 22: a hit's flinch (before the aim pose: her pistol stays in her hands)
       if (aimPose) aimPose.apply(cam.aimK, motor.yaw, aim.target.dir, aim.target.point);
+      if (playerHealth) playerHealth.defeatPose(dt);   // (going down at 0 HP, over everything)
       visual.root.updateMatrixWorld(true);
-      footsteps.update(dt);
+      if (!down) footsteps.update(dt);
       guard.update(dt, seeTarget);
       guardView.update(camera, seeTarget);
       guard.hearing.updateDebug(scene);
@@ -261,7 +270,9 @@
     hudT += dt;
     if (hudT > 0.15 && !ui.stats.hidden) {
       hudT = 0;
-      put(ui.gait, motor.gait.label);
+      // Step 22: her health beside her gait, and what the guards have fired at her
+      const ef = guard && guard2 ? [guard, guard2].reduce((t, g) => ({ shots: t.shots + (g.gunfire ? g.gunfire.shots : 0), hits: t.hits + (g.gunfire ? g.gunfire.hits : 0) }), { shots: 0, hits: 0 }) : null;
+      put(ui.gait, motor.gait.label + (playerHealth ? ' · ' + playerHealth.status(ef) : ''));
       put(ui.speed, motor.speed.toFixed(2) + ' m/s');
       const n = noise.last;
       put(ui.noise, n && performance.now() / 1000 - n.time < 1.2 ? `L${n.level} ${n.surface} · ${n.radius.toFixed(1)} m` : '–');
@@ -307,5 +318,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { SCmv: mv, tick, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, get aim() { return aim; }, get aimPose() { return aimPose; }, get pistol() { return pistol; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { SCmv: mv, tick, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, get aim() { return aim; }, get aimPose() { return aimPose; }, get pistol() { return pistol; }, get playerHealth() { return playerHealth; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

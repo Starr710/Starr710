@@ -63,7 +63,7 @@
   };
 
   mv.GuardWeapon.prototype.reset = function () {
-    this.state = 'LOWERED'; this.k = 0; this.why = 'on duty'; this.draws = 0; this.lowers = 0; this.gunshot = null;
+    this.state = 'LOWERED'; this.k = 0; this.why = 'on duty'; this.draws = 0; this.lowers = 0; this.gunshot = null; this.kick = 0;
     this.target.type = 'none'; this.target.point = null; this.target.visible = false; this.aligned = false; this.err = Infinity;
     if (this.g) { this.g.forward(this.aimDir); this.want.copy(this.aimDir); }
     this.gun.visible = false; this.holster.visible = true;
@@ -174,7 +174,10 @@
     const sh = wp(B.leftArm, new THREE.Vector3()).add(wp(B.rightArm, new THREE.Vector3())).multiplyScalar(0.5);
     const ra = new THREE.Vector3(fa.z, 0, -fa.x);
     const G = sh.addScaledVector(ad, c.reach).addScaledVector(UP, -c.drop).addScaledVector(ra, c.side);
-    const gd = ad.clone().normalize(), gy = UP.clone().sub(gd.clone().multiplyScalar(UP.dot(gd))).normalize(), gx = gy.clone().cross(gd);
+    const gd = ad.clone().normalize();
+    // Step 22: a shot's recoil: the pistol kicks back and its muzzle climbs, his arms following it
+    if (this.kick > 0) { G.addScaledVector(gd, -0.035 * this.kick); const kx = gd.clone().cross(UP); if (kx.lengthSq() > 1e-8) gd.applyAxisAngle(kx.normalize(), 9 * D * this.kick); }
+    const gy = UP.clone().sub(gd.clone().multiplyScalar(UP.dot(gd))).normalize(), gx = gy.clone().cross(gd);
     const gq = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(gx, gy, gd));
     // arms onto it (full), blended with his own pose by k
     const H = this.hands, fingers = H ? [...this._fingersOf('right'), ...this._fingersOf('left')].map(x => x.bone) : [];
@@ -218,6 +221,7 @@
   mv.GuardWeapon.prototype.status = function () {
     if (this.state === 'LOWERED' && (this.why === 'on duty' || this.why === 'grabbed')) return '';
     const T = this.target, xz = p => p ? `(${p.x.toFixed(1)}, ${p.z.toFixed(1)})` : '–', deg = Math.round(Math.atan2(this.aimDir.x, this.aimDir.z) / D);
-    return `WPN ${this.state}${this.state === 'DRAWING' || this.state === 'LOWERING' ? ' ' + Math.round(this.k * 100) + '%' : ''} → ${T.type}${T.point ? ' ' + xz(T.point) : ''} ${deg}°${T.visible ? ' (sees her)' : ''} · ${this.canFire().ok ? 'offense OK' : 'no offense'} · ${this.why}`;
+    const gf = this.g.gunfire ? ' · ' + this.g.gunfire.status() : '';   // (Step 22)
+    return `WPN ${this.state}${this.state === 'DRAWING' || this.state === 'LOWERING' ? ' ' + Math.round(this.k * 100) + '%' : ''} → ${T.type}${T.point ? ' ' + xz(T.point) : ''} ${deg}°${T.visible ? ' (sees her)' : ''} · ${this.canFire().ok ? 'offense OK' : 'no offense'} · ${this.why}${gf}`;
   };
 })(SC.mv);
