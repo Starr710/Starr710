@@ -195,6 +195,22 @@ body:not(.playing) #mv-choke { visibility: hidden; }
 #mv-aim.down { transform: scale(0.94); }
 #mv-aim.locked { opacity: 0.3; }
 body:not(.playing) #mv-aim { visibility: hidden; }
+/* USE (Step 23): the equipped item, slot 3 of the action row (THROW takes that slot while she holds a guard, when USE is unavailable anyway); the item's short name under it; dim while unavailable; the ring empties over its cooldown */
+#mv-use {
+  position: absolute; width: 56px; height: 56px; border-radius: 50%; padding: 0;
+  right: calc(env(safe-area-inset-right, 0px) + var(--edge) + var(--pitch) * 3 - 28px + 28px); top: calc(var(--row) - 28px);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px; color: var(--text);
+  background: var(--panel); border: 1.5px solid var(--line); touch-action: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1;
+}
+#mv-use span, #mv-use small { pointer-events: none; }
+#mv-use small { font-size: 7px; letter-spacing: 1px; color: var(--muted); margin-top: 1px; }
+#mv-use.down { transform: scale(0.94); }
+#mv-use.locked { opacity: 0.3; }
+#mv-use .mv-ring { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); pointer-events: none; transform: rotate(-90deg); visibility: hidden; }
+#mv-use.cooling .mv-ring { visibility: visible; }
+#mv-use .mv-ring circle { fill: none; stroke: var(--muted); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 182.2; stroke-dashoffset: 0; }
+body.mv-holding #mv-use, body:not(.playing) #mv-use { visibility: hidden; }
 /* while aiming CQC is unavailable */
 #mv-cqc.aimlock { opacity: 0.25; }
 /* the crosshair: the exact screen centre (the camera's aim ray); red over a guard, hollow when the muzzle is blocked */
@@ -209,7 +225,7 @@ body:not(.playing) #mv-aim { visibility: hidden; }
 #mv-crosshair.guard i, #mv-crosshair.guard b { background: #ff5546; }
 #mv-crosshair.blocked b { background: transparent; border: 1px solid #f3eedb; left: -3px; top: -3px; }
 /* Step 18.1: the action row draws above the guards' screen-space cards (which never take touches) */
-#mv-aim, #mv-cqc, #mv-crouch, #mv-throw, #mv-choke { z-index: 2; }
+#mv-aim, #mv-cqc, #mv-crouch, #mv-throw, #mv-choke, #mv-use { z-index: 2; }
 /* Step 19: while aiming the CQC button reads FIRE (same place, same size) */
 #mv-cqc.fire { opacity: 1; color: #ffd9cf; border-color: #e0574a; border-width: 2px; background: rgba(150, 40, 30, 0.45); font-weight: bold; letter-spacing: 1.5px; }
 #mv-cqc.fire.down { background: rgba(224, 87, 74, 0.75); }
@@ -232,4 +248,4 @@ body:not(.playing) #mv-aim { visibility: hidden; }
 /* defeated: a short message (RESET stays where it is and keeps working) */
 #mv-defeat { position: absolute; left: 50%; top: 38%; transform: translateX(-50%); pointer-events: none; z-index: 4; padding: 8px 16px; font-family: var(--font-mono); font-size: 14px; letter-spacing: 2px; color: #ffd9cf; background: rgba(20, 10, 8, 0.72); border: 1px solid #c9483b; white-space: nowrap; }
 #mv-defeat[hidden] { display: none; }
-body.mv-defeated #mv-aim, body.mv-defeated #mv-cqc, body.mv-defeated #mv-crouch { opacity: 0.25; }
+body.mv-defeated #mv-aim, body.mv-defeated #mv-cqc, body.mv-defeated #mv-crouch, body.mv-defeated #mv-use { opacity: 0.25; }

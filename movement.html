@@ -52,6 +52,7 @@
   <div class="minor"><span>CLIP</span><b id="mv-rate">–</b></div>
   <div class="minor"><span>STRIDE</span><b id="mv-calib">–</b></div>
   <div class="minor"><span>VOICE</span><b id="mv-voice">–</b></div>
+  <div class="mv-equip"><span>EQUIP</span><b id="mv-equip">–</b></div>  <!-- Step 23: weapon · item (and, while she's free, the last distraction) -->
   </div>
 </div>
 
@@ -73,6 +74,7 @@
 <button type="button" id="mv-throw" hidden>THROW</button>  <!-- Step 14: only while holding a guard -->
 <button type="button" id="mv-choke" hidden><svg class="mv-ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29"/></svg><span>CHOKE</span></button>  <!-- Step 15: press and hold while holding a guard; the ring fills as he goes under -->
 
+<button type="button" id="mv-use" aria-label="USE equipped item"><svg class="mv-ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29"/></svg><span>USE</span><small id="mv-use-item">MAG</small></button>  <!-- Step 23: USE the equipped item (slot 3; THROW takes the slot while holding a guard); the ring is its cooldown -->
 <button type="button" id="mv-aim" aria-pressed="false">AIM</button>  <!-- Step 18: TAP to aim / stop aiming (no shooting yet) -->
 <div id="mv-crosshair" aria-hidden="true" hidden><i></i><i></i><i></i><i></i><b></b><s id="mv-hitmark"><u></u><u></u><u></u><u></u></s></div>  <!-- Step 18: the aim point (the screen centre) while aiming -->
 
@@ -137,6 +139,8 @@
 <script src="js/movement/aim.js"></script>
 <script src="js/movement/aim-pose.js"></script>
 <script src="js/movement/pistol.js"></script>
+<script src="js/movement/equipment.js"></script>
+<script src="js/movement/item-throwable.js"></script>
 <script src="js/movement/guard-weapon.js"></script>
 <script src="js/movement/guard-gunfire.js"></script>
 <script src="js/movement/player-health.js"></script>

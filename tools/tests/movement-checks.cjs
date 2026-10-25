@@ -3179,7 +3179,7 @@ const CHECKS = {
       const off = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), title: getComputedStyle(document.querySelector('.mv-head')).display !== 'none' }));
       await page.tap('#mv-stats-btn'); await page.waitForTimeout(400);
       const on = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), g2: document.getElementById('mv-g2').textContent }));
-      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 26 && g.fontPx >= 9.5
+      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 27 && g.fontPx >= 9.5
         && long.inside && long.right <= long.W && long.height <= 0.4 * long.H && off.hidden && off.pressed === 'false' && off.title && !on.hidden && on.pressed === 'true' && !/VERY LONG/.test(on.g2) && errs.length === 0;
       if (!ok) errors++;
       out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside}, title hidden and no value over RESET/STATS/CROUCH/CQC/THROW ${g.clear}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside}, ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden} (title back ${off.title}), on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
@@ -3786,6 +3786,376 @@ const CHECKS = {
     const rows = Object.entries(r);
     // still pose ≥ 15 cm; the crouch-walk arm swing passes closer (≈13 cm as approved), so ≥ 12 cm there
     return { pass: rows.every(([k, v]) => v[0] >= (k === 'crouch idle' ? 0.15 : 0.12) && v[1] >= 0.15), detail: rows.map(([k, v]) => `${k}: hand–shin ${cm(v[0])}, thigh–body ${cm(v[1])}`).join('; ') };
+  },
+
+  // ---------------------------------------------------------------- Step 23: equipment and the thrown magazine
+  async _itemPage(touch) {
+    const page = touch ? await touchPage() : await simPage();
+    await page.evaluate(() => {
+      const dt = 1 / 60;
+      window.sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      window.mag = () => MV.equipment.item().ctl;
+      window.noiseLog = []; MV.noise.on(ev => window.noiseLog.push(ev));
+      // her at (x, z) facing yaw, the camera behind her at this pitch; patrol off, both guards calm at their posts
+      window.stand = (x, z, yaw, pitch) => { MV.motor.teleport(x, z, yaw); MV.cam.snap(MV.motor); if (pitch != null) MV.cam.pitch = pitch; };
+      // one USE press, then n frames; what the press did
+      window.use = n => { MV.input.useTapped = true; const before = MV.equipment.uses; sim(n || 1); return MV.equipment.uses > before; };
+      // until the thrown magazine has landed (its first contact) or rests, at most 6 s
+      window.untilImpact = () => { for (let i = 0; i < 360 && !mag().impact; i++) MV.tick(dt, true); return mag().impact; };
+      window.xzd = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+    });
+    return page;
+  },
+
+  // the foundation: a registry of definitions (id, name, category, kind, config, quantity, its
+  // behaviour), two independent slots (WEAPON: the existing pistol, not rebuilt; ITEM: the Empty
+  // Magazine), one USE action that reads the item, checks it, runs it and reports ok / why; a new
+  // item is only a definition; quantities; AIM + FIRE untouched with the item equipped; no cost
+  // per frame when nothing is running
+  async equipFoundation() {
+    const page = await CHECKS._itemPage();
+    const r = await page.evaluate(() => {
+      const mv = MV.SCmv, E = MV.equipment, out = {};
+      const P = mv.EQUIPMENT.pistol, M = mv.EQUIPMENT['empty-magazine'];
+      out.defs = [P.id, P.name, P.category, P.kind, typeof P.create, M.id, M.name, M.category, M.kind, M.action, String(M.quantity), typeof M.create].join();
+      out.cfg = { range: [M.config.minRange, M.config.maxRange], cd: M.config.cooldown, lv: M.config.noiseLevel, type: M.config.noiseType };
+      out.slots = [E.weapon().id, E.item().id, E.weapon().ctl.pistol() === MV.pistol, E.item().ctl instanceof mv.ThrowableItem];
+      out.status = E.status();
+      // a new item: a definition only (a counted test gadget); equipping it leaves the weapon slot alone
+      let used = 0;
+      mv.registerEquipment({ id: 'test-gadget', name: 'Test Gadget', category: 'item', kind: 'test', quantity: 2, create: () => ({ canUse: s => s.aiming ? 'aiming' : '', use: () => { used++; return { ok: true, why: '' }; } }) });
+      const eq = E.equip('test-gadget'), bad = E.equip('nothing-here');
+      out.swap = [eq.ok, bad.ok, bad.why, E.weapon().id, E.item().id];
+      const s = { down: false, aiming: false, cqcState: 'FREE', busy: false };
+      out.refusedAim = E.useItem(Object.assign({}, s, { aiming: true })).why;   // (its own rule, checked by the one USE action)
+      out.q = [E.useItem(s).ok, E.useItem(s).ok, E.useItem(s), used, E.item().quantity];
+      E.reset(); out.back = [E.weapon().id, E.item().id, E.last];
+      // AIM + FIRE with the item equipped: the pistol fires exactly as before, the magazine stays put
+      stand(-6, -20, 0, 0.2); MV.aim.toggle(true); sim(40);
+      MV.input._firePress(performance.now()); sim(3);
+      out.fire = [MV.aim.active, MV.pistol.shots, mag().throws, MV.equipment.weapon().ctl.status()];
+      out.useWhileAim = use(2) ? 'used' : MV.equipment.last.why;
+      MV.aim.toggle(false); sim(30);
+      // per frame cost: idle, and with a magazine in the air
+      const st = { down: false, aiming: false, cqcState: 'FREE', busy: false }, t0 = performance.now();
+      for (let i = 0; i < 4000; i++) { E.update(0, st); E.pose(0); }
+      out.idleMs = (performance.now() - t0) / 4000;
+      use(20); let fl = 0, n = 0;
+      while (mag().inFlight() && n < 200) { const a = performance.now(); E.update(1 / 60, st); fl += performance.now() - a; n++; }
+      out.flightMs = fl / Math.max(1, n);
+      return out;
+    });
+    const o = r, ok = o.defs === 'pistol,Pistol,weapon,firearm,function,empty-magazine,Empty Magazine,item,throwable,throw,Infinity,function'
+      && o.cfg.range[0] >= 8 && o.cfg.range[1] <= 12 && o.cfg.cd === 2.5 && o.cfg.lv === 3 && o.cfg.type === 'clatter' && o.slots.join() === 'pistol,empty-magazine,true,true'
+      && o.swap.join() === 'true,false,not registered: nothing-here,pistol,test-gadget' && o.q[0] && o.q[1] && !o.q[2].ok && o.q[2].why === 'none left' && o.q[3] === 2 && o.q[4] === 0 && o.refusedAim === 'aiming'
+      && o.back[0] === 'pistol' && o.back[1] === 'empty-magazine' && o.back[2] === null
+      && o.fire[0] && o.fire[1] === 1 && o.fire[2] === 0 && /aimed/.test(o.fire[3]) && o.useWhileAim === 'aiming' && o.idleMs < 0.01 && o.flightMs < 0.3 && page.errors.length === 0;
+    return { pass: ok, detail: `definitions ${o.defs}; magazine range ${o.cfg.range.join('–')} m, cooldown ${o.cfg.cd} s, L${o.cfg.lv} ${o.cfg.type}; slots ${o.slots.join(', ')} (${o.status}); a test gadget equipped by definition: ${o.swap.join(', ')}; quantity 2 → ${o.q[0]}, ${o.q[1]}, then "${o.q[2].why}" (${o.q[3]} uses, ${o.q[4]} left); refused while aiming "${o.refusedAim}"; RESET → ${o.back.slice(0, 2).join(', ')}; AIM + FIRE with the magazine equipped: aiming ${o.fire[0]}, ${o.fire[1]} shot, ${o.fire[2]} throws, pistol "${o.fire[3]}", USE while aiming "${o.useWhileAim}"; per frame ${(o.idleMs * 1000).toFixed(1)} µs idle, ${(o.flightMs * 1000).toFixed(0)} µs in flight; page errors ${page.errors.length}` };
+  },
+
+  // when USE works: once per press; never while aiming, holding a guard, defeated, on cooldown or
+  // with a magazine already in the air; a USE press is never a CQC or FIRE press; her movement
+  // isn't frozen by the throw; a wind-up interrupted before the release throws nothing
+  async useRules() {
+    const page = await CHECKS._itemPage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cqc } = MV, E = MV.equipment, out = {};
+      stand(-6, -20, 0, 0.2); sim(10);
+      const cq0 = [input.cqcLast, input.firePressCount, MV.pistol.shots];
+      out.first = use(1); out.again = use(1) ? 'used' : E.last.why;   // (the same moment: winding up)
+      out.press = [cqc.state, input.cqcTapped, input.cqcLast === cq0[0], input.firePressCount === cq0[1], MV.pistol.shots === cq0[2]];
+      sim(30); out.flight = use(1) ? 'used' : E.last.why;
+      for (let i = 0; i < 300 && mag().inFlight(); i++) sim(1);
+      out.cool = mag().cooldown > 0 ? (use(1) ? 'used' : E.last.why) : 'cooldown over';
+      sim(150); out.after = use(1); sim(200);
+      // walking while she throws: the stick keeps her going
+      for (let i = 0; i < 150 && (mag().cooldown > 0 || mag().busy()); i++) sim(1);
+      input.move.y = 1; sim(30); const sp0 = motor.speed; input.useTapped = true; let minSp = 9; for (let i = 0; i < 30; i++) { sim(1); minSp = Math.min(minSp, motor.speed); } input.move.y = 0; sim(30);
+      out.walk = { sp0, minSp };
+      // a wind-up interrupted by AIM: nothing thrown, no cooldown
+      for (let i = 0; i < 300 && (mag().cooldown > 0 || mag().busy()); i++) sim(1);
+      const th = mag().throws; input.useTapped = true; sim(3); MV.aim.toggle(true); sim(20);
+      out.cancel = [mag().throws === th, mag().cancelled, mag().cooldown, mag().inFlight()];
+      out.aimRefuse = use(1) ? 'used' : E.last.why; MV.aim.toggle(false); sim(30);
+      // holding a guard
+      const g2 = MV.guard2, b = g2.position.clone().addScaledVector(g2.forward(), -1.0); motor.teleport(b.x, b.z, g2.yaw); MV.cam.snap(motor); sim(5); input.cqcTapped = true; sim(40);
+      out.hold = [cqc.state, use(1) ? 'used' : E.last.why]; cqc.cancel(); sim(10); g2.reset();
+      // defeated
+      window.__combat = true; stand(-6, -20, 0); MV.playerHealth.take({ amount: 100, source: 'test', id: 'u1' }); sim(5);
+      out.down = use(1) ? 'used' : E.last.why; window.__combat = false;
+      document.getElementById('mv-reset').click(); sim(5);
+      return out;
+    });
+    const o = r, ok = o.first && o.again === 'throwing' && o.press.join() === 'FREE,false,true,true,true' && o.flight === 'in flight' && /^cooldown/.test(o.cool) && o.after
+      && o.walk.sp0 > 1 && o.walk.minSp > 0.8 * o.walk.sp0 && o.cancel[0] && o.cancel[1] === 'aiming' && o.cancel[2] === 0 && !o.cancel[3] && o.aimRefuse === 'aiming'
+      && o.hold[0] === 'GRAPPLING' && o.hold[1] === 'holding a guard' && o.down === 'defeated' && page.errors.length === 0;
+    return { pass: ok, detail: `a press → thrown ${o.first}; again at once "${o.again}"; the press left CQC ${o.press[0]} (no tap ${!o.press[1]}, no CQC press ${o.press[2]}, no FIRE ${o.press[3]}, no shot ${o.press[4]}); while it flies "${o.flight}"; landed, still "${o.cool}"; after the cooldown → thrown ${o.after}; walking ${o.walk.sp0.toFixed(2)} m/s, throwing ${o.walk.minSp.toFixed(2)} m/s at the slowest; a wind-up cut by AIM: nothing thrown ${o.cancel[0]} (${o.cancel[1]}), cooldown ${o.cancel[2]}; aiming "${o.aimRefuse}"; holding a guard (${o.hold[0]}) "${o.hold[1]}"; defeated "${o.down}"; page errors ${page.errors.length}` };
+  },
+
+  // the throw and the flight: in her right hand until the release (≈0.17 s); a real arc under
+  // gravity from her hand along the camera's facing, the camera's pitch tilting it (within its
+  // limits, 8–12 m on flat ground); one in the air at a time; it settles, lies flat, and is cleared
+  // away after a while
+  async throwFlight() {
+    const page = await CHECKS._itemPage();
+    const r = await page.evaluate(() => {
+      const B = MV.visual.bones, W = o => o.getWorldPosition(new THREE.Vector3()), out = {}, m = mag();
+      const one = pitch => {
+        for (let i = 0; i < 400 && (m.cooldown > 0 || m.busy()); i++) sim(1);
+        stand(-17, -14, Math.PI / 2, pitch); sim(10);
+        MV.input.useTapped = true; let inHand = 0, handMax = 0, rel = null, ys = [], gy = 9.81, peak = 0;
+        for (let i = 0; i < 40; i++) { sim(1); if (!m.released) { inHand++; handMax = Math.max(handMax, m.mesh.position.distanceTo(W(B.rightHand))); } else if (rel == null) rel = (i + 1) / 60; }
+        const from = m.shot.from.clone(), first = untilImpact();
+        let n = 0; while (m.flying && n < 600) { sim(1); n++; }
+        const pts = []; // the arc: re-fly it from the release with the same physics to read its peak
+        const v0 = new THREE.Vector3(Math.sin(m.shot.yaw) * Math.cos(m.shot.elev * Math.PI / 180), Math.sin(m.shot.elev * Math.PI / 180), Math.cos(m.shot.yaw) * Math.cos(m.shot.elev * Math.PI / 180)).multiplyScalar(m.shot.speed);
+        peak = from.y + v0.y * v0.y / (2 * gy);
+        return { inHand, handMax, rel, elev: m.shot.elev, speed: m.shot.speed, from: from.y, land: xzd(first.point, from), what: first.what, peak, rest: m.phase, restY: m.mesh.position.y, flat: Math.abs(new THREE.Vector3(1, 0, 0).applyQuaternion(m.mesh.quaternion).y) };
+      };
+      out.level = one(0.2); out.up = one(-0.45); out.down = one(1.05);
+      // the flight itself, frame by frame: gravity's pull between frames, never below the floor, no second magazine
+      for (let i = 0; i < 400 && (m.cooldown > 0 || m.busy()); i++) sim(1);
+      stand(-17, -14, Math.PI / 2, 0.2); sim(5); MV.input.useTapped = true; sim(14);
+      const ys = []; let minY = 9, seen = 0;
+      while (m.inFlight() && !m.impact && ys.length < 200) { ys.push(m.pos.y); minY = Math.min(minY, m.pos.y); sim(1); seen = MV.scene.children.filter(o => o.name === 'empty-magazine' && o.visible).length; }
+      const acc = ys.slice(2).map((y, i) => (y - 2 * ys[i + 1] + ys[i]) * 3600);
+      out.acc = acc.length ? acc.reduce((a, b) => a + b, 0) / acc.length : 0; out.minY = minY; out.copies = seen;
+      // cleared away 8 s after it settles
+      let k = 0; while (m.phase !== 'rest' && k < 600) { sim(1); k++; } const vis = m.mesh.visible; sim(60 * 8 + 5);
+      out.cleanup = [vis, m.mesh.visible, m.phase];
+      return out;
+    });
+    const o = r, L = o.level, U = o.up, D = o.down;
+    const ok = [L, U, D].every(t => t.inHand >= 8 && t.handMax < 0.15 && t.rel > 0.14 && t.rel < 0.25 && t.elev >= 5 && t.elev <= 40 && t.what === 'ground' && t.rest === 'rest' && t.restY < 0.03 && t.flat > 0.95)
+      && L.land > 7.5 && L.land < 12.5 && U.land > L.land && D.land < L.land && U.elev > L.elev && D.elev < L.elev && U.land < 12.6 && D.land > 6 && U.peak > L.peak
+      && Math.abs(o.acc + 9.81) < 0.3 && o.minY > 0 && o.copies === 1 && o.cleanup.join() === 'true,false,ready' && page.errors.length === 0;
+    const f = t => `elev ${t.elev.toFixed(0)}°, ${t.speed.toFixed(1)} m/s, peak ${t.peak.toFixed(1)} m, lands ${t.land.toFixed(1)} m away on the ${t.what}`;
+    return { pass: ok, detail: `in her right hand for ${L.inHand} frames (≤ ${cm(L.handMax)} from it), released at ${L.rel.toFixed(2)} s from ${L.from.toFixed(2)} m up; camera level: ${f(L)}; looking up: ${f(U)}; looking down: ${f(D)}; in flight ${o.acc.toFixed(2)} m/s² (gravity), lowest ${cm(o.minY)}, ${o.copies} magazine in the air; settled lying flat (${L.restY.toFixed(3)} m, ${L.flat.toFixed(2)}); 8 s later: shown ${o.cleanup[1]}, ${o.cleanup[2]}; page errors ${page.errors.length}` };
+  },
+
+  // what it hits: the long wall, a crate, a pillar and the floor, each where it actually is (nothing
+  // passes through: the swept segments catch even a very fast throw); it reacts at the hit point
+  async throwCollision() {
+    const page = await CHECKS._itemPage();
+    const r = await page.evaluate(() => {
+      const m = mag(), out = {}, W = MV.world;
+      const at = (x, z, yaw, pitch) => {
+        for (let i = 0; i < 400 && (m.cooldown > 0 || m.busy()); i++) sim(1);
+        stand(x, z, yaw, pitch); sim(5); MV.input.useTapped = true; sim(12);
+        let maxZ = -99, maxX = -99; const I = (() => { for (let i = 0; i < 360 && !m.impact; i++) { sim(1); maxZ = Math.max(maxZ, m.pos.z); maxX = Math.max(maxX, m.pos.x); } return m.impact; })();
+        let n = 0; while (m.flying && n < 600) { sim(1); n++; maxZ = Math.max(maxZ, m.pos.z); maxX = Math.max(maxX, m.pos.x); }
+        return { what: I.what, p: I.point.clone(), maxZ, maxX, rest: m.pos.clone(), bounces: m.bounces };
+      };
+      out.wall = at(4, 10.4, 0, 0.2);                 // the long wall (z 12.825…13.175, 2.6 m high), 2.4 m ahead
+      out.crate = at(-2, -11.2, 0, 0.2);              // the tall crate (z −8.6…−7.4, 2 m), 2.6 m ahead
+      out.pillar = at(-14, -14.6, 0, 0.35);           // a pillar at (−14, −12), r 0.35
+      out.floor = at(-17, -14, Math.PI / 2, 0.2);
+      // a very fast segment straight through the wall still stops at its face
+      const S = MV.SCmv.ThrowableItem.sweep, h = S(W, new THREE.Vector3(4, 1, 11), new THREE.Vector3(4, 1, 16), 0.035);
+      out.fast = h && { what: h.what, z: 11 + 5 * h.t, n: h.n.z };
+      return out;
+    });
+    const o = r, ok = o.wall.what === 'wall' && o.wall.p.z < 12.83 && o.wall.maxZ < 12.83 && o.wall.rest.z < 12.83
+      && o.crate.what === 'crate' && o.crate.p.z < -8.55 && o.crate.maxZ < -8.55
+      && o.pillar.what === 'pillar' && Math.hypot(o.pillar.p.x + 14, o.pillar.p.z + 12) < 0.35 + 0.035 + 0.02 && o.pillar.p.y < 3
+      && o.floor.what === 'ground' && o.floor.p.y < 0.05 && o.fast && o.fast.what === 'wall' && Math.abs(o.fast.z - 12.79) < 0.01 && o.fast.n === -1 && page.errors.length === 0;
+    const f = t => `${t.what} at (${t.p.x.toFixed(2)}, ${t.p.y.toFixed(2)}, ${t.p.z.toFixed(2)}), ${t.bounces} bounces, rests at (${t.rest.x.toFixed(1)}, ${t.rest.z.toFixed(1)})`;
+    return { pass: ok, detail: `long wall: ${f(o.wall)}, never past z ${o.wall.maxZ.toFixed(2)}; tall crate: ${f(o.crate)}, never past z ${o.crate.maxZ.toFixed(2)}; pillar: ${f(o.pillar)}; open floor: ${f(o.floor)}; a 5 m segment through the wall: stopped at z ${o.fast ? o.fast.z.toFixed(3) : '–'} (${o.fast ? o.fast.what : 'MISSED'}); page errors ${page.errors.length}` };
+  },
+
+  // its sound: one noise event per throw, at the first contact, through the noise system (L3, the
+  // surface there: concrete 14 m, metal louder, grass softer), a 'clatter' (an object impact), never
+  // a gunshot; the bounces after it make no noise events; the guards don't draw for it
+  async throwSound() {
+    const page = await CHECKS._itemPage();
+    const r = await page.evaluate(() => {
+      const m = mag(), out = {};
+      // Guard 1 at a post far off, looking away (nobody sees her on the strips)
+      MV.guard.post.set(18, 0, -19); MV.guard.postYaw = Math.PI; MV.guard.reset(); MV.guard2.reset();
+      const at = (x, z, yaw) => {
+        for (let i = 0; i < 400 && (m.cooldown > 0 || m.busy()); i++) sim(1);
+        stand(x, z, yaw, 0.2); sim(5); noiseLog.length = 0; MV.input.useTapped = true; sim(12); const I = untilImpact(); sim(240);
+        const ev = noiseLog.filter(e => e.source !== 'player'), objs = ev.filter(e => e.source === 'object');
+        return { n: objs.length, other: ev.filter(e => e.source !== 'object').map(e => e.type).join(','), type: objs[0] && objs[0].type, lv: objs[0] && objs[0].level, r: objs[0] && objs[0].radius, surf: objs[0] && objs[0].surface, at: objs[0] ? xzd(objs[0].position, I.point) : 9, bounces: m.bounces, ticks: m.ticks };
+      };
+      out.concrete = at(-17, -14, Math.PI / 2);
+      out.metal = at(0, -2.9, 0);       // onto the metal strip (x −1.5…1.5, z 4…9)
+      out.grass = at(3.3, -2.9, 0);     // onto the grass strip
+      out.gun = MV.guards.map(g => [g.awareness.attack, g.weapon.state, g.hearing.heard ? g.hearing.heard.type : null]);
+      out.stats = document.getElementById('mv-equip').textContent;
+      return out;
+    });
+    const o = r, C = o.concrete, M = o.metal, G = o.grass;
+    const ok = [C, M, G].every(t => t.n === 1 && t.type === 'clatter' && t.lv === 3 && t.at < 1e-6 && t.bounces >= 1) && C.surf === 'concrete' && Math.abs(C.r - 14) < 0.01
+      && M.surf === 'metal' && M.r > C.r + 5 && G.surf === 'grass' && G.r < C.r - 3 && o.gun.every(g => !g[0] && g[1] === 'LOWERED' && g[2] !== 'gunshot')
+      && /PISTOL/.test(o.stats) && /MAG/.test(o.stats) && /object impact L3/.test(o.stats) && page.errors.length === 0;
+    const f = t => `${t.n} event (${t.type} L${t.lv}, ${t.surf} ${t.r.toFixed(1)} m, ${t.at < 1e-6 ? 'at' : 'NOT at'} the impact; ${t.bounces} bounces, ${t.ticks} ticks heard, other events: ${t.other || 'none'})`;
+    return { pass: ok, detail: `concrete: ${f(C)}; metal: ${f(M)}; grass: ${f(G)}; the guards: attacked ${o.gun.map(g => !!g[0]).join('/')}, pistols ${o.gun.map(g => g[1]).join('/')}, last heard ${o.gun.map(g => g[2]).join('/')}; STATS "${o.stats}"; page errors ${page.errors.length}` };
+  },
+
+  // a distraction: Guard 2 (a sentry) hears the clatter with his normal hearing, turns and checks it
+  // from his post, and settles back, never learning where she is (she threw it from behind him);
+  // Guard 1 walks over to the spot, looks around, and goes back to his patrol
+  async distractGuards() {
+    const page = await CHECKS._itemPage();
+    await page.evaluate(() => { MV.guard.patrol.enabled = true; MV.guard.reset(); });
+    const r = await page.evaluate(() => {
+      const m = mag(), g1 = MV.guard, g2 = MV.guard2, out = {};
+      // Guard 2: she's 4 m behind him, throwing over him into his view
+      g2.reset(); const f = g2.forward(), bk = g2.position.clone().addScaledVector(f, -4); stand(bk.x, bk.z, g2.yaw, 0.2); sim(10);
+      const her = MV.motor.position.clone(); MV.input.useTapped = true; sim(12); const I = untilImpact();
+      const h = g2.hearing.last; out.heard = [h.type, h.heard, h.distance.toFixed(1), h.reach.toFixed(1), xzd(h.position, I.point) < 1e-6];
+      const seq = []; let meter = 0, focus = null, faced = null, firstT = null, inv = false;
+      for (let i = 0; i < 60 * 70; i++) {
+        sim(1); const a = g2.awareness; meter = Math.max(meter, g2.vision.meter);
+        if (seq[seq.length - 1] !== a.state) seq.push(a.state);
+        if (a.focus && !focus) focus = a.focus.position.clone();
+        if (a.state === 'INVESTIGATING') { inv = true; const to = Math.atan2(I.point.x - g2.position.x, I.point.z - g2.position.z); faced = faced == null ? Math.abs(Math.atan2(Math.sin(to - g2.yaw), Math.cos(to - g2.yaw))) : Math.min(faced, Math.abs(Math.atan2(Math.sin(to - g2.yaw), Math.cos(to - g2.yaw)))); }
+        if (inv && a.state === 'NORMAL' && g2.atPost() && firstT == null) firstT = i / 60;
+        if (firstT != null && i / 60 > firstT + 3) break;
+      }
+      const D = m.impact.heard.find(x => x.label === 'Guard 2');
+      out.g2 = { seq: seq.join('→'), meter, focusAt: focus ? xzd(focus, I.point) : 99, focusHer: focus ? xzd(focus, her) : 0, faced: faced == null ? 9 : faced * 57.3, back: firstT, post: g2.atPost(), confirmed: g2.awareness.confirmed, inv: D.investigated, note: g2.awareness.note };
+      // Guard 1 on his patrol: she throws from far off and steps out of everyone's sight
+      g2.reset(); g1.reset(); sim(5);
+      const p0 = g1.position.clone(); stand(p0.x - 19, p0.z + 2, Math.PI / 2, 0.2); sim(5); MV.input.useTapped = true; sim(14); MV.motor.teleport(-19, 19, 0); MV.cam.snap(MV.motor);
+      const J = untilImpact(); const seq1 = []; let near = 99, back = null, investigated = false, dist = null;
+      for (let i = 0; i < 60 * 90; i++) {
+        sim(1); const a = g1.awareness; if (seq1[seq1.length - 1] !== a.state) seq1.push(a.state);
+        if (i === 60 * 10) dist = m.distraction();   // (the developer view follows it for 15 s)
+        if (a.state === 'INVESTIGATING') { investigated = true; near = Math.min(near, xzd(g1.position, J.point)); }
+        if (investigated && a.state === 'NORMAL' && a.behavior === 'patrol' && back == null) back = i / 60;
+        if (back != null && i / 60 > back + 4) break;
+      }
+      out.g1 = { seq: seq1.join('→'), near, back, behavior: g1.awareness.behavior, patrol: g1.patrol.status(), confirmed: g1.awareness.confirmed, dist, later: m.distraction() };
+      return out;
+    });
+    const o = r, A = o.g2, B = o.g1;
+    const ok = o.heard[0] === 'clatter' && o.heard[1] && o.heard[4] && /SUSPICIOUS/.test(A.seq) && /INVESTIGATING/.test(A.seq) && A.meter < 0.3 && !A.confirmed && A.focusAt < 0.5 && A.focusHer > 3 && A.faced < 30 && A.back != null && A.post && A.inv
+      && /INVESTIGATING/.test(B.seq) && B.near < 3 && B.back != null && B.behavior === 'patrol' && !B.confirmed && /G1 investigated/.test(B.dist) && B.later === null && page.errors.length === 0;
+    return { pass: ok, detail: `Guard 2 heard it: ${o.heard[0]} ${o.heard[1]} at ${o.heard[2]}/${o.heard[3]} m (at the impact ${o.heard[4]}); ${A.seq}; his attention on the impact (${A.focusAt.toFixed(2)} m from it, ${A.focusHer.toFixed(1)} m from her), turned to within ${A.faced.toFixed(0)}° of it; saw her ${Math.round(A.meter * 100)}% at most, confirmed ${A.confirmed}; calm at his post again after ${A.back != null ? A.back.toFixed(0) + ' s' : 'NEVER'} ("${A.note}"); Guard 1: ${B.seq}, came within ${B.near.toFixed(1)} m of it, back on patrol after ${B.back != null ? B.back.toFixed(0) + ' s' : 'NEVER'} (${B.patrol}); confirmed ${B.confirmed}; STATS 10 s after: ${B.dist}, folded away after 15 s ${B.later === null}; page errors ${page.errors.length}` };
+  },
+
+  // combat comes first: an ALERT guard who sees her keeps on her; one who's lost her takes it as one
+  // more sound for his search, keeping what he knows; unconscious or dead guards hear nothing
+  async distractPriority() {
+    const page = await CHECKS._itemPage();
+    const r = await page.evaluate(() => {
+      const m = mag(), g1 = MV.guard, g2 = MV.guard2, out = {};
+      const toss = (yaw, pitch) => { for (let i = 0; i < 400 && (m.cooldown > 0 || m.busy()); i++) sim(1); MV.cam.yaw = yaw + Math.PI; MV.cam.pitch = pitch == null ? 0.2 : pitch; MV.input.useTapped = true; sim(12); return untilImpact(); };
+      // in plain view of Guard 1: ALERT, his pistol on her
+      g1.post.set(-6, 0, -16); g1.postYaw = 0; g1.reset(); g2.reset(); stand(-6, -9, Math.PI); sim(60 * 4);
+      const a = g1.awareness, s0 = a.state; toss(Math.PI / 2); sim(60);
+      const R = m.impact.heard.find(x => x.label === 'Guard 1');
+      out.alert = { s0, s1: a.state, target: g1.weapon.target.type, why: R.why, heard: R.heard, conf: a.confirmed };
+      // out of his sight (behind the tall crate): EVASION, then a magazine thrown from there
+      MV.motor.teleport(-2, -6.9, -Math.PI / 2); MV.cam.snap(MV.motor); for (let i = 0; i < 60 * 3 && a.state !== 'EVASION'; i++) sim(1);
+      const seen = a.seen && a.seen.position.clone(), s2 = a.state; const I = toss(-Math.PI / 2, 0.2); sim(30);
+      out.lost = { s2, s3: a.state, conf: a.confirmed, kept: !!(a.seen && seen && a.seen.position.distanceTo(seen) < 1e-6), type: a.heard && a.heard.type, note: a.note, plan: a.evasion && a.evasion.plan ? a.evasion.plan.map(p => xzd(p.p, I.point).toFixed(1)).join(',') : '', at: xzd(I.point, g1.position).toFixed(1) };
+      // down: Guard 2 unconscious, Guard 1 defeated
+      document.getElementById('mv-reset').click(); sim(5); g1.post.set(-6, 0, -16); g1.reset();
+      g2.ko.knockOut({ position: g2.position.clone(), along: new THREE.Vector3(1, 0, 0), by: g2.position.clone().add(new THREE.Vector3(-1, 0, 0)) });
+      for (let k = 0; k < 3; k++) g1.health.take({ amount: 35, source: 'pistol', id: 'p' + k });
+      sim(60 * 3); const st = [g1.awareness.state, g2.awareness.state];
+      stand(-12, -13, Math.PI / 2); sim(5); toss(Math.PI); sim(60);
+      out.down = m.impact.heard.map(x => `${x.label} ${x.heard} ${x.why}`); out.downState = [st.join(), [g1.awareness.state, g2.awareness.state].join()];
+      return out;
+    });
+    const o = r, ok = o.alert.s0 === 'ALERT' && o.alert.s1 === 'ALERT' && o.alert.target === 'visual' && o.alert.heard && o.alert.why === 'ALERT: kept on her' && o.alert.conf
+      && o.lost.s2 === 'EVASION' && o.lost.conf && o.lost.kept && o.lost.type === 'clatter' && ['EVASION', 'HEIGHTENED'].indexOf(o.lost.s3) >= 0
+      && o.down.every(s => / false (dead|unconscious)$/.test(s)) && o.down.some(s => /dead$/.test(s)) && o.down.some(s => /unconscious$/.test(s)) && o.downState[0] === o.downState[1] && page.errors.length === 0;
+    return { pass: ok, detail: `seeing her: ${o.alert.s0} → ${o.alert.s1}, pistol on ${o.alert.target}, heard ${o.alert.heard} ("${o.alert.why}"); lost her: ${o.lost.s2} → ${o.lost.s3} (impact ${o.lost.at} m from him), still confirmed ${o.lost.conf}, where he last saw her kept ${o.lost.kept}, last heard ${o.lost.type} ("${o.lost.note}"; search spots from the impact ${o.lost.plan || '–'} m); down: ${o.down.join(' · ')} (states unchanged ${o.downState[0] === o.downState[1]}); page errors ${page.errors.length}` };
+  },
+
+  // CQC after a distraction: he turns to the sound, she closes in from behind and grabs him, then
+  // throws him (CQC THROW, still THROW); USE is unavailable while she holds him
+  async distractCqc() {
+    const page = await CHECKS._itemPage();
+    const r = await page.evaluate(() => {
+      const g2 = MV.guard2, { motor, input, cqc } = MV, out = {};
+      g2.reset(); const f = g2.forward(), bk = g2.position.clone().addScaledVector(f, -4); stand(bk.x, bk.z, g2.yaw, 0.2); sim(10);
+      MV.input.useTapped = true; sim(12); untilImpact();
+      let t = 0; while (g2.awareness.state !== 'INVESTIGATING' && t < 600) { sim(1); t++; }
+      sim(30);
+      const b = g2.position.clone().addScaledVector(g2.forward(), -1.0); motor.teleport(b.x, b.z, g2.yaw); MV.cam.snap(motor); sim(3);
+      out.before = [g2.awareness.state, g2.awareness.confirmed, Math.round(g2.vision.meter * 100)];
+      input.cqcTapped = true; sim(40); out.grab = cqc.state;
+      out.use = MV.equipment.useItem({ down: false, aiming: false, cqcState: cqc.state, busy: false }).why;
+      out.btn = [document.getElementById('mv-throw').textContent.trim(), document.body.classList.contains('mv-holding'), getComputedStyle(document.getElementById('mv-use')).visibility];
+      input.throwTapped = true; const seen = new Set(); for (let i = 0; i < 200; i++) { sim(1); seen.add(cqc.state); }
+      out.thrown = [...seen].join('→'); out.ko = g2.ko.state;
+      return out;
+    });
+    const o = r, ok = o.before[1] === false && o.grab === 'GRAPPLING' && o.use === 'holding a guard' && o.btn.join() === 'THROW,true,hidden' && /THROWING/.test(o.thrown) && o.ko !== 'CONSCIOUS' && page.errors.length === 0;
+    return { pass: ok, detail: `distracted: ${o.before[0]} (confirmed ${o.before[1]}, seen ${o.before[2]}%); grab → ${o.grab}; USE "${o.use}"; buttons: "${o.btn[0]}", holding ${o.btn[1]}, USE ${o.btn[2]}; THROW → ${o.thrown}; he's ${o.ko}; page errors ${page.errors.length}` };
+  },
+
+  // RESET: the default slots back, no magazine anywhere, no cooldown, the last distraction gone
+  async equipReset() {
+    const page = await CHECKS._itemPage();
+    const r = await page.evaluate(() => {
+      const m = mag(), E = MV.equipment, out = {};
+      stand(-17, -14, Math.PI / 2, 0.2); sim(5); MV.input.useTapped = true; sim(30);
+      out.mid = [m.phase, m.mesh.visible, m.cooldown > 0];
+      E.equip('pistol'); document.getElementById('mv-reset').click(); sim(2);
+      out.after = [m.phase, m.mesh.visible, m.cooldown, m.impact, m.flying, E.weapon().id, E.item().id, E.last];
+      out.use = use(1);
+      // after landing too
+      untilImpact(); for (let i = 0; i < 300 && m.phase !== 'rest'; i++) sim(1); document.getElementById('mv-reset').click(); sim(12);
+      out.rest = [m.phase, m.mesh.visible, document.getElementById('mv-equip').textContent];
+      return out;
+    });
+    const o = r, ok = o.mid.join() === 'flight,true,true' && o.after.slice(0, 5).join() === 'ready,false,0,,false' && o.after[5] === 'pistol' && o.after[6] === 'empty-magazine' && o.after[7] === null && o.use
+      && o.rest[0] === 'ready' && !o.rest[1] && o.rest[2] === 'PISTOL holstered · MAG ready' && page.errors.length === 0;
+    return { pass: ok, detail: `mid-flight (${o.mid.join(', ')}) → RESET: ${o.after.slice(0, 5).map(String).join(', ')}, slots ${o.after[5]} / ${o.after[6]}; USE straight after → thrown ${o.use}; landed → RESET: ${o.rest.join(', ')}; page errors ${page.errors.length}` };
+  },
+
+  // the USE button through real touches on iPhone layouts: in slot 3 of the action row (left of
+  // CROUCH, no existing button moved), clear of the swipe area, the crosshair and the stick; a tap
+  // is one throw (never CQC or FIRE), a finger kept on it still one; dim while unavailable; gone
+  // while she holds a guard (THROW's slot); the E key
+  async useTouch() {
+    const out = [], fails = [];
+    for (const [w, h] of [[844, 390], [667, 375], [932, 430]]) {
+      const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true });
+      const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(e.message));
+      await page.goto(base + '/movement.html'); await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
+      await page.tap('#mv-start'); await page.waitForTimeout(300);
+      const cdp = await ctx.newCDPSession(page), T = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+      await page.evaluate(() => { MV.guard.patrol.enabled = false; MV.guard.personality.enabled = false; MV.guard.reset(); MV.motor.teleport(-17, -14, Math.PI / 2); MV.cam.snap(MV.motor); });
+      const geo = await page.evaluate(() => {
+        const R = id => { const r = document.getElementById(id).getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, cx: (r.left + r.right) / 2, cy: (r.top + r.bottom) / 2 }; };
+        const U = R('mv-use'), A = R('mv-aim'), C = R('mv-cqc'), K = R('mv-crouch'), S = R('mv-stats'), W = innerWidth, H = innerHeight;
+        const others = [A, C, K].map(b => Math.hypot(b.cx - U.cx, b.cy - U.cy) - 56);
+        const hit = document.elementFromPoint(U.cx, U.cy), xh = U.l - 16 > W / 2 || U.r + 16 < W / 2 || U.t - 16 > H / 2 || U.b + 16 < H / 2;
+        return { U, row: Math.abs(U.cy - K.cy) < 1 && Math.abs(U.cy - A.cy) < 1, slot: (K.cx - U.cx) / (C.cx - K.cx), gap: Math.min(...others), hit: !!(hit && hit.closest('#mv-use')), label: document.getElementById('mv-use').textContent.trim(), xh, stick: U.l >= 0.45 * W, below: U.b + 12 <= H, statsClear: U.t >= S.b, W, H };
+      });
+      const st = () => page.evaluate(() => ({ throws: MV.equipment.item().ctl.throws, uses: MV.equipment.uses, refused: MV.equipment.refused, why: MV.equipment.last && MV.equipment.last.why, cqc: MV.cqc.state, cqcLast: MV.input.cqcLast, fires: MV.input.firePressCount, shots: MV.pistol.shots, locked: document.getElementById('mv-use').classList.contains('locked'), busy: MV.equipment.item().ctl.busy(), cd: MV.equipment.item().ctl.cooldown, aim: MV.aim.active }));
+      const U = geo.U, tap = async (id, hold) => { const n = await page.evaluate(() => MV.equipment.uses + MV.equipment.refused); await T('touchStart', [{ x: U.cx, y: U.cy, id }]); await page.waitForTimeout(hold || 70); await T('touchEnd', [{ x: U.cx, y: U.cy, id }]); await page.waitForFunction(n => MV.equipment.uses + MV.equipment.refused > n, n, { timeout: 3000 }).catch(() => {}); await page.waitForTimeout(100); };
+      const waitReady = () => page.waitForFunction(() => { const c = MV.equipment.item().ctl; return c.cooldown <= 0 && !c.busy(); }, null, { timeout: 15000 }).catch(() => {});
+      const s0 = await st(); await tap(1); const s1 = await st();
+      await page.waitForTimeout(200); const s2 = await st(); await tap(2); const s3 = await st();   // during its flight / cooldown
+      await waitReady(); const sr = await st(); await tap(3, 1200); const s4 = await st();         // a finger kept on it
+      await waitReady(); const n4 = (await st()).uses; await page.keyboard.press('KeyE'); await page.waitForFunction(n => MV.equipment.uses + MV.equipment.refused > n, n4 + (await st()).refused, { timeout: 3000 }).catch(() => {}); const s5 = await st();   // (a frame has taken the press: headless frames can be slow)
+      await waitReady();
+      // aiming: dim and refused
+      const ab = await page.locator('#mv-aim').boundingBox(); await T('touchStart', [{ x: ab.x + 28, y: ab.y + 28, id: 4 }]); await page.waitForTimeout(70); await T('touchEnd', [{ x: ab.x + 28, y: ab.y + 28, id: 4 }]); await page.waitForTimeout(500);
+      const sa0 = await st(); await tap(5); const sa = await st();
+      await T('touchStart', [{ x: ab.x + 28, y: ab.y + 28, id: 6 }]); await page.waitForTimeout(70); await T('touchEnd', [{ x: ab.x + 28, y: ab.y + 28, id: 6 }]); await page.waitForTimeout(500);
+      // holding a guard: hidden, its slot is THROW's
+      await page.evaluate(() => { const g = MV.guard2; const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); MV.input.cqcTapped = true; });
+      await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(300);
+      const hold = await page.evaluate(() => { const u = document.getElementById('mv-use'), t = document.getElementById('mv-throw').getBoundingClientRect(), r = u.getBoundingClientRect(); return { vis: getComputedStyle(u).visibility, throwHere: Math.abs((t.left + t.right) / 2 - (r.left + r.right) / 2) < 1, top: document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2).closest('#mv-throw') != null }; });
+      const g = geo, r = { g, s0, s1, s2, s3, sr, s4, s5, sa0, sa, hold, errs: errs.length };
+      const ok = g.row && Math.abs(g.slot - 1) < 0.02 && g.gap > 8 && g.hit && /^USE/.test(g.label) && /MAG/.test(g.label) && g.xh && g.stick && g.statsClear
+        && s1.throws === s0.throws + 1 && s1.cqc === 'FREE' && s1.cqcLast === s0.cqcLast && s1.fires === s0.fires && s1.shots === s0.shots
+        && s2.locked && s3.throws === s1.throws && s3.refused === s2.refused + 1 && s4.throws === sr.throws + 1 && s5.throws === s4.throws + 1
+        && sa0.aim && sa0.locked && sa.throws === sa0.throws && sa.why === 'aiming' && sa.fires === sa0.fires && hold.vis === 'hidden' && hold.throwHere && hold.top && errs.length === 0;
+      if (!ok) fails.push(`${w}×${h}`);
+      out.push(`${w}×${h}: USE "${g.label}" in slot ${(g.slot + 2).toFixed(2)} of the row (same row ${g.row}), ≥ ${g.gap.toFixed(0)} px from AIM/CQC/CROUCH, centre takes the touch ${g.hit}, clear of the crosshair ${g.xh}, of the stick ${g.stick} and of STATS ${g.statsClear}; a tap → ${s1.throws - s0.throws} throw (CQC ${s1.cqc}, CQC press ${s1.cqcLast === s0.cqcLast ? 'none' : s1.cqcLast}, FIRE presses ${s1.fires - s0.fires}, shots ${s1.shots - s0.shots}); dim while it flies ${s2.locked}, a tap then → refused "${s3.why}"; a 1.2 s press → ${s4.throws - sr.throws} throw; E key → ${s5.throws - s4.throws}${s5.throws === s4.throws ? ' (' + s5.why + ', cd ' + s5.cd.toFixed(2) + ', busy ' + s5.busy + ')' : ''}; aiming: dim ${sa0.locked}, a tap → refused "${sa.why}"; holding a guard: USE ${hold.vis}, THROW in its slot ${hold.throwHere}${errs.length ? '; errors ' + errs.join(';') : ''}`);
+      await ctx.close();
+    }
+    return { pass: fails.length === 0, detail: out.join(' | ') };
   },
 
   // Step 22 correction: her defeat is a collapse, not a sit: within ~1.1 s her hips and head are

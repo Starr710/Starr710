@@ -30,12 +30,12 @@ SC.mv = SC.mv || {};
   };
 
   mv.CollisionWorld.prototype.addBox = function (cx, cz, w, d, top, mesh) {
-    this.boxes.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, top });
+    this.boxes.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, top, mesh: mesh || null });   // (mesh: what a thrown object hit, Step 23)
     if (mesh) this.meshes.push(mesh);
   };
   // opts.noSight: solid to walk into but never blocks a line of sight (characters)
   mv.CollisionWorld.prototype.addCylinder = function (x, z, r, top, mesh, opts) {
-    const c = { x, z, r, top, noSight: !!(opts && opts.noSight) };
+    const c = { x, z, r, top, noSight: !!(opts && opts.noSight), mesh: mesh || null };
     this.cylinders.push(c);
     if (mesh) this.meshes.push(mesh);
     return c;

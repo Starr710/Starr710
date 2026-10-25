@@ -35,6 +35,9 @@
     repeatWindow: 8,       // …if heard within this many seconds…
     repeatBoost: 0.25,     // …each adding this much more weight…
     repeatMax: 2,          // …up to this multiplier
+    // Step 23: how much a kind of sound means to him, × its gain (anything not listed: 1). A
+    // sudden metallic clatter is worth walking over to look at; a single footstep isn't
+    soundInterest: { clatter: 2 },
     sightGain: 0.8,        // suspicion per unit of vision-meter fill while he (partly) sees her
     holdTime: 3,           // s without new evidence before suspicion starts to fall…
     decayRate: 0.04,       // …per second
@@ -147,24 +150,26 @@
     this.startle = null; this.startles = 0; this.startleNote = '';
     this.rng = mulberry(this.cfg.seed);
   };
+  const soundName = h => !h.type || h.type === 'footstep' ? `${h.surface} footsteps` : `a ${h.type} on ${h.surface}`;   // (Step 23: not every sound is a footstep)
   function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
   // ---------------------------------------------------------------- evidence
   // a sound the guard heard (from guard-hearing.js)
   mv.GuardAwareness.prototype.onHeard = function (rec) {
     const c = this.cfg, p = rec.position.clone();
-    this.heard = { position: p, time: this.clock, intensity: rec.intensity, surface: rec.surface, distance: rec.distance, estimate: p.clone(), uncertainty: 0 };
+    this.heard = { position: p, time: this.clock, intensity: rec.intensity, surface: rec.surface, distance: rec.distance, estimate: p.clone(), uncertainty: 0, type: rec.type };
+    const interest = c.soundInterest && c.soundInterest[rec.type] != null ? c.soundInterest[rec.type] : 1;
     const P = this.guard.personality, pm = k => (P ? P.mod(k) : 0);         // Step 10: personality modifiers (0 when neutral)
     this.recent = this.recent.filter(r => this.clock - r.time <= c.repeatWindow + pm('repeatWindow'));
     const repeats = this.recent.filter(r => Math.hypot(r.position.x - p.x, r.position.z - p.z) <= c.repeatRadius).length;
     this.recent.push({ position: p, time: this.clock });
     const close = 1 + c.closeBoost * Math.max(0, 1 - rec.distance / Math.max(0.01, rec.reach));
     const repeat = Math.min(c.repeatMax + pm('repeatMax'), 1 + (c.repeatBoost + pm('repeatBoost')) * repeats);
-    const base = lerpTab(c.hearGain, rec.intensity) * close * Math.min(c.repeatMax, 1 + c.repeatBoost * repeats);
+    const base = lerpTab(c.hearGain, rec.intensity) * interest * close * Math.min(c.repeatMax, 1 + c.repeatBoost * repeats);
     if (c.uncertainStates.indexOf(this.state) >= 0) this._estimate(this.heard, rec);
     // alerted: sounds feed the search, judged without personality (it's on hold in serious states)
     if (this.confirmed) { this.lastGain = base; this._alertHeard(this.heard, base); return; }
-    let gain = lerpTab(c.hearGain, rec.intensity) * close * repeat * (1 + pm('hearInterest'));
+    let gain = lerpTab(c.hearGain, rec.intensity) * interest * close * repeat * (1 + pm('hearInterest'));
     if (P) P.judgeSound(gain, repeats, c.redirectStrength);            // Step 11: careless may write off an isolated weak sound (after noticing it)
     this.lastGain = gain;
     this.suspicion = Math.min(1, this.suspicion + gain);
@@ -305,7 +310,7 @@
     if (this.state !== 'INVESTIGATING') this.investigateStart = this.clock;
     this.state = 'INVESTIGATING'; this.search = null;
     if (g.goTo(this.focus.position, this.cfg.arriveWithin)) { this.behavior = 'approach'; this.note = ''; }
-    else { this.note = 'spot unreachable: searching from here'; this._beginSearch(); }
+    else { this.note = g.navFailed === 'stationary post' ? 'sentry: checking it from his post' : 'spot unreachable: searching from here'; this._beginSearch(); }
   };
 
   mv.GuardAwareness.prototype._beginSearch = function () {
@@ -726,7 +731,7 @@
         e.end = Math.min(e.start + c.evasionMax, e.end + c.soundExtend);
         e.plan = this._plan(est, null, 'heard');
         g.stopMoving(); e.look = null;
-        this.note = `heard ${h.surface} footsteps ~${h.distance.toFixed(0)} m away (strength ${gain.toFixed(2)})`;
+        this.note = `heard ${soundName(h)} ~${h.distance.toFixed(0)} m away (strength ${gain.toFixed(2)})`;
         this._nextSpot();
         return;
       }
@@ -740,7 +745,7 @@
         if (this.clock - hs.lastExtend >= c.heightenedExtendGap) { hs.end = Math.min(hs.max, Math.max(hs.end, this.clock) + c.heightenedExtend); hs.lastExtend = this.clock; }
         hs.plan.unshift({ p: est.clone(), why: 'the sound he heard' });
         g.stopMoving(); hs.look = null; hs.watched = false;
-        this.note = `heard ${h.surface} footsteps ~${h.distance.toFixed(0)} m away (strength ${gain.toFixed(2)})`;
+        this.note = `heard ${soundName(h)} ~${h.distance.toFixed(0)} m away (strength ${gain.toFixed(2)})`;
         this._hsNext();
       } else if (gap && g.isStill() && hs.look) {
         // weak: a glance, no extension
@@ -749,7 +754,7 @@
     } else if (this.state === 'RETURNING' && gain >= c.redirectStrength && gap) {
       // a meaningful sound interrupts the walk back: check it, then return again
       this.lastRedirect = this.clock; this.redirects++;
-      this.interrupted = `return interrupted: heard ${h.surface} footsteps ~${h.distance.toFixed(0)} m away`;
+      this.interrupted = `return interrupted: heard ${soundName(h)} ~${h.distance.toFixed(0)} m away`;
       this._startHeightened(this.interrupted, c.returnInterruptTime, { p: est.clone(), why: 'the sound he heard' });
       this._hsNext();
     }
