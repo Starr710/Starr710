@@ -6,7 +6,7 @@
   const $ = id => document.getElementById(id);
   const ui = {
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
-    error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'), startForest: $('mv-start-forest'), levelsRow: $('mv-levels'), opts: $('mv-opts'), optWest: $('mv-opt-west'), optDebug: $('mv-opt-debug'), menu: $('mv-menu'), complete: $('mv-complete'), completeSub: $('mv-complete-sub'), replay: $('mv-replay'), toMenu: $('mv-to-menu'), objective: $('mv-objective'),
+    error: $('mv-error'), errorText: $('mv-error-text'), fpsBadge: $('mv-fpsbadge'), resume: $('mv-resume'), optSound: $('mv-opt-sound'), start: $('mv-start'), startForest: $('mv-start-forest'), levelsRow: $('mv-levels'), opts: $('mv-opts'), optWest: $('mv-opt-west'), optDebug: $('mv-opt-debug'), menu: $('mv-menu'), complete: $('mv-complete'), completeSub: $('mv-complete-sub'), replay: $('mv-replay'), toMenu: $('mv-to-menu'), objective: $('mv-objective'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
     gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), chokeBtn: $('mv-choke'), chokestat: $('mv-chokestat'), tkdnstat: $('mv-tkdnstat'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), aimBtn: $('mv-aim'), crosshair: $('mv-crosshair'), aimstat: $('mv-aimstat'), hitmark: $('mv-hitmark'), shotstat: $('mv-shotstat'), dmg: $('mv-dmg'), useBtn: $('mv-use'), equip: $('mv-equip'), useItem: $('mv-use-item'), defeat: $('mv-defeat'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
@@ -65,7 +65,7 @@
   const levels = { lab: { id: 'lab', name: 'TEST LAB', group: labGroup, area, store: world.store(), bg: BG.getHex(), fog: [22, 48], started: false, completions: 0 } };
   let level = levels.lab;
   const active = [];   // the loaded level's guards: every system that deals with guards holds this one array
-  const forestOpts = { west: false, debug: false };   // the level choice's two forest options (Guard D, the developer drawings)
+  const forestOpts = { west: false, debug: false, sound: true };   // the level choice's options: Guard D, the forest's developer drawings, sound debugging (Step 24.1)
   const motor = new mv.CharacterMotor(world);
   const input = new mv.Input({ root: document.body, base: $('mv-joy-base'), knob: $('mv-joy-knob'), crouch: $('mv-crouch'), cqc: $('mv-cqc'), throw: $('mv-throw'), choke: $('mv-choke'), aim: $('mv-aim'), use: $('mv-use') });
   const cam = new mv.ThirdPersonCamera(camera, world);
@@ -160,7 +160,7 @@
   const begin = id => {
     if (!animator) return;
     if (id !== level.id || level.started) enterLevel(id);
-    level.started = true;
+    level.started = true; setStats(false);   // (Step 24.1: STATS collapsed when a level loads)
     ui.loader.classList.add('done');
     setTimeout(() => { if (ui.loader.classList.contains('done')) ui.loader.hidden = true; }, 350);   // (unless the choice was opened again meanwhile)
     input.enabled = true;
@@ -171,15 +171,20 @@
   ui.start.addEventListener('click', () => begin('lab'));
   ui.startForest.addEventListener('click', () => begin('forest'));
   // the forest options (on the level choice): Guard D on or off, the developer drawings on or off
-  const optLabel = () => { ui.optWest.textContent = 'FOREST: WEST LOOKOUT ' + (forestOpts.west ? 'ON' : 'OFF'); ui.optWest.setAttribute('aria-pressed', String(forestOpts.west)); ui.optDebug.textContent = 'FOREST: PATROL DEBUG ' + (forestOpts.debug ? 'ON' : 'OFF'); ui.optDebug.setAttribute('aria-pressed', String(forestOpts.debug)); };
+  const optLabel = () => { ui.optWest.textContent = 'WEST LOOKOUT ' + (forestOpts.west ? 'ON' : 'OFF'); ui.optWest.setAttribute('aria-pressed', String(forestOpts.west)); ui.optDebug.textContent = 'PATROL DEBUG ' + (forestOpts.debug ? 'ON' : 'OFF'); ui.optDebug.setAttribute('aria-pressed', String(forestOpts.debug)); ui.optSound.textContent = 'SOUND DEBUG ' + (forestOpts.sound ? 'ON' : 'OFF'); ui.optSound.setAttribute('aria-pressed', String(forestOpts.sound)); };
+  optLabel();
   ui.optWest.addEventListener('click', () => { forestOpts.west = !forestOpts.west; optLabel(); if (levels.forest) levels.forest.started = true; /* (applied when the forest next loads) */ });
-  ui.optDebug.addEventListener('click', () => { forestOpts.debug = !forestOpts.debug; optLabel(); if (levels.forest) levels.forest.started = true; });
+  ui.optDebug.addEventListener('click', () => { forestOpts.debug = !forestOpts.debug; optLabel(); if (level.id === 'forest') applyDebug(); });   // (applied at once)
+  // Step 24.1: sound debugging (the rings and labels; the hearing itself is untouched), applied at once, in either level
+  ui.optSound.addEventListener('click', () => { forestOpts.sound = !forestOpts.sound; optLabel(); noise.cfg.debug = forestOpts.sound; if (!forestOpts.sound) hideNoiseLabels(); });
+  ui.resume.addEventListener('click', () => { if (!level.started || level.complete) return; ui.loader.classList.add('done'); setTimeout(() => { if (ui.loader.classList.contains('done')) ui.loader.hidden = true; }, 350); input.enabled = true; document.body.classList.add('playing'); });
   // back to the level choice (LEVELS chip, LEVEL COMPLETE): play stops, nothing is unloaded
   const toMenu = () => {
     input.clear(); input.enabled = false; document.body.classList.remove('playing');
     ui.complete.hidden = true; ui.objective.hidden = true;
     ui.loader.hidden = false; void ui.loader.offsetWidth; ui.loader.classList.remove('done');
     ui.loadText.textContent = 'Choose a level';
+    ui.resume.hidden = !(level.started && !level.complete); ui.resume.textContent = 'RESUME ' + (level.id === 'lab' ? 'TEST LAB' : 'FOREST OUTPOST');
   };
   ui.menu.addEventListener('click', toMenu);
   ui.toMenu.addEventListener('click', toMenu);
@@ -217,11 +222,19 @@
         caption: new mv.GuardCaption(cloneUi('mv-caption', n), g, world), indicator: new mv.GuardIndicator(cloneUi('mv-indicator', n), g, world), card: new mv.GuardTraitCard(cloneUi('mv-trait', n), g, world, null, motor) };
       g.awareness.onVocal = line => { const v = voice.say(line, g.position, motor.position); if (!(v.played && r.caption.cfg.onlyWithoutRecording)) r.caption.show(); };
       g.parked = true; rec.recs.push(r);
+      // (Step 24.1: in the forest a guard who's off screen or past the fog isn't drawn: his meshes culled against a
+      // bounding sphere grown well past his bind pose, so no animation, crouch or fall ever pokes outside it)
+      g.root.traverse(n => { if (!n.isMesh || !n.geometry) return; const G = n.geometry; if (!G.userData.grownSphere) { G.computeBoundingSphere(); G.boundingSphere.radius *= 1.8; G.userData.grownSphere = true; } n.frustumCulled = true; });
     }
     rec.buildMs = performance.now() - t0;
     rec.store = world.store(); world.use(keep);
-    rec.group.visible = false; rec.group.updateMatrixWorld(true);   // (its world matrices now: bullets and the camera test against them before it's first drawn)
+    rec.group.updateMatrixWorld(true);   // (its world matrices now: bullets and the camera test against them before it's first drawn)
+    // (Step 24.1: its materials compiled now, its guards' muzzle flashes and hit puffs too: the renderer skips hidden
+    // things, and compiling them at a guard's first shot would stall the frame mid-fight)
+    const warm = []; for (const r of rec.recs) warm.push(r.g.gunfire.flash, ...r.g.gunfire.puffs, r.g.weapon.gun);
+    const was = warm.map(o => o.visible); warm.forEach(o => { o.visible = true; }); rec.group.visible = true;
     renderer.compile(scene, camera);
+    warm.forEach((o, i) => { o.visible = was[i]; }); rec.group.visible = false;
     return rec;
   }
   // which of a level's guards are on: the forest's from their configuration (Guard D by the option)
@@ -243,20 +256,33 @@
     for (const g of active) g.parked = false;
     if (cqc) cqc.guard = active[0];
     BG.setHex(next.bg); scene.fog.near = next.fog[0]; scene.fog.far = next.fog[1];
-    const dbg = next.id === 'lab' || forestOpts.debug;   // (the Test Lab keeps its developer drawings; the forest only by the option)
-    noise.cfg.debug = dbg; for (const g of active) { g.awareness.cfg.debug = dbg; if (g.hearing) g.hearing.cfg.debug = dbg; }
-    next.debug = dbg;
+    // (Step 24.1: nothing past the fog is drawn in the forest: it would only be fog-coloured; the lab keeps its 80 m)
+    camera.far = next.id === 'lab' ? 80 : next.fog[1] + 4; camera.updateProjectionMatrix();
+    applyDebug();
+    noise.cfg.debug = forestOpts.sound;   // (Step 24.1: sound rings by their own option, in either level)
     resetLevel();
     if (next.recs) for (const r of next.recs) if (r.g.parked && r.g.collider) r.g.collider.x = 1e6;   // (a guard who's off isn't in the way either)
-    if (next.id === 'lab') { if (ui.levelCell) ui.levelCell.remove(); for (const t of ui.stats.querySelectorAll('i.g1')) t.textContent = 'G1'; ui.stats.querySelector('i.g2').textContent = 'G2'; }
+    if (next.id === 'lab') { if (ui.levelCell) { ui.levelCell.remove(); for (const p of ui.patrolCells) p.el.remove(); } for (const t of ui.stats.querySelectorAll('i.g1')) t.textContent = 'G1'; ui.stats.querySelector('i.g2').textContent = 'G2'; }
     else { levelCell(); ui.stats.querySelector('i.g2').textContent = 'ALL'; }
     return true;
   }
+  // the developer drawings of the loaded level: the Test Lab keeps its own; the forest's only by the option.
+  // (Step 24.1: otherwise hidden, never drawn: left alone they'd stand at the world's origin, inside the compound's southern block)
+  function applyDebug() {
+    const dbg = level.id === 'lab' || forestOpts.debug;
+    for (const g of active) { g.awareness.cfg.debug = dbg; if (g.hearing) g.hearing.cfg.debug = dbg; }
+    level.debug = dbg;
+    if (level.recs) for (const r of level.recs) { const on = dbg && !r.g.parked; r.view.group.visible = on; r.aware.group.visible = on; r.route.group.visible = on; if (r.g.hearing.marker) r.g.hearing.marker.visible = on; if (!on) r.card.hide(); }
+  }
   // the developer bar's LEVEL cell (the forest only: the lab's bar is unchanged)
   function levelCell() {
-    if (ui.levelCell) { ui.stats.querySelector('.mv-sec:last-child').appendChild(ui.levelCell); return; }
-    const d = document.createElement('div'); d.className = 'mv-levelcell'; d.innerHTML = '<span>LEVEL</span><b id="mv-level">–</b>';
-    ui.stats.querySelector('.mv-sec:last-child').appendChild(d); ui.levelCell = d; ui.level = d.querySelector('b');
+    const sec = ui.stats.querySelector('.mv-sec:last-child');
+    if (!ui.levelCell) {
+      const d = document.createElement('div'); d.className = 'mv-levelcell'; d.innerHTML = '<span>LEVEL</span><b id="mv-level">–</b>'; ui.levelCell = d; ui.level = d.querySelector('b');
+      // Step 24.1: one cell per guard of the level: his patrol, waypoints, pause, state, and why he's off his route
+      ui.patrolCells = level.recs.map(r => { const c = document.createElement('div'); c.className = 'mv-levelcell'; c.innerHTML = `<span>PATROL ${r.cfg.key}</span><b id="mv-patrol-${r.cfg.key}">–</b>`; return { el: c, b: c.querySelector('b'), r }; });
+    }
+    sec.appendChild(ui.levelCell); for (const p of ui.patrolCells) { if (p.r.g.parked) p.el.remove(); else sec.appendChild(p.el); }
   }
   // reached the END alive: LEVEL COMPLETE, once
   function completeLevel() {
@@ -269,10 +295,12 @@
   // the stats bar leaves room for RESET / STATS in its top-right corner (LEVELS shows only while it's closed)
   const chipRoom = () => document.documentElement.style.setProperty('--chips-w', document.querySelector('.mv-topright').offsetWidth - (ui.menu.offsetWidth ? ui.menu.offsetWidth + 6 : 0) + 8 + 'px');
   chipRoom(); window.addEventListener('resize', chipRoom);
-  ui.statsBtn.addEventListener('click', () => {
-    ui.stats.hidden = !ui.stats.hidden; ui.statsBtn.setAttribute('aria-pressed', String(!ui.stats.hidden));
-    if (!ui.stats.hidden) { for (const b of ui.stats.querySelectorAll('b')) b._v = undefined; hudT = 1; }   // shown again: every value rewritten on the next frame
-  });
+  // STATS: expanded or collapsed (Step 24.1: a level starts collapsed)
+  function setStats(open) {
+    ui.stats.hidden = !open; ui.statsBtn.setAttribute('aria-pressed', String(open));
+    if (open) { for (const b of ui.stats.querySelectorAll('b')) b._v = undefined; hudT = 1; }   // shown again: every value rewritten on the next frame
+  }
+  ui.statsBtn.addEventListener('click', () => setStats(ui.stats.hidden));
 
   // ---------------------------------------------------------------- Step 24: the developer bar in another level
   // the G1 cells follow the active guard nearest her, the G2 cell lists them all in short
@@ -287,17 +315,53 @@
     if (p && p.enabled) route = p.state === 'interrupted' ? `off route (W${p.resumeIndex} next)` : p.state === 'observing' ? `W${p.index} ${p.obs ? Math.max(0, p.obs.total - (p.obs.i * p.obs.hold + p.obs.heldFor)).toFixed(1) + ' s' : ''}` : `${p.rejoining ? 'rejoin ' : ''}→W${p.index}`;
     return `${g.levelKey} ${st}${g.restraint ? ' HELD' : ''} ${route}`;
   };
+  // one guard's patrol in full: his assignment, the waypoint he's at or heading for and the one after, the pause left,
+  // what he's doing, and why he's off his route (if he is)
+  const patrolLine = r => {
+    const g = r.g, p = g.patrol, a = g.awareness, role = r.cfg.label.split('— ')[1] || r.cfg.role;
+    if (g.isDown()) return `${role} · ${g.ko.state}${g.ko.state === 'DEAD' ? '' : ' · ' + g.ko.status()} · no patrol while down`;
+    const nx = p.nextIndex ? (() => { const d = p.dir, n = p.nextIndex(p.index); p.dir = d; return n; })() : null;
+    const pause = p.state === 'observing' && p.obs ? ` · pause ${Math.max(0, p.obs.total - (p.obs.i * p.obs.hold + p.obs.heldFor)).toFixed(1)} s left` : '';
+    const st = p.state === 'interrupted' ? `INTERRUPTED (${p.why || a.state.toLowerCase()}) · back to W${p.resumeIndex} when calm` : p.rejoining ? 'rejoining route' : p.state;
+    return `${role} · ${a.state}${a.behavior ? ' ' + a.behavior : ''} · W${p.index}${nx != null ? '→W' + nx : ''}${pause} · ${st}`;
+  };
   function forestStats() {
     const L = level, X = L.area.exit, p = motor.position, toExit = Math.hypot(Math.max(X.minX - p.x, 0, p.x - X.maxX), Math.max(X.minZ - p.z, 0, p.z - X.maxZ));
     if (ui.level) put(ui.level, `${L.name.replace(/^LEVEL (\d+) — /, 'L$1 ')} · you ${xz1(p)} · ${L.complete ? 'COMPLETE' : 'exit ' + toExit.toFixed(0) + ' m'} · ${active.length}/${L.recs.length} guards`);
     put(ui.g2, L.recs.filter(r => !r.g.parked).map(r => brief(r.g)).join(' · '));
+    if (ui.patrolCells) for (const c of ui.patrolCells) if (!c.r.g.parked) put(c.b, patrolLine(c.r));
     const s = statGuards()[0]; if (s) { const t = ui.stats.querySelector('i.g1'); if (t && t.textContent !== s.levelKey) t.textContent = s.levelKey; }
   }
+
+  // ---------------------------------------------------------------- Step 24.1: sound-event labels (sound debugging)
+  // a short label at each sound's origin: what, level, surface, reach and which guards heard it; 4 reused in turn
+  const noiseLabels = { els: [], next: 0, live: 0 }, _np = new THREE.Vector3();
+  for (let i = 0; i < 4; i++) { const el = document.createElement('div'); el.className = 'mv-noiselabel'; document.body.appendChild(el); noiseLabels.els.push({ el, ev: null, t: 0, shown: false }); }
+  noise.onShown = ev => {
+    if (!forestOpts.sound) return;
+    const heard = active.filter(g => g.hearing && g.hearing.last && g.hearing.last.heard && g.hearing.last.type === ev.type && g.hearing.last.position.x === ev.position.x && g.hearing.last.position.z === ev.position.z).map(g => g.levelKey || (g === guard ? '1' : '2'));
+    const L = noiseLabels.els[noiseLabels.next]; noiseLabels.next = (noiseLabels.next + 1) % noiseLabels.els.length;
+    L.el.textContent = `${ev.type.toUpperCase()} — L${ev.level} — ${ev.surface.toUpperCase()} — ${ev.radius.toFixed(1)} m${heard.length ? ' · heard by ' + heard.join(',') : ''}`;
+    L.ev = ev; L.age = 0; if (!L.shown) noiseLabels.live++; L.shown = true;
+  };
+  // (in game time, like the rings: a label lives exactly as long as its ring)
+  function updateNoiseLabels(dt) {
+    const W = renderer.domElement.clientWidth, H = renderer.domElement.clientHeight, life = noise.cfg.ringTime;
+    for (const L of noiseLabels.els) {
+      if (!L.shown) continue;
+      L.age += dt; const k = L.age / life;
+      _np.copy(L.ev.position); _np.y += 0.25; _np.project(camera);
+      if (k >= 1 || _np.z > 1) { L.shown = false; noiseLabels.live--; L.el.style.opacity = '0'; continue; }
+      L.el.style.transform = `translate(${((_np.x + 1) / 2 * W).toFixed(0)}px, ${((1 - _np.y) / 2 * H).toFixed(0)}px) translate(-50%, -100%)`;
+      L.el.style.opacity = String(k < 0.6 ? 1 : (1 - k) / 0.4);
+    }
+  }
+  function hideNoiseLabels() { for (const L of noiseLabels.els) { if (L.shown) noiseLabels.live--; L.shown = false; L.el.style.opacity = '0'; } }
 
   // ---------------------------------------------------------------- loop
   const clock = new THREE.Clock();
   const fwd = new THREE.Vector3(), aimMz = new THREE.Vector3();
-  let fps = 60, fpsT = 0, fpsN = 0, hudT = 0, grace = 2;
+  let fps = 60, fpsN = 0, hudT = 0, grace = 2;
   // stats text is written only when it changes (each write re-lays out the bar)
   const put = (el, v) => { if (el._v !== v) { el._v = v; el.textContent = v; } };
   const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false, thr: false, thrReady: null, thrShown: null, locked: false, ring: null, charging: false, fired: false, cring: null, timer: false, urgent: false };
@@ -305,7 +369,18 @@
   // Step 23: what the equipped item needs to know about her right now
   const useState = down => ({ down, aiming: !!(aim && aim.active), cqcState: cqc ? cqc.state : 'FREE', busy: actions.busy() });
   ui.chokeRing = ui.chokeBtn.querySelector('circle'); ui.cqcRing = ui.cqcBtn.querySelector('circle'); ui.cqcLabel = ui.cqcBtn.querySelector('span');
-  function frame() { tick(Math.min(clock.getDelta(), 1 / 20)); }
+  // Step 24.1: the frame rate from real time between drawn frames (the simulation's step is capped at 1/20 s, so
+  // counting steps would read 20 fps on a slower device); once a second into the FPS badge and STATS
+  let fpsT0 = performance.now();
+  function frame() {
+    tick(Math.min(clock.getDelta(), 1 / 20));
+    const now = performance.now(); fpsN++;
+    if (now - fpsT0 >= 1000) {
+      fps = fpsN * 1000 / (now - fpsT0); fpsN = 0; fpsT0 = now;
+      put(ui.fpsBadge, 'FPS ' + Math.round(fps));
+      if (input.enabled && (grace -= 1) < 0 && fps < 48 && tier < TIERS.length - 1) { applyTier(tier + 1); grace = 2; }
+    }
+  }
   // one frame of everything; the checks step it by hand (noRender: skip drawing it)
   function tick(dt, noRender) {
 
@@ -405,8 +480,7 @@
         for (const r of level.recs) {
           if (r.g.parked) continue;
           r.g.update(dt, seeTarget);
-          if (dbg) { r.view.update(camera, seeTarget); r.g.hearing.updateDebug(level.group); r.aware.update(camera); } else if (r.view.group.visible) r.view.group.visible = false;
-          r.route.update(dbg);
+          if (dbg) { r.view.update(camera, seeTarget); r.g.hearing.updateDebug(level.group); r.aware.update(camera); r.route.update(true); }
         }
         // the END: reached on her feet
         if (level.area.exit && !down && inExit(level.area.exit, motor.position)) completeLevel();
@@ -436,8 +510,7 @@
     if (!noRender) renderer.render(scene, camera);
 
     // frame rate + adaptive quality
-    fpsT += dt; fpsN++;
-    if (fpsT > 1) { fps = fpsN / fpsT; fpsT = fpsN = 0; if (input.enabled && (grace -= 1) < 0 && fps < 48 && tier < TIERS.length - 1) { applyTier(tier + 1); grace = 2; } }
+    if (noiseLabels.live) updateNoiseLabels(dt);
     hudT += dt;
     if (hudT > 0.15 && !ui.stats.hidden) {
       hudT = 0;
@@ -495,5 +568,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { SCmv: mv, tick, motor, cam, input, world, area, noise, footAudio, levels, active, forestOpts, enterLevel, resetLevel, begin, toMenu, get level() { return level; }, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, get aim() { return aim; }, get aimPose() { return aimPose; }, get pistol() { return pistol; }, get playerHealth() { return playerHealth; }, get equipment() { return equipment; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { SCmv: mv, tick, motor, cam, input, world, area, noise, footAudio, levels, active, forestOpts, enterLevel, resetLevel, begin, toMenu, setStats, noiseLabels, get fps() { return fps; }, get level() { return level; }, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, get aim() { return aim; }, get aimPose() { return aimPose; }, get pistol() { return pistol; }, get playerHealth() { return playerHealth; }, get equipment() { return equipment; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

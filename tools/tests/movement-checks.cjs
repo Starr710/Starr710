@@ -93,6 +93,7 @@ async function touchPage() {
   await page.goto(base + '/movement.html');
   await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
   await page.tap('#mv-start'); await page.waitForTimeout(300);
+  await page.evaluate(() => { MV.setStats(true); });   // (Step 24.1: a level starts with STATS collapsed; these checks were written with it open)
   await page.evaluate(() => {
     MV.guard.patrol.enabled = false; MV.guard.personality.enabled = false; MV.guard.reset();   // stationary, neutral guard (see simPage)
     window.useProfile = (k, extra) => { const g = MV.guard; g.personality = new MV.SCmv.GuardPersonality(g, Object.assign({}, MV.area.profiles[k], extra || {})); return g.personality; };
@@ -3153,7 +3154,7 @@ const CHECKS = {
       const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true });
       const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(e.message));
       await page.goto(base + '/movement.html'); await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
-      await page.tap('#mv-start'); await page.waitForTimeout(300);
+      await page.tap('#mv-start'); await page.waitForTimeout(300); await page.evaluate(() => MV.setStats(true));   // (Step 24.1: STATS starts collapsed)
       await page.evaluate(() => { const g = MV.guard2; const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); MV.input.cqcTapped = true; });
       await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(500);
       const geo = () => page.evaluate(() => {
@@ -3169,6 +3170,8 @@ const CHECKS = {
         const safe = !!rule && /safe-area-inset-top/.test(rule.cssText) && /safe-area-inset-left/.test(rule.cssText) && /safe-area-inset-right/.test(rule.cssText);
         return { W, H, left: R.left, right: R.right, top: R.top, bottom: R.bottom, width: R.width, height: R.height, clear, hit, safe,
           inside: cells.every(c => { const r = c.getBoundingClientRect(); return r.left >= R.left - 0.5 && r.right <= R.right + 0.5 && r.bottom <= R.bottom + 0.5; }) && vals.every(v => v.getBoundingClientRect().right <= R.right + 0.5),
+          // (Step 24.1: the expanded bar is capped in height and scrolls: what's below its edge is reached by scrolling, never past its right edge)
+          reach: cells.every(c => { const r = c.getBoundingClientRect(); return r.left >= R.left - 0.5 && r.right <= R.right + 0.5 && r.bottom <= R.top + bar.scrollHeight + 0.5; }) && vals.every(v => v.getBoundingClientRect().right <= R.right + 0.5),
           empty: vals.filter(v => !v.textContent.trim() || v.getBoundingClientRect().width < 1).map(v => v.id), count: vals.length, fontPx: parseFloat(getComputedStyle(vals[0]).fontSize) };
       });
       const g = await geo();
@@ -3180,9 +3183,9 @@ const CHECKS = {
       await page.tap('#mv-stats-btn'); await page.waitForTimeout(400);
       const on = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), g2: document.getElementById('mv-g2').textContent }));
       const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 27 && g.fontPx >= 9.5
-        && long.inside && long.right <= long.W && long.height <= 0.4 * long.H && off.hidden && off.pressed === 'false' && off.title && !on.hidden && on.pressed === 'true' && !/VERY LONG/.test(on.g2) && errs.length === 0;
+        && long.reach && long.right <= long.W && long.height <= 0.4 * long.H && off.hidden && off.pressed === 'false' && off.title && !on.hidden && on.pressed === 'true' && !/VERY LONG/.test(on.g2) && errs.length === 0;
       if (!ok) errors++;
-      out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside}, title hidden and no value over RESET/STATS/CROUCH/CQC/THROW ${g.clear}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside}, ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden} (title back ${off.title}), on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
+      out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside}, title hidden and no value over RESET/STATS/CROUCH/CQC/THROW ${g.clear}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside} (all reachable by scrolling ${long.reach}), ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden} (title back ${off.title}), on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
       await ctx.close();
     }
     return { pass: errors === 0, detail: out.join(' | ') };
@@ -3788,6 +3791,163 @@ const CHECKS = {
     return { pass: rows.every(([k, v]) => v[0] >= (k === 'crouch idle' ? 0.15 : 0.12) && v[1] >= 0.15), detail: rows.map(([k, v]) => `${k}: hand–shin ${cm(v[0])}, thigh–body ${cm(v[1])}`).join('; ') };
   },
 
+  // ---------------------------------------------------------------- Step 24.1: forest corrections and the developer HUD
+  // STATS through real touches: collapsed when a level loads (nothing of it on screen), expanded by STATS (capped
+  // at about a third of the screen, scrollable, clear of every action button, all its values there), collapsed again;
+  // the FPS badge is always shown, small, in the top-left corner, clear of STATS and the controls, and it reads
+  // the real frame rate (frames actually drawn per second, not the capped simulation step)
+  async hudStats() {
+    const out = [], fails = [];
+    for (const [w, h] of [[844, 390], [667, 375]]) {
+      const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true });
+      const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(e.message));
+      await page.goto(base + '/movement.html'); await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
+      await page.tap('#mv-start-forest'); await page.waitForTimeout(2600);
+      const geo = () => page.evaluate(() => {
+        const R = el => { const r = (typeof el === 'string' ? document.getElementById(el) : el).getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; };
+        const over = (a, b) => !(a.r <= b.l || b.r <= a.l || a.b <= b.t || b.b <= a.t);
+        const bar = document.getElementById('mv-stats'), badge = R('mv-fpsbadge'), btns = ['mv-aim', 'mv-cqc', 'mv-crouch', 'mv-use', 'mv-reset', 'mv-stats-btn'].map(R);
+        const cells = bar.hidden ? [] : [...bar.querySelectorAll('.mv-sec > div')].map(R);
+        const hit = ['mv-aim', 'mv-cqc', 'mv-crouch', 'mv-use', 'mv-stats-btn'].every(id => { const b = R(id); return document.elementFromPoint(b.l + b.w / 2, b.t + b.h / 2).closest('#' + id) != null; });
+        return { open: !bar.hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), bar: bar.hidden ? null : R(bar), H: innerHeight, W: innerWidth, rowTop: Math.min(...btns.slice(0, 4).map(b => b.t)),
+          scroll: [bar.scrollHeight, bar.clientHeight], values: bar.querySelectorAll('b').length, badge, badgeText: document.getElementById('mv-fpsbadge').textContent, badgeShown: getComputedStyle(document.getElementById('mv-fpsbadge')).visibility === 'visible',
+          badgeClear: btns.every(b => !over(b, badge)) && cells.every(c => !over(c, badge)), hit };
+      });
+      const c0 = await geo();
+      await page.tap('#mv-stats-btn'); await page.waitForTimeout(600); const e1 = await geo();
+      const scrolled = await page.evaluate(() => { const b = document.getElementById('mv-stats'); b.scrollTop = 1000; const t = b.scrollTop; b.scrollTop = 0; return t; });
+      await page.tap('#mv-stats-btn'); await page.waitForTimeout(300); const c2 = await geo();
+      // the badge's figure against frames counted here, in the same second-long windows
+      const rate = await page.evaluate(() => new Promise(res => { let n = 0; const t0 = performance.now(), f = () => { n++; if (performance.now() - t0 < 3000) requestAnimationFrame(f); else res({ counted: n * 1000 / (performance.now() - t0), badge: MV.fps }); }; requestAnimationFrame(f); }));
+      const ok = !c0.open && c0.pressed === 'false' && c0.badgeShown && /^FPS \d+$/.test(c0.badgeText) && c0.badge.l < 0.15 * c0.W && c0.badge.t < 30 && c0.badge.w < 70 && c0.badge.h < 20 && c0.badgeClear && c0.hit
+        && e1.open && e1.pressed === 'true' && e1.bar.b - e1.bar.t <= 0.35 * e1.H && e1.bar.b <= e1.rowTop && e1.hit && e1.badgeShown && e1.badgeClear && e1.values >= 27
+        && (e1.scroll[0] <= e1.scroll[1] + 1 || scrolled > 0) && !c2.open && c2.pressed === 'false' && c2.hit
+        && rate.badge > 0 && Math.abs(rate.badge - rate.counted) <= Math.max(2, rate.counted * 0.35) && errs.length === 0;
+      if (!ok) fails.push(`${w}×${h}`);
+      out.push(`${w}×${h}: level start: STATS collapsed ${!c0.open}, FPS badge "${c0.badgeText}" ${Math.round(c0.badge.w)}×${Math.round(c0.badge.h)} px at (${Math.round(c0.badge.l)}, ${Math.round(c0.badge.t)}), clear of the controls ${c0.badgeClear}; STATS → expanded: ${Math.round(e1.bar.b - e1.bar.t)} px tall (${Math.round((e1.bar.b - e1.bar.t) / e1.H * 100)}%), ends at ${Math.round(e1.bar.b)} above the action row's ${Math.round(e1.rowTop)}, ${e1.values} values, content ${e1.scroll.join('/')} px (scrolls ${scrolled > 0 ? 'yes, ' + scrolled + ' px' : 'no need'}), buttons get the touch ${e1.hit}, badge clear of every value ${e1.badgeClear}; STATS → collapsed ${!c2.open}; frame rate: badge ${rate.badge.toFixed(1)}, counted ${rate.counted.toFixed(1)} fps${errs.length ? '; errors ' + errs.join(';') : ''}`);
+      await ctx.close();
+    }
+    return { pass: fails.length === 0, detail: out.join(' | ') };
+  },
+
+  // sound debugging: each real noise event draws a ring at its true origin whose size is its effective reach, coloured by
+  // its level, with a short label (what, level, surface, reach, who heard it); rings and labels expire and are reused
+  // (12 rings, 4 labels, nothing new per event); switched off, nothing is drawn; and whether it's on or off the guards
+  // hear exactly the same
+  async soundDebug() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const N = MV.noise, out = {}, A = G('A');
+      MV.motor.teleport(-4, 17, 0); MV.cam.snap(MV.motor); sim(5);
+      // a real footstep sequence: she jogs 3 s on grass toward Guard A's back
+      N.cfg.debug = true; MV.forestOpts.sound = true; const evs = []; const off = N.on(e => { if (e.source === 'player') evs.push(e); });
+      MV.input.move.y = 1; let check = null;
+      for (let i = 0; i < 180; i++) { sim(1); if (!check && evs.length >= 3) { const e = evs[evs.length - 1], ring = N.rings[(N._next + N.rings.length - 1) % N.rings.length]; check = { e, ring }; } }
+      MV.input.move.y = 0; off();
+      const e = check.e, ring = check.ring;
+      out.ring = { at: Math.hypot(ring.position.x - e.position.x, ring.position.z - e.position.z), dot: Math.hypot(ring.userData.dot.position.x - e.position.x, ring.userData.dot.position.z - e.position.z), r: ring.userData.r, radius: e.radius, level: e.level, surf: e.surface };
+      // its full size: the ring's outer edge is the event's reach
+      const t0 = ring.userData.t; ring.userData.t = 0.4; N.update(0); out.scale = ring.scale.x; ring.userData.t = t0;
+      const lbl = MV.noiseLabels.els.map(l => l.el.textContent); out.label = lbl.filter(Boolean).slice(-1)[0] || ''; out.labels = MV.noiseLabels.els.length;
+      out.pool = [N.rings.length, MV.scene.children.length];
+      for (let k = 0; k < 40; k++) N.emit(2, 'footstep', new THREE.Vector3(30 + k, 0, 30), 'grass', 'test'); out.pool2 = [N.rings.length, MV.scene.children.length];
+      // expiry
+      sim(Math.ceil(N.cfg.ringTime * 60) + 5); out.after = [N.rings.filter(m => m.visible).length, MV.noiseLabels.els.filter(l => l.shown).length];
+      // the same events with it on and off: identical hearing
+      const hearRun = on => { N.cfg.debug = on; MV.forestOpts.sound = on; sim(Math.ceil(N.cfg.ringTime * 60) + 5); document.getElementById('mv-reset').click(); sim(2); const res = [];   /* (the last run's rings and labels gone first) */
+        for (const [x, z, lv, surf] of [[-4, 19, 2, 'grass'], [-4, 21, 1, 'grass'], [0, -12, 3, 'dirt'], [-8, -10, 2, 'dirt'], [16, 14, 3, 'grass']]) { N.emit(lv, 'footstep', new THREE.Vector3(x, 0, z), surf, 'player'); res.push(MV.active.map(g => g.hearing.last ? `${g.hearing.last.heard}:${g.hearing.last.distance.toFixed(3)}:${g.hearing.last.reach.toFixed(3)}` : '-').join('|')); sim(3); }
+        return res.join(' ') + ' / ' + MV.active.map(g => Math.round(g.awareness.suspicion * 1000)).join(','); };
+      const vis0 = N.rings.filter(m => m.visible).length; out.withOn = hearRun(true); out.withOff = hearRun(false); out.offDrawn = N.rings.filter(m => m.visible).length - 0;
+      out.offLabels = MV.noiseLabels.els.filter(l => l.shown).length;
+      N.cfg.debug = true; MV.forestOpts.sound = true;
+      return out;
+    });
+    const o = r, ok = o.ring.at < 1e-6 && o.ring.dot < 1e-6 && Math.abs(o.ring.r - o.ring.radius) < 1e-9 && Math.abs(o.scale - o.ring.radius) < 1e-6 && o.ring.surf === 'grass'
+      && o.label.indexOf('FOOTSTEP') === 0 && /— L\d — (GRASS|DIRT) — \d+\.\d m/.test(o.label) && o.labels === 4 && o.pool[0] === 12 && o.pool2[0] === 12 && o.pool2[1] === o.pool[1]
+      && o.after[0] === 0 && o.after[1] === 0 && o.withOn === o.withOff && o.offLabels === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `a real footstep (L${o.ring.level} ${o.ring.surf}, ${o.ring.radius.toFixed(1)} m): ring and dot at its origin (${o.ring.at.toExponential(0)} m off), full size ${o.scale.toFixed(2)} m = its reach; label "${o.label}"; ${o.pool[0]} rings and ${o.labels} labels, still ${o.pool2[0]} after 40 more events (scene objects ${o.pool[1]} → ${o.pool2[1]}); after ${'its life'}: ${o.after[0]} rings, ${o.after[1]} labels showing; the same 5 events heard identically with it on and off ${o.withOn === o.withOff} (${o.withOn.split(' / ')[1]} suspicion), nothing drawn while off (${o.offLabels} labels); page errors ${page.errors.length}` };
+  },
+
+  // every assigned guard (the five, Guard D switched on for this) starts and stands clear of everything solid, with every
+  // waypoint reachable (outside anything solid, a path to it from the previous one); after RESET at a phone-like
+  // 30 fps each completes several full rounds with no stuck walk (moving without getting anywhere) and never inside
+  // anything; a guard who's down doesn't patrol; Guard E stands beyond the safe start, and she isn't seen at it
+  async forestLoops() {
+    const page = await CHECKS._forestPage({ west: true });
+    const r = await page.evaluate(() => {
+      const out = {}, W = MV.world, recs = MV.levels.forest.recs;
+      out.cfg = recs.map(r => { const g = r.g, pts = r.cfg.patrol.points; let reach = true;
+        for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; if (g.nav.inside(a) || (Math.hypot(a.x - b.x, a.z - b.z) > 0.1 && !g.nav.plan(a, b))) reach = false; }
+        return { k: r.cfg.key, spawnIn: g.nav.inside({ x: r.cfg.x, z: r.cfg.z }), into: intrusion(g), reach }; });
+      const E = G('E'); out.E = { at: [E.position.x, E.position.z], fromStart: Math.hypot(E.position.x - 0, E.position.z + 36.5) };
+      // standing at the START for 20 s: nobody sees her
+      let seen = 0; for (let i = 0; i < 60 * 20; i++) { sim(1); for (const g of MV.active) seen = Math.max(seen, g.vision.meter); } out.atStart = seen;
+      // RESET, then 8 minutes at 30 fps, her out of everyone's way
+      document.getElementById('mv-reset').click(); MV.motor.teleport(-26, -10, 0);
+      const dt = 1 / 30, laps = {}, idx = {}, stuck = {}, worst = {}, last = {};
+      for (let i = 0; i < 8 * 60 * 30; i++) {
+        MV.tick(dt, true);
+        for (const g of MV.active) {
+          const k = g.levelKey, p = g.patrol; worst[k] = Math.max(worst[k] || 0, intrusion(g));
+          if (idx[k] == null) idx[k] = p.index; if (p.index !== idx[k]) { if (p.index === 0) laps[k] = (laps[k] || 0) + 1; idx[k] = p.index; }
+          const l = last[k] || (last[k] = { x: g.position.x, z: g.position.z, t: 0 });
+          if (g.moving && Math.hypot(g.position.x - l.x, g.position.z - l.z) < 0.03) { l.t += dt; stuck[k] = Math.max(stuck[k] || 0, l.t); } else { l.t = 0; l.x = g.position.x; l.z = g.position.z; }
+        }
+      }
+      out.laps = laps; out.stuck = stuck; out.worst = worst; out.states = MV.active.map(g => g.levelKey + g.awareness.state).join(' ');
+      // down: Guard C knocked out mid-round doesn't patrol
+      const C = G('C'); C.ko.knockOut({ position: C.position.clone(), along: new THREE.Vector3(1, 0, 0), by: C.position.clone().add(new THREE.Vector3(-1, 0, 0)) });
+      const p0 = C.position.clone(), i0 = C.patrol.index; sim(60 * 10); out.down = { moved: xzd(C.position, p0), idx: C.patrol.index === i0, state: C.ko.state };
+      return out;
+    });
+    const o = r, ok = o.cfg.length === 5 && o.cfg.every(c => !c.spawnIn && c.into === 0 && c.reach) && o.E.fromStart > 20 && o.atStart === 0
+      && (o.laps.A || 0) >= 3 && (o.laps.B || 0) >= 2 && (o.laps.C || 0) >= 3 && (o.laps.D || 0) >= 3 && (o.laps.E || 0) >= 3
+      && Object.values(o.stuck).every(v => v < 2) && Object.values(o.worst).every(v => v < 0.02) && /^(A|B|C|E|D)NORMAL/.test(o.states)
+      && o.down.moved < 0.05 && o.down.idx && o.down.state !== 'CONSCIOUS' && page.errors.length === 0;
+    return { pass: ok, detail: `assignments ${o.cfg.map(c => `${c.k}: inside ${c.spawnIn}, ${c.into.toFixed(2)} m into anything, waypoints reachable ${c.reach}`).join('; ')}; Guard E at (${o.E.at.join(', ')}), ${o.E.fromStart.toFixed(0)} m from the START; standing at the START 20 s: seen ${Math.round(o.atStart * 100)}% at most; after RESET, 8 min at 30 fps: full rounds ${Object.entries(o.laps).map(([k, v]) => k + ' ' + v).join(', ')}; longest walk without progress ${Object.entries(o.stuck).map(([k, v]) => k + ' ' + v.toFixed(1) + ' s').join(', ') || 'none'}; deepest into anything ${Math.max(0, ...Object.values(o.worst)).toFixed(3)} m; states ${o.states}; Guard C knocked out: moved ${o.down.moved.toFixed(2)} m in 10 s, same waypoint ${o.down.idx}, ${o.down.state}; page errors ${page.errors.length}` };
+  },
+
+  // the forest's vegetation after the correction: everything that's only looked at is instanced in map chunks that the
+  // renderer culls (each chunk's bounds hold all its trees), the trees and rocks in play stay one always-tested mesh each
+  // (every one stops bullets and sight, and her), the edge is still lined with trees all the way round; with patrol
+  // debugging off no developer drawing is shown (none left at the origin), on it shows for the guards in play
+  async forestVegetation() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const F = MV.levels.forest, L = MV.SCmv.FOREST_OUTPOST, W = MV.world, out = {}, M = new THREE.Matrix4(), P = new THREE.Vector3();
+      const insts = []; F.group.traverse(o => { if (o.isInstancedMesh) insts.push(o); });
+      const chunks = insts.filter(o => o.frustumCulled), solid = insts.filter(o => !o.frustumCulled);
+      let contained = true, edgeN = 0;
+      for (const c of chunks) { const s = c.geometry.boundingSphere; for (let i = 0; i < c.count; i++) { c.getMatrixAt(i, M); P.setFromMatrixPosition(M); if (Math.hypot(P.x - s.center.x, P.z - s.center.z) > s.radius) contained = false; } if (c.material === chunks[0].material || c.userData.kind === 'tree') edgeN += 0; }
+      out.chunks = chunks.length; out.contained = contained; out.solid = solid.map(o => `${o.userData.kind}:${o.count}`).join(',');
+      out.inMeshes = solid.every(o => W.meshes.indexOf(o) >= 0) && chunks.every(o => W.meshes.indexOf(o) < 0);
+      out.counts = F.area.counts;
+      // every tree and rock in play: a bullet and a line of sight through it are stopped, and she can't stand in it
+      const rc = new THREE.Raycaster(); let bullets = 0, sight = 0, body = 0;
+      for (const [x, z, rr] of L.trees.concat(L.rocks.map(q => [q[0], q[1], q[2]]))) {
+        rc.set(new THREE.Vector3(x - 4, 0.6, z), new THREE.Vector3(1, 0, 0)); rc.far = 8; const h = rc.intersectObjects(W.meshes, false)[0]; if (h && Math.abs(h.point.x - x) <= rr * 1.2 + 0.05) bullets++;
+        if (W.segmentBlocked(new THREE.Vector3(x - 3, 0.6, z), new THREE.Vector3(x + 3, 0.6, z))) sight++;
+        if (W.resolve(x + 0.05, z, 0.35).hit) body++;
+      }
+      out.inPlay = [L.trees.length + L.rocks.length, bullets, sight, body];
+      // the edge: no long stretch of the boundary without a tree beside it
+      const edgePts = []; for (const c of chunks) if (c.userData.kind === 'tree') for (let i = 0; i < c.count; i++) { c.getMatrixAt(i, M); P.setFromMatrixPosition(M); edgePts.push([P.x, P.z]); }
+      const B = L.bounds; let worstGap = 0;
+      for (let i = 0; i < B.length; i++) { const [ax, az] = B[i], [bx, bz] = B[(i + 1) % B.length], len = Math.hypot(bx - ax, bz - az);
+        for (let t = 0; t <= len; t += 1) { const x = ax + (bx - ax) * t / len, z = az + (bz - az) * t / len; let d = 99; for (const [px, pz] of edgePts) d = Math.min(d, Math.hypot(px - x, pz - z)); worstGap = Math.max(worstGap, d); } }
+      out.edgeGap = worstGap; out.edgeTrees = edgePts.length;
+      // developer drawings: off by default in the forest, nothing of them showing; on with the option, for the guards in play
+      const shown = () => { let n = 0, origin = 0; for (const r of F.recs) for (const v of [r.view.group, r.aware.group, r.route.group]) { let vis = v.visible; for (let q = v.parent; q; q = q.parent) vis = vis && q.visible; if (vis) n++; } F.group.traverse(o => { if ((o.isMesh || o.isLine) && !o.isInstancedMesh && o.parent !== F.group) { let vis = o.visible; for (let q = o.parent; q; q = q.parent) vis = vis && q.visible; const p = o.getWorldPosition(new THREE.Vector3()); if (vis && Math.hypot(p.x, p.z) < 0.5 && p.y < 0.5) origin++; } }); return [n, origin]; };
+      sim(30); out.off = shown();
+      document.getElementById('mv-opt-debug').click(); sim(30); out.on = shown();
+      document.getElementById('mv-opt-debug').click(); sim(5); out.off2 = shown();
+      return out;
+    });
+    const o = r, ok = o.chunks >= 4 && o.contained && o.solid === 'tree:21,rock:9' && o.inMeshes && o.inPlay[1] === o.inPlay[0] && o.inPlay[2] === o.inPlay[0] && o.inPlay[3] === o.inPlay[0]
+      && o.edgeGap < 6 && o.edgeTrees >= 80 && o.off[0] === 0 && o.off[1] === 0 && o.on[0] === 3 * 4 && o.off2[0] === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `${o.chunks} culled chunks (each holding its trees ${o.contained}), always-tested meshes ${o.solid} (in the collision meshes ${o.inMeshes}); trees ${o.counts.trees}, rocks ${o.counts.rocks}, edge trees ${o.counts.edgeTrees}, edge rocks ${o.counts.edgeRocks}, bushes ${o.counts.bushes}; all ${o.inPlay[0]} trees and rocks in play stop a bullet ${o.inPlay[1]}, a line of sight ${o.inPlay[2]} and her ${o.inPlay[3]}; the edge never more than ${o.edgeGap.toFixed(1)} m from a tree (${o.edgeTrees} edge trees); developer drawings shown: off ${o.off[0]} (${o.off[1]} at the origin), with PATROL DEBUG ${o.on[0]} (3 for each of the 4 guards in play), off again ${o.off2[0]}; page errors ${page.errors.length}` };
+  },
+
   // ---------------------------------------------------------------- Step 24: Level 01, the Forest Outpost
   // a stepped page with the forest loaded (from the START choice's own entry point)
   async _forestPage(opts) {
@@ -3824,31 +3984,31 @@ const CHECKS = {
       });
       const base0 = await page.evaluate(() => ({ listeners: MV.noise.listeners.length, children: MV.scene.children.length, active: MV.active.length, hud: document.querySelectorAll('.mv-caption, .mv-indicator, .mv-trait').length }));
       await page.tap('#mv-start-forest'); await page.waitForTimeout(600);
-      const f1 = await page.evaluate(() => ({ level: MV.level.id, at: [MV.motor.position.x, MV.motor.position.z], objective: document.getElementById('mv-objective').textContent, shown: !document.getElementById('mv-objective').hidden, active: MV.active.map(g => g.levelKey).join(''), labHidden: !MV.levels.lab.group.visible, forestShown: MV.levels.forest.group.visible, input: MV.input.enabled, lvl: document.getElementById('mv-level') ? document.getElementById('mv-level').textContent : '' }));
+      const f1 = await page.evaluate(() => ({ statsOpen: !document.getElementById('mv-stats').hidden, level: MV.level.id, at: [MV.motor.position.x, MV.motor.position.z], objective: document.getElementById('mv-objective').textContent, shown: !document.getElementById('mv-objective').hidden, active: MV.active.map(g => g.levelKey).join(''), labHidden: !MV.levels.lab.group.visible, forestShown: MV.levels.forest.group.visible, input: MV.input.enabled, lvl: document.getElementById('mv-level') ? 'L01 FOREST OUTPOST cell' : '' }));   /* (its value fills in while STATS is expanded) */
       // walk a little, then RESET: still the forest, back at its start
       await page.evaluate(() => { MV.motor.teleport(5, -10, 0); });
       await page.tap('#mv-reset'); await page.waitForTimeout(300);
       const f2 = await page.evaluate(() => ({ level: MV.level.id, at: [MV.motor.position.x, MV.motor.position.z] }));
-      // LEVELS: hidden while STATS is open, there once it's closed
+      // LEVELS: there while STATS is collapsed (as a level starts), hidden while it's expanded
+      const m1 = await page.evaluate(() => getComputedStyle(document.getElementById('mv-menu')).display);
+      await page.tap('#mv-stats-btn'); await page.waitForTimeout(200);
       const m0 = await page.evaluate(() => getComputedStyle(document.getElementById('mv-menu')).display);
       await page.tap('#mv-stats-btn'); await page.waitForTimeout(200);
-      const m1 = await page.evaluate(() => getComputedStyle(document.getElementById('mv-menu')).display);
       await page.tap('#mv-menu'); await page.waitForTimeout(500);
       const back = await page.evaluate(() => ({ menu: !document.getElementById('mv-loader').hidden && !document.getElementById('mv-loader').classList.contains('done'), input: MV.input.enabled, playing: document.body.classList.contains('playing') }));
       await page.tap('#mv-start'); await page.waitForTimeout(600);
       const lab = await page.evaluate(() => ({ level: MV.level.id, at: [MV.motor.position.x, MV.motor.position.z], spawn: [MV.area.spawn.x, MV.area.spawn.z], guards: MV.active[0] === MV.guard && MV.active[1] === MV.guard2 && MV.active.length === 2, labShown: MV.levels.lab.group.visible, forestHidden: !MV.levels.forest.group.visible, boxes: MV.world.boxes.length, bounds: MV.world.bounds, parked: MV.levels.forest.recs.every(r => r.g.parked), listeners: MV.noise.listeners.length, children: MV.scene.children.length, hud: document.querySelectorAll('.mv-caption, .mv-indicator, .mv-trait').length }));
       // back and forth three more times
       for (let k = 0; k < 3; k++) { await page.evaluate(() => { MV.toMenu(); MV.begin('forest'); MV.toMenu(); MV.begin('lab'); }); }
-      await page.tap('#mv-stats-btn'); await page.waitForTimeout(200);
       const after = await page.evaluate(() => ({ listeners: MV.noise.listeners.length, children: MV.scene.children.length, active: MV.active.length, hud: document.querySelectorAll('.mv-caption, .mv-indicator, .mv-trait').length, recs: MV.levels.forest.recs.length, cqc: MV.cqc.guards === MV.active, aim: MV.aim.guards === MV.active, pistol: MV.pistol.guards === MV.active, eq: MV.equipment.ctx.guards === MV.active }));
       const r = { menu, base0, f1, f2, m0, m1, back, lab, after, errs: errs.length };
       const ok = menu.title === 'SHADOW CELL' && menu.lab === 'TEST LAB' && menu.forest === 'LEVEL 01 — FOREST OUTPOST' && menu.a.h >= 44 && menu.b.h >= 44 && menu.a.in && menu.b.in && menu.hits && menu.level === 'lab' && !menu.playing
-        && f1.level === 'forest' && f1.at[1] < -30 && f1.objective === 'REACH THE NORTHERN EXIT' && f1.shown && f1.active === 'ABC' && f1.labHidden && f1.forestShown && f1.input && /L01 FOREST OUTPOST/.test(f1.lvl)
+        && f1.level === 'forest' && f1.at[1] < -30 && f1.objective === 'REACH THE NORTHERN EXIT' && f1.shown && !f1.statsOpen && f1.active === 'ABCE' && f1.labHidden && f1.forestShown && f1.input && /L01 FOREST OUTPOST/.test(f1.lvl)
         && f2.level === 'forest' && Math.abs(f2.at[0] - f1.at[0]) < 1e-6 && Math.abs(f2.at[1] - f1.at[1]) < 1e-6 && m0 === 'none' && m1 !== 'none' && back.menu && !back.input && !back.playing
         && lab.level === 'lab' && lab.at[0] === lab.spawn[0] && lab.at[1] === lab.spawn[1] && lab.guards && lab.labShown && lab.forestHidden && lab.bounds === null && lab.parked
-        && lab.listeners === base0.listeners + 4 && lab.hud === base0.hud + 12 && after.listeners === lab.listeners && after.children === lab.children && after.active === 2 && after.hud === lab.hud && after.recs === 4 && after.cqc && after.aim && after.pistol && after.eq && errs.length === 0;
+        && lab.listeners === base0.listeners + 5 && lab.hud === base0.hud + 15 && after.listeners === lab.listeners && after.children === lab.children && after.active === 2 && after.hud === lab.hud && after.recs === 5 && after.cqc && after.aim && after.pistol && after.eq && errs.length === 0;
       if (!ok) fails.push(`${w}×${h}`);
-      out.push(`${w}×${h}: START "${menu.title}": "${menu.lab}" ${Math.round(menu.a.w)}×${Math.round(menu.a.h)} px, "${menu.forest}" ${Math.round(menu.b.w)}×${Math.round(menu.b.h)} px, both on screen and taking the touch ${menu.hits}; forest: ${f1.level}, her at (${f1.at.map(v => v.toFixed(1)).join(', ')}), "${f1.objective}" shown ${f1.shown}, guards ${f1.active}, lab hidden ${f1.labHidden}; RESET → ${f2.level} at the same start ${f2.at[1] === f1.at[1]}; LEVELS ${m0} with STATS open, ${m1} closed → the choice again (play off ${!back.input}); TEST LAB → ${lab.level} at its spawn ${lab.at[0] === lab.spawn[0]}, Guards 1 and 2 ${lab.guards}, ${lab.boxes} boxes, no bounds ${lab.bounds === null}, forest guards parked ${lab.parked}; after 3 more round trips: noise listeners ${base0.listeners} → ${lab.listeners} on the first forest load (its 4 guards) → ${after.listeners}, scene children ${lab.children} → ${after.children}, guard marks ${base0.hud} → ${lab.hud} → ${after.hud}, ${after.recs} forest guards, one shared guard list ${after.cqc && after.aim && after.pistol && after.eq}${errs.length ? '; errors ' + errs.join(';') : ''}`);
+      out.push(`${w}×${h}: START "${menu.title}": "${menu.lab}" ${Math.round(menu.a.w)}×${Math.round(menu.a.h)} px, "${menu.forest}" ${Math.round(menu.b.w)}×${Math.round(menu.b.h)} px, both on screen and taking the touch ${menu.hits}; forest: ${f1.level}, her at (${f1.at.map(v => v.toFixed(1)).join(', ')}), "${f1.objective}" shown ${f1.shown}, guards ${f1.active}, lab hidden ${f1.labHidden}; RESET → ${f2.level} at the same start ${f2.at[1] === f1.at[1]}; STATS collapsed at the start ${!f1.statsOpen}; LEVELS ${m1} with STATS collapsed, ${m0} expanded → the choice again (play off ${!back.input}); TEST LAB → ${lab.level} at its spawn ${lab.at[0] === lab.spawn[0]}, Guards 1 and 2 ${lab.guards}, ${lab.boxes} boxes, no bounds ${lab.bounds === null}, forest guards parked ${lab.parked}; after 3 more round trips: noise listeners ${base0.listeners} → ${lab.listeners} on the first forest load (its 5 guards) → ${after.listeners}, scene children ${lab.children} → ${after.children}, guard marks ${base0.hud} → ${lab.hud} → ${after.hud}, ${after.recs} forest guards, one shared guard list ${after.cqc && after.aim && after.pistol && after.eq}${errs.length ? '; errors ' + errs.join(';') : ''}`);
       await ctx.close();
     }
     return { pass: fails.length === 0, detail: out.join(' | ') };
@@ -3915,8 +4075,8 @@ const CHECKS = {
       out.at = MV.active.map(g => [g.levelKey, g.position.x, g.position.z, Math.round(g.yaw * 57.3)]);
       const D = recs.find(r => r.cfg.key === 'D').g; out.D = { parked: D.parked, shown: D.root.visible, collider: D.collider.x, inActive: MV.active.indexOf(D) >= 0, pts: D.patrol.cfg.points.length };
       // three minutes of their routines
-      const stops = { A: [], B: [], C: [] }, near = { B: [], C: [] }, cur = {}, worst = {}, facings = { A: new Set() };
-      for (const k of ['B', 'C']) near[k] = G(k).patrol.cfg.points.map(() => 99);
+      const stops = { A: [], B: [], C: [], E: [] }, near = { B: [], C: [], E: [] }, cur = {}, worst = {}, facings = { A: new Set() };
+      for (const k of ['B', 'C', 'E']) near[k] = G(k).patrol.cfg.points.map(() => 99);
       for (let i = 0; i < 60 * 180; i++) {
         sim(1); const t = i / 60;
         for (const g of MV.active) {
@@ -3930,26 +4090,27 @@ const CHECKS = {
         }
       }
       const d = k => stops[k].map(s => s.dur);
-      out.stops = { A: stops.A.length, B: stops.B.map(s => s.i).join(''), C: stops.C.map(s => s.i).join('') };
-      out.dur = { A: [Math.min(...d('A')), Math.max(...d('A'))], B: [Math.min(...d('B')), Math.max(...d('B'))], C: [Math.min(...d('C')), Math.max(...d('C'))] };
-      out.near = { B: Math.max(...near.B), C: Math.max(...near.C) };
+      out.stops = { A: stops.A.length, B: stops.B.map(s => s.i).join(''), C: stops.C.map(s => s.i).join(''), E: stops.E.map(s => s.i).join('') };
+      out.dur = { A: [Math.min(...d('A')), Math.max(...d('A'))], B: [Math.min(...d('B')), Math.max(...d('B'))], C: [Math.min(...d('C')), Math.max(...d('C'))], E: [Math.min(...d('E')), Math.max(...d('E'))] };
+      out.near = { B: Math.max(...near.B), C: Math.max(...near.C), E: Math.max(...near.E) };
       out.facings = [...facings.A].sort((a, b) => a - b).join(',');
       out.worst = worst; out.stillA = Math.hypot(G('A').position.x + 4, G('A').position.z - 22.7);
       // not in step: the moments each began a stop, compared between guards
       const starts = k => stops[k].map(s => s.start); let sync = 0, pairs = 0;
-      for (const [a, b] of [['A', 'B'], ['A', 'C'], ['B', 'C']]) for (const t of starts(a)) { pairs++; if (starts(b).some(u => Math.abs(u - t) < 0.1)) sync++; }
+      for (const [a, b] of [['A', 'B'], ['A', 'C'], ['B', 'C'], ['A', 'E'], ['B', 'E'], ['C', 'E']]) for (const t of starts(a)) { pairs++; if (starts(b).some(u => Math.abs(u - t) < 0.1)) sync++; }
       out.sync = [sync, pairs];
       out.states = MV.active.map(g => g.awareness.state).join(','); out.why = MV.active.map(g => g.patrol.why).filter(Boolean);
       out.D2 = { parked: D.parked, at: [D.position.x, D.position.z], meter: D.vision.meter, heard: D.hearing.heardCount };
       return out;
     });
-    const o = r, ok = o.recs === 'A:true:lookout B:true:patrol C:true:patrol D:false:lookout' && o.active === 'ABC'
+    const o = r, ok = o.recs === 'A:true:lookout B:true:patrol C:true:patrol E:true:patrol D:false:lookout' && o.active === 'ABCE'
+      && Math.hypot(o.at[3][1] + 8, o.at[3][2] + 14) < 0.01 && /0101/.test(o.stops.E) && o.near.E < 0.6 && o.dur.E[0] >= 2.4
       && Math.hypot(o.at[0][1] + 4, o.at[0][2] - 22.7) < 0.01 && Math.hypot(o.at[1][1] - 17.6, o.at[1][2] - 15.5) < 0.01 && Math.hypot(o.at[2][1] + 3.1, o.at[2][2] - 10.2) < 0.01
       && o.D.parked && !o.D.shown && o.D.collider > 1e5 && !o.D.inActive && o.D.pts === 4
       && o.stops.A >= 20 && /0404/.test(o.stops.B) && /0123/.test(o.stops.C) && o.near.B < 1.3 && o.near.C < 0.6 && o.stillA < 0.05 && /135/.test(o.facings) && /180/.test(o.facings) && /225/.test(o.facings)
       && o.dur.A[0] >= 2.9 && o.dur.A[1] <= 4 * 1.25 + 2.5 + 3 && o.dur.B[0] >= 1.9 && o.dur.C[0] >= 0.9 && o.dur.C[1] <= 2 * 1.25 + 2.5 + 3
-      && Object.values(o.worst).every(v => v < 0.02) && o.sync[0] <= o.sync[1] * 0.1 && o.states === 'NORMAL,NORMAL,NORMAL' && o.why.length === 0 && o.D2.parked && o.D2.meter === 0 && o.D2.heard === 0 && page.errors.length === 0;
-    return { pass: ok, detail: `assignments ${o.recs}; on: ${o.active}; at A (${o.at[0][1]}, ${o.at[0][2]}) ${o.at[0][3]}°, B (${o.at[1][1]}, ${o.at[1][2]}), C (${o.at[2][1]}, ${o.at[2][2]}); Guard D configured (${o.D.pts} facings), off: parked ${o.D.parked}, hidden ${!o.D.shown}, out of the way ${o.D.collider > 1e5}; in 3 min: A ${o.stops.A} stops facing ${o.facings}° (stays at his post: ${o.stillA.toFixed(3)} m), B stops at ${o.stops.B} (every loop point within ${o.near.B.toFixed(2)} m), C stops at ${o.stops.C} (corners within ${o.near.C.toFixed(2)} m); stop lengths A ${o.dur.A.map(v => v.toFixed(1)).join('–')} s, B ${o.dur.B.map(v => v.toFixed(1)).join('–')} s, C ${o.dur.C.map(v => v.toFixed(1)).join('–')} s (configured 3–4 / 2–3 / 1–2, plus the guards' own personalities); deepest into anything solid ${Math.max(...Object.values(o.worst)).toFixed(3)} m; stops begun within 0.1 s of another guard's: ${o.sync[0]} of ${o.sync[1]}; still ${o.states}, no unreachable waypoints ${o.why.length === 0}; Guard D still parked, saw ${o.D2.meter}, heard ${o.D2.heard}; page errors ${page.errors.length}` };
+      && Object.values(o.worst).every(v => v < 0.02) && o.sync[0] <= o.sync[1] * 0.1 && o.states === 'NORMAL,NORMAL,NORMAL,NORMAL' && o.why.length === 0 && o.D2.parked && o.D2.meter === 0 && o.D2.heard === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `assignments ${o.recs}; on: ${o.active}; at A (${o.at[0][1]}, ${o.at[0][2]}) ${o.at[0][3]}°, B (${o.at[1][1]}, ${o.at[1][2]}), C (${o.at[2][1]}, ${o.at[2][2]}); Guard D configured (${o.D.pts} facings), off: parked ${o.D.parked}, hidden ${!o.D.shown}, out of the way ${o.D.collider > 1e5}; in 3 min: A ${o.stops.A} stops facing ${o.facings}° (stays at his post: ${o.stillA.toFixed(3)} m), B stops at ${o.stops.B} (every loop point within ${o.near.B.toFixed(2)} m), C stops at ${o.stops.C} (corners within ${o.near.C.toFixed(2)} m), E (${o.at[3][1]}, ${o.at[3][2]}) stops at ${o.stops.E} (within ${o.near.E.toFixed(2)} m); stop lengths A ${o.dur.A.map(v => v.toFixed(1)).join('–')} s, B ${o.dur.B.map(v => v.toFixed(1)).join('–')} s, C ${o.dur.C.map(v => v.toFixed(1)).join('–')} s, E ${o.dur.E.map(v => v.toFixed(1)).join('–')} s (configured 3–4 / 2–3 / 1–2 / 2.5–3.5, plus the guards' own personalities); deepest into anything solid ${Math.max(...Object.values(o.worst)).toFixed(3)} m; stops begun within 0.1 s of another guard's: ${o.sync[0]} of ${o.sync[1]}; still ${o.states}, no unreachable waypoints ${o.why.length === 0}; Guard D still parked, saw ${o.D2.meter}, heard ${o.D2.heard}; page errors ${page.errors.length}` };
   },
 
   // their patrols give way to what they legitimately notice and pick up again after: a magazine's clatter
@@ -4024,7 +4185,7 @@ const CHECKS = {
       out.thrown = [...seen].join('→'); out.ko = C.ko.state;
       return out;
     });
-    const o = r, ok = o.active === 'ABCD' && o.grass.v > 3 && Math.abs(o.grass.v - o.dirt.v) < 0.15 && /^grass:8\.5/.test(o.grass.surf) && /^dirt:14\.0/.test(o.dirt.surf) && o.crouch.v < o.grass.v * 0.8
+    const o = r, ok = o.active === 'ABCED' && o.grass.v > 3 && Math.abs(o.grass.v - o.dirt.v) < 0.15 && /^grass:8\.5/.test(o.grass.surf) && /^dirt:14\.0/.test(o.dirt.surf) && o.crouch.v < o.grass.v * 0.8
       && o.crouched.meter < 0.05 && o.standing.meter > 0.3 && o.standing.exp > o.crouched.exp && o.tree < 0.5 && o.grab === 'GRAPPLING' && /THROWING/.test(o.thrown) && o.ko !== 'CONSCIOUS' && page.errors.length === 0;
     return { pass: ok, detail: `Guard D switched on: ${o.active}; jog on grass ${o.grass.v.toFixed(2)} m/s (steps ${o.grass.surf} m), on the trail ${o.dirt.v.toFixed(2)} m/s (${o.dirt.surf} m), crouched ${o.crouch.v.toFixed(2)} m/s; Guard D 8 m off the log: crouched behind it ${Math.round(o.crouched.meter * 100)}% seen (${Math.round(o.crouched.exp * 100)}% showing), standing ${Math.round(o.standing.meter * 100)}% (${Math.round(o.standing.exp * 100)}% showing); behind a tree trunk ${Math.round(o.tree * 100)}% showing; Guard C from behind: ${o.grab} → THROW ${o.thrown}, he's ${o.ko}; page errors ${page.errors.length}` };
   },
@@ -4076,6 +4237,10 @@ const CHECKS = {
       const facingSouth = () => { const y = ((A.yaw * 57.3) % 360 + 360) % 360, o = A.patrol.obs, ly = o ? (((o.looks[o.i] * 57.3) % 360) + 360) % 360 : y; return y > 110 && y < 200 && ly > 110 && ly < 200 && A.isStill() && o && o.hold - o.heldFor > 1.2; };
       const wait = (cond, n) => { for (let i = 0; i < n; i++) { if (cond()) return i; MV.tick(1 / 60, true); watch(); } return -1; };
       let ok = true;
+      // Step 24.1: the south entrance guard: out of his reach on the trail (≥ 17 m from both his stops), wait until he's
+      // just set off east (his back to the west), then out of the trail's mouth and away west before he turns
+      const E = G('E'); ok = go(0, -30, 0.78);
+      out.waitE = wait(() => E.patrol.state === 'walking' && E.patrol.index === 1 && E.position.x < -5, 60 * 60);
       for (const [x, z, p] of [[0, -24, 0.78], [-6, -19, 0.78], [-16, -14, 0.78], [-24, -6, 0.78], [-26.4, -1, 0.78], [-25, 10, 0.78], [-24.5, 18, 0.5], [-22, 24.6, 0.5]]) ok = ok && go(x, z, p);
       // out of his range (≥ 16.5 m): wait for him to face south, then to the rock
       out.dist1 = Math.hypot(m.position.x - A.position.x, m.position.z - A.position.z);
@@ -4097,9 +4262,9 @@ const CHECKS = {
       out.lab = { level: MV.level.id, guards: MV.active.length, g1: MV.guard.awareness.state, at: [m.position.x, m.position.z] };
       return out;
     });
-    const o = r, ok = o.ok && o.done && o.completions === 1 && o.confirmed.length === 0 && Object.values(o.seen).every(v => v < 1) && o.screen && o.again === 1
+    const o = r, ok = o.waitE >= 0 && o.ok && o.done && o.completions === 1 && o.confirmed.length === 0 && Object.values(o.seen).every(v => v < 1) && o.screen && o.again === 1
       && o.replay.level === 'forest' && !o.replay.complete && o.replay.at[1] < -30 && o.replay.input && o.replay.screen && o.second === 2 && o.lab.level === 'lab' && o.lab.guards === 2 && page.errors.length === 0;
-    return { pass: ok, detail: `route ${o.log.join(' → ')}; ${o.dist1.toFixed(1)} m from the north lookout, waited ${(o.wait1 / 60).toFixed(1)} s for him to face south, then ${(o.wait2 / 60).toFixed(1)} s behind the rock; END reached ${o.done}, LEVEL COMPLETE shown ${o.screen}, completions ${o.completions} (after 2 s more in it: ${o.again}); most any guard saw of her: ${Object.entries(o.seen).map(([k, v]) => k + ' ' + Math.round(v * 100) + '%').join(', ')}, confirmed by ${o.confirmed.join(',') || 'nobody'}; guards after: ${o.guards}; REPLAY → ${o.replay.level} at the start (${o.replay.at.map(v => v.toFixed(1)).join(', ')}), playing ${o.replay.input}; reached again → completions ${o.second}; Test Lab after: ${o.lab.level}, ${o.lab.guards} guards, Guard 1 ${o.lab.g1}; page errors ${page.errors.length}` };
+    return { pass: ok, detail: `waited ${(o.waitE / 60).toFixed(1)} s on the trail for Guard E to set off east; route ${o.log.join(' → ')}; ${o.dist1.toFixed(1)} m from the north lookout, waited ${(o.wait1 / 60).toFixed(1)} s for him to face south, then ${(o.wait2 / 60).toFixed(1)} s behind the rock; END reached ${o.done}, LEVEL COMPLETE shown ${o.screen}, completions ${o.completions} (after 2 s more in it: ${o.again}); most any guard saw of her: ${Object.entries(o.seen).map(([k, v]) => k + ' ' + Math.round(v * 100) + '%').join(', ')}, confirmed by ${o.confirmed.join(',') || 'nobody'}; guards after: ${o.guards}; REPLAY → ${o.replay.level} at the start (${o.replay.at.map(v => v.toFixed(1)).join(', ')}), playing ${o.replay.input}; reached again → completions ${o.second}; Test Lab after: ${o.lab.level}, ${o.lab.guards} guards, Guard 1 ${o.lab.g1}; page errors ${page.errors.length}` };
   },
 
   // cost: a frame's simulation with three and with four guards (headless, no drawing), drawn frames, and
@@ -4110,7 +4275,7 @@ const CHECKS = {
     const fps = ms => page.evaluate(ms => new Promise(res => { let n = 0, last = performance.now(); const t0 = last; const f = () => { const t = performance.now(); MV.tick(Math.min(0.05, (t - last) / 1000)); last = t; n++; if (t - t0 < ms) requestAnimationFrame(f); else res({ fps: n / ((t - t0) / 1000), calls: MV.renderer.info.render.calls, tris: MV.renderer.info.render.triangles }); }; requestAnimationFrame(f); }), ms);
     const setup = (west, lab) => page.evaluate(([west, lab]) => { MV.forestOpts.west = west; MV.toMenu(); MV.begin(lab ? 'lab' : 'forest'); if (!lab) { MV.motor.teleport(2, -15, 0); MV.cam.snap(MV.motor); } }, [west, lab]);
     const simMs = () => page.evaluate(() => { sim(60); const t0 = performance.now(); sim(600); return (performance.now() - t0) / 600; });
-    const runs = { f3: [], f4: [], lab: [] }, sims = { f3: [], f4: [], lab: [] };
+    const runs = { f3: [], f4: [], lab: [] }, sims = { f3: [], f4: [], lab: [] };   // (Step 24.1: f3 = the default four guards, f4 = all five)
     for (let k = 0; k < 2; k++) for (const [key, west, lab] of [['f3', false, false], ['f4', true, false], ['lab', false, true]]) { await setup(west, lab); sims[key].push(await simMs()); runs[key].push(await fps(2500)); }
     const r = await page.evaluate(() => {
       MV.forestOpts.west = false; MV.toMenu(); MV.begin('forest'); const m = MV.motor; m.teleport(0, -30, 0); MV.cam.snap(m); MV.cam.pitch = 0.2;
@@ -4119,9 +4284,9 @@ const CHECKS = {
       return { throws: it.throws, shown: maxShown, meshes: MV.scene.children.filter(o => o.name === 'empty-magazine').length, active: MV.active.length };
     });
     const avg = a => a.reduce((x, y) => x + y, 0) / a.length, f = k => `${avg(sims[k]).toFixed(2)} ms simulated, ${runs[k].map(x => x.fps.toFixed(0)).join('/')} fps drawn (${runs[k][0].calls} draws, ${Math.round(runs[k][0].tris / 1000)}k triangles)`;
-    const ok = avg(sims.f3) < 4 && avg(sims.f4) < 5 && avg(sims.f4) < avg(sims.f3) * 1.6 + 0.5 && runs.f3[0].calls < 160 && runs.f4[0].calls < 170 && [...runs.f3, ...runs.f4, ...runs.lab].every(x => x.fps > 0)
+    const ok = avg(sims.f3) < 4 && avg(sims.f4) < 5 && r.active === 4 && avg(sims.f4) < avg(sims.f3) * 1.6 + 0.5 && runs.f3[0].calls < 160 && runs.f4[0].calls < 170 && [...runs.f3, ...runs.f4, ...runs.lab].every(x => x.fps > 0)
       && r.throws === 5 && r.shown === 1 && r.meshes === 1 && page.errors.length === 0;
-    return { pass: ok, detail: `HEADLESS (software rendering; not an iPhone figure; two alternating windows each): forest, 3 guards: ${f('f3')}; 4 guards: ${f('f4')}; Test Lab: ${f('lab')}; 5 magazines thrown in turn: ${r.throws} throws, at most ${r.shown} shown, ${r.meshes} magazine object; page errors ${page.errors.length}` };
+    return { pass: ok, detail: `HEADLESS (software rendering; not an iPhone figure; two alternating windows each): forest, 4 guards (default): ${f('f3')}; 5 guards: ${f('f4')}; Test Lab: ${f('lab')}; 5 magazines thrown in turn: ${r.throws} throws, at most ${r.shown} shown, ${r.meshes} magazine object; page errors ${page.errors.length}` };
   },
 
   // the forest on an iPhone layout, by touch: the stick walks her up the trail, a drag turns the camera,
@@ -4481,7 +4646,7 @@ const CHECKS = {
       const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true });
       const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(e.message));
       await page.goto(base + '/movement.html'); await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
-      await page.tap('#mv-start'); await page.waitForTimeout(300);
+      await page.tap('#mv-start'); await page.waitForTimeout(300); await page.evaluate(() => MV.setStats(true));   // (Step 24.1: STATS starts collapsed)
       const cdp = await ctx.newCDPSession(page), T = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
       await page.evaluate(() => { MV.guard.patrol.enabled = false; MV.guard.personality.enabled = false; MV.guard.reset(); MV.motor.teleport(-17, -14, Math.PI / 2); MV.cam.snap(MV.motor); });
       const geo = await page.evaluate(() => {
@@ -5439,7 +5604,7 @@ const CHECKS = {
       const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true });
       const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(e.message));
       await page.goto(base + '/movement.html'); await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
-      await page.tap('#mv-start'); await page.waitForTimeout(300);
+      await page.tap('#mv-start'); await page.waitForTimeout(300); await page.evaluate(() => MV.setStats(true));   // (Step 24.1: STATS starts collapsed)
       const cdp = await ctx.newCDPSession(page), T = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
       await page.evaluate(() => { MV.guard.patrol.enabled = false; MV.guard.personality.enabled = false; MV.guard.reset(); MV.motor.teleport(-6, -20, 0); MV.cam.snap(MV.motor); });
       const geo = await page.evaluate(() => {

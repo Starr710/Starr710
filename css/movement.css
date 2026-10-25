@@ -255,7 +255,7 @@ body.mv-defeated #mv-aim, body.mv-defeated #mv-cqc, body.mv-defeated #mv-crouch,
 .mv-levels { display: flex; flex-wrap: wrap; gap: 8px; }
 .mv-levels .mv-primary { flex: 1 1 140px; min-height: 48px; font-size: 13px; letter-spacing: 1.5px; }
 .mv-opts { display: flex; flex-wrap: wrap; gap: 6px; }
-.mv-opts .mv-chip { flex: 1 1 160px; font-size: 10px; letter-spacing: 1px; min-height: 36px; }
+.mv-opts .mv-chip { flex: 1 1 110px; font-size: 10px; letter-spacing: 1px; min-height: 36px; }
 #mv-levels[hidden], #mv-opts[hidden], #mv-complete[hidden], #mv-objective[hidden] { display: none; }
 #mv-objective { position: absolute; left: 50%; top: 30%; transform: translateX(-50%); pointer-events: none; z-index: 3; padding: 8px 16px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 2px; color: var(--text); background: rgba(14, 17, 13, 0.7); border: 1px solid var(--line); white-space: nowrap; transition: opacity .6s; }
 #mv-objective.fade { opacity: 0; }
@@ -264,3 +264,15 @@ body.mv-defeated #mv-aim, body.mv-defeated #mv-cqc, body.mv-defeated #mv-crouch,
 #mv-menu { display: none; }
 #mv-stats[hidden] ~ .mv-topright #mv-menu { display: inline-block; }
 body:not(.playing) #mv-menu { display: none; }
+
+/* Step 24.1: STATS collapsed by default; expanded it's capped (about a third of the screen) and scrolls; the FPS badge
+   in the top-left corner, always shown (the expanded bar keeps its first line clear of it, the title moves under it) */
+.mv-statbar { max-height: calc(33vh - 6px); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+.mv-first::before { content: ''; flex: none; width: 44px; height: 1px; }
+#mv-fpsbadge { position: absolute; z-index: 3; pointer-events: none; top: calc(8px + env(safe-area-inset-top, 0px)); left: calc(10px + env(safe-area-inset-left, 0px));
+  font-family: var(--font-mono); font-size: 10px; line-height: 14px; letter-spacing: 0.5px; padding: 0 4px; color: #f3eedb; background: rgba(8, 10, 8, 0.72); border-radius: 2px; font-variant-numeric: tabular-nums; }
+body:not(.playing) #mv-fpsbadge { visibility: hidden; }
+.mv-head { top: calc(28px + env(safe-area-inset-top, 0px)); }
+/* temporary sound-event labels (sound debugging) */
+.mv-noiselabel { position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; white-space: nowrap; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.5px; padding: 1px 4px; color: #f3eedb; background: rgba(8, 10, 8, 0.62); border-radius: 2px; opacity: 0; will-change: transform, opacity; }
+#mv-resume[hidden] { display: none; }

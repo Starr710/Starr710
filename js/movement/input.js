@@ -125,7 +125,8 @@
       if (el && el.closest && el.closest('#mv-use')) { this.btn.set(t.identifier, 'use'); this._usePress(); this.els.use.classList.add('down'); continue; }   // Step 23: USE
       if (el && el.closest && el.closest('#mv-aim')) { this.btn.set(t.identifier, 'aim'); this._aimTouches.add(t.identifier); this.aimTapped = true; this.els.aim.classList.add('down'); continue; }
       if (el && el.closest && el.closest('#mv-choke')) { this.btn.set(t.identifier, 'choke'); this._chokeTouches.add(t.identifier); this.chokePresses++; this.els.choke.classList.add('down'); continue; }
-      if (el && el.closest && el.closest('button, .mv-panel')) { allow = true; continue; }
+      if (el && el.closest && el.closest('.mv-panel')) { (this._panelTouches || (this._panelTouches = new Set())).add(t.identifier); allow = true; continue; }   // (Step 24.1: the expanded STATS scrolls)
+      if (el && el.closest && el.closest('button')) { allow = true; continue; }
       if (!this.joy && t.clientX < window.innerWidth * 0.45) {
         this.joy = { id: t.identifier, ox: t.clientX, oy: t.clientY };
         this._placeBase(t.clientX, t.clientY); this._knob(0, 0);
@@ -154,7 +155,7 @@
         this.lookT.x = t.clientX; this.lookT.y = t.clientY;
       }
     }
-    if (e.cancelable) e.preventDefault();
+    if (e.cancelable && !(this._panelTouches && [...e.changedTouches].every(t => this._panelTouches.has(t.identifier)))) e.preventDefault();
   };
 
   P._te = function (e) {
@@ -169,7 +170,7 @@
       if (this.btn.get(t.identifier) === 'use' && this.els.use && ![...this.btn].some(([id, b]) => b === 'use' && id !== t.identifier)) this.els.use.classList.remove('down');
       if (this.btn.get(t.identifier) === 'aim') { this._aimTouches.delete(t.identifier); if (!this._aimTouches.size && this.els.aim) this.els.aim.classList.remove('down'); }
       if (this.btn.get(t.identifier) === 'choke') { this._chokeTouches.delete(t.identifier); if (!this._chokeTouches.size && this.els.choke) this.els.choke.classList.remove('down'); }
-      this.btn.delete(t.identifier);
+      this.btn.delete(t.identifier); if (this._panelTouches) this._panelTouches.delete(t.identifier);
     }
     const tgt = e.target;
     if (e.cancelable && !(tgt && tgt.closest && tgt.closest('button, .mv-panel'))) e.preventDefault();

@@ -22,6 +22,7 @@
 <div class="mv-trait" id="mv-trait" aria-hidden="true" hidden><div class="mv-trait-primary"></div><div class="mv-trait-secondary"></div></div>  <!-- personality card beside the guard (guard-traitcard.js) -->
 
 <!-- developer stats: a bar along the top edge, one flowing line-up of cells, most important first; STATS toggles it (the title hides while it's open) -->
+<div id="mv-fpsbadge" aria-hidden="true">FPS –</div>  <!-- Step 24.1: always visible, real frame timing, once a second -->
 <div class="mv-panel mv-statbar" id="mv-stats">
   <div class="mv-sec mv-first">
   <div><i class="g0">YOU</i><span>GAIT</span><b id="mv-gait">IDLE</b></div>
@@ -64,7 +65,7 @@
 <div class="mv-topright">
   <button type="button" class="mv-chip" id="mv-menu">LEVELS</button>  <!-- Step 24: back to the level choice (shown while STATS is closed: the open bar needs this corner) -->
   <button type="button" class="mv-chip" id="mv-reset">RESET</button>
-  <button type="button" class="mv-chip" id="mv-stats-btn" aria-pressed="true">STATS</button>
+  <button type="button" class="mv-chip" id="mv-stats-btn" aria-pressed="true">STATS</button>  <!-- Step 24.1: a level starts with STATS collapsed; this expands / collapses it -->
 </div>
 <div id="mv-joy-hint">MOVE</div>
 <div id="mv-joy-base"></div>
@@ -96,21 +97,23 @@
     <div class="mv-sub">MOVEMENT LAB · STAGE 1</div>
     <div class="mv-progress"><i id="mv-load-bar"></i></div>
     <div class="mv-small" id="mv-load-text">Loading character…</div>
+    <!-- Step 24: choose a level (the two share every system); #mv-start stays the Test Lab -->
+    <div class="mv-levels" id="mv-levels" hidden>
+      <button type="button" class="mv-chip mv-primary" id="mv-resume" hidden>RESUME</button>  <!-- Step 24.1: back to the level in progress, as it was -->
+      <button type="button" class="mv-chip mv-primary" id="mv-start" hidden>TEST LAB</button>
+      <button type="button" class="mv-chip mv-primary" id="mv-start-forest" hidden>LEVEL 01 — FOREST OUTPOST</button>
+    </div>
+    <div class="mv-opts" id="mv-opts" hidden>
+      <button type="button" class="mv-chip" id="mv-opt-west" aria-pressed="false" title="Forest: Guard D, the west lookout (from the next start)">WEST LOOKOUT OFF</button>
+      <button type="button" class="mv-chip" id="mv-opt-debug" aria-pressed="false" title="Forest: vision cones, routes and markers">PATROL DEBUG OFF</button>
+      <button type="button" class="mv-chip" id="mv-opt-sound" aria-pressed="true">SOUND DEBUG ON</button>  <!-- Step 24.1: footstep and sound rings and labels -->
+    </div>
     <ul class="mv-help">
       <li>Left thumb: move. A light push sneaks, a medium push is a stealth walk, a full push jogs.</li>
       <li>CROUCH: toggle crouch. Crouched, a light push is a slow crouch, a fuller push a fast crouch.</li>
       <li>Right thumb: turn the camera. AIM: tap to raise the pistol and aim (drag to aim), tap again to lower it. While aiming, CQC becomes FIRE: one shot per tap.</li>
       <li>Keyboard: WASD jog, hold Alt to stealth walk or Ctrl to sneak, C crouch, Q aim, mouse drag to look.</li>
     </ul>
-    <!-- Step 24: choose a level (the two share every system); #mv-start stays the Test Lab -->
-    <div class="mv-levels" id="mv-levels" hidden>
-      <button type="button" class="mv-chip mv-primary" id="mv-start" hidden>TEST LAB</button>
-      <button type="button" class="mv-chip mv-primary" id="mv-start-forest" hidden>LEVEL 01 — FOREST OUTPOST</button>
-    </div>
-    <div class="mv-opts" id="mv-opts" hidden>
-      <button type="button" class="mv-chip" id="mv-opt-west" aria-pressed="false">FOREST: WEST LOOKOUT OFF</button>
-      <button type="button" class="mv-chip" id="mv-opt-debug" aria-pressed="false">FOREST: PATROL DEBUG OFF</button>
-    </div>
   </div>
 </div>
 <div class="mv-overlay" id="mv-error" hidden role="alert">

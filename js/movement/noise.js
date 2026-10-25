@@ -32,7 +32,7 @@
     // a swinging foot skimming the ground at a sneak is still moving fast
     footPlantSpeed: [0.45, 0.5],   // m/s: max(first, second × body speed)
     debug: true,           // draw each event's reach as a ring on the ground
-    ringTime: 0.9,         // s a debug ring takes to expand and fade
+    ringTime: 1.3,         // s a debug ring takes to expand, hold and fade (Step 24.1: a little longer, to read it)
   };
 
   mv.NoiseSystem = function (scene, opts) {
@@ -64,36 +64,44 @@
       radius: this.reachOf(intensity) * (mod.range != null ? mod.range : 1), time: performance.now() / 1000, by: by || null };
     this.last = ev;
     for (const fn of this.listeners) fn(ev);
-    if (c.debug && this.scene) this._ring(ev);
+    if (c.debug && this.scene) { this._ring(ev); if (this.onShown) this.onShown(ev); }   // (Step 24.1: after every listener has heard it, so a label can say who did)
     return ev;
   };
 
   // ---------------------------------------------------------------- debug rings
   const RING_COLORS = [0, 0x7fd1ff, 0x9dff8a, 0xffd34d, 0xff8a3d, 0xff3d3d];
 
+  // Step 24.1: easier to see on grass, dirt and concrete: a coloured band at the event's exact reach with a dark
+  // edge, a faint fill and a dot at its true origin; 12 of them reused in turn (nothing new is made per event)
   mv.NoiseSystem.prototype._ring = function (ev) {
     if (!this.rings.length) {
-      const geo = new THREE.RingGeometry(0.94, 1, 48); geo.rotateX(-Math.PI / 2);
-      for (let i = 0; i < 10; i++) {
-        const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, opacity: 0 }));
-        m.visible = false; m.renderOrder = 2; m.userData = { t: 1, r: 1 };
-        this.scene.add(m); this.rings.push(m);
+      const flat = g => g.rotateX(-Math.PI / 2);
+      const geo = { band: flat(new THREE.RingGeometry(0.88, 1, 56)), edge: flat(new THREE.RingGeometry(1, 1.025, 56)), fill: flat(new THREE.CircleGeometry(0.88, 40)), dot: flat(new THREE.CircleGeometry(1, 16)) };
+      const mat = (color, op) => new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, opacity: op });
+      for (let i = 0; i < 12; i++) {
+        const g = new THREE.Group(), band = new THREE.Mesh(geo.band, mat(0xffffff, 0)), edge = new THREE.Mesh(geo.edge, mat(0x000000, 0)), fill = new THREE.Mesh(geo.fill, mat(0xffffff, 0));
+        const dot = new THREE.Mesh(geo.dot, mat(0xffffff, 0)); dot.scale.setScalar(0.13); dot.position.y = 0.005;
+        for (const m of [band, edge, fill, dot]) m.renderOrder = 2;
+        g.add(fill, band, edge); g.visible = false; g.userData = { t: 1, r: 1, band, edge, fill, dot };
+        this.scene.add(g); this.scene.add(dot); dot.visible = false; this.rings.push(g);
       }
     }
-    const m = this.rings[this._next]; this._next = (this._next + 1) % this.rings.length;
-    m.position.set(ev.position.x, ev.position.y + 0.02, ev.position.z);
-    m.material.color.setHex(RING_COLORS[ev.level]);
-    m.userData.t = 0; m.userData.r = ev.radius; m.visible = true;
+    const m = this.rings[this._next], u = m.userData; this._next = (this._next + 1) % this.rings.length;
+    m.position.set(ev.position.x, ev.position.y + 0.02, ev.position.z); u.dot.position.set(ev.position.x, ev.position.y + 0.025, ev.position.z);
+    const col = RING_COLORS[ev.level]; for (const k of ['band', 'fill', 'dot']) u[k].material.color.setHex(col).convertSRGBToLinear();   // (as the colour reads: r128 takes hex as linear)
+    u.t = 0; u.r = ev.radius; m.visible = true; u.dot.visible = true;
   };
 
   mv.NoiseSystem.prototype.update = function (dt) {
+    const life = this.cfg.ringTime;
     for (const m of this.rings) {
       if (!m.visible) continue;
-      const u = m.userData; u.t += dt / this.cfg.ringTime;
-      if (u.t >= 1) { m.visible = false; continue; }
-      const grow = 1 - Math.pow(1 - Math.min(1, u.t / 0.45), 3);        // reaches full size early…
+      const u = m.userData; u.t += dt / life;
+      if (u.t >= 1) { m.visible = false; u.dot.visible = false; continue; }
+      const grow = 1 - Math.pow(1 - Math.min(1, u.t / 0.35), 3);        // reaches its full reach early…
       m.scale.setScalar(Math.max(0.01, u.r * grow));
-      m.material.opacity = 0.85 * (1 - Math.max(0, (u.t - 0.45) / 0.55));  // …then fades
+      const k = 1 - Math.max(0, (u.t - 0.45) / 0.55);                    // …holds, then fades
+      u.band.material.opacity = 0.95 * k; u.edge.material.opacity = 0.5 * k; u.fill.material.opacity = 0.16 * k; u.dot.material.opacity = k;
     }
   };
 

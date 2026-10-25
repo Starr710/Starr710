@@ -57,9 +57,11 @@
     lowH: 0.95,
     // trees that are in play (collision, cover): [x, z, trunk radius]
     trees: [
-      [-9, -17, 0.34], [4.5, -17.5, 0.3], [9.5, -19.5, 0.36], [14, -17, 0.32], [-15, -18, 0.38], [20, -15.5, 0.34], [-21, -12, 0.36],
-      [-26, -6, 0.4], [-18.5, -7.5, 0.34], [-13, -3, 0.3], [-27, 3, 0.38], [-17, 1.5, 0.32], [-12, 10.5, 0.36], [-25, 17, 0.4], [-14.5, 18.5, 0.34], [-20, 22, 0.36], [-11.5, 24, 0.32],
-      [27, -8, 0.36], [26, 12.5, 0.38], [27.3, 4, 0.32], [14.5, -12.5, 0.3], [22, 19.5, 0.36], [13, 22.5, 0.34],
+      // (Step 24.1: the decorative ones by the edge, where the edge's own trees already stand, are gone: (−26, −6),
+      // (−27, 3), (27, −8), (27.3, 4), (14, −17), (13, 22.5); every tree kept gives cover on a way through)
+      [-9, -17, 0.34], [4.5, -17.5, 0.3], [9.5, -19.5, 0.36], [-15, -18, 0.38], [20, -15.5, 0.34], [-21, -12, 0.36],
+      [-18.5, -7.5, 0.34], [-13, -3, 0.3], [-17, 1.5, 0.32], [-12, 10.5, 0.36], [-25, 17, 0.4], [-14.5, 18.5, 0.34], [-20, 22, 0.36], [-11.5, 24, 0.32],
+      [26, 12.5, 0.38], [14.5, -12.5, 0.3], [22, 19.5, 0.36],
       [6, 24.5, 0.36], [10.5, 18.5, 0.32], [3, 27.5, 0.3], [-7.5, 16.8, 0.34],
     ],
     // rocks in play: [x, z, radius, height] (≥ 1.6 m tall: full cover; under 1 m: waist-high)
@@ -69,7 +71,10 @@
       [-21, 4.5, 1.2, 2.2], [-9.5, 20, 1.1, 1.8], [24.5, -12, 1.2, 2.0], [16, 21, 0.9, 1.0], [6.8, 20.5, 1.0, 1.6], [-12, 27, 1.1, 1.8],
       [-26.5, -12.5, 1.0, 0.9],
     ],
-    bushes: 34,   // scattered, for looks only (no collision, no concealment yet)
+    bushes: 26,   // scattered, for looks only (no collision, no concealment yet)
+    // the forest's edge (looks only): a ring every `spacing` m along the boundary, `near` [from, + up to] m outside it, and every
+    // `backEvery`-th spot a second tree further out (`far`); this share of the spots are rocks instead
+    edge: { spacing: 2.8, near: [1.5, 1.6], far: [4.5, 2.2], backEvery: 2, rocks: 0.1 },
     // dirt trails (standard ground for noise, like the lab's concrete): [minX, maxX, minZ, maxZ]
     trails: [
       [-1.8, 1.8, -40, -20],      // the southern START trail
@@ -81,7 +86,7 @@
       [0.5, 4.5, -12.5, -8],      // to the compound's south opening
       [0, 3.5, 14, 19],           // from its north opening
     ],
-    // ---- the four guard assignments (three on by default). Patrols use the existing waypoint routine;
+    // ---- the five guard assignments (four on by default: A, B, C, E; D is off until switched on). Patrols use the existing waypoint routine;
     // a lookout's waypoints all stand at his post, so he only turns from one facing to the next
     guards: [
       { key: 'A', enabled: true, label: 'Guard A — North Lookout', role: 'lookout', x: -4, z: 22.7, yaw: 180 * D,
@@ -107,6 +112,14 @@
           { x: 8.6, z: 10.2, pause: [1, 1.5], face: 90, looks: [] },
           { x: 8.6, z: -4.5, pause: [1.5, 2], face: 180, looks: [40] },       // south-east corner: toward the south opening
           { x: -3.1, z: -4.5, pause: [1, 1.5], face: 270, looks: [] },
+        ] } },
+      // Step 24.1: the southern entrance, where the START trail opens into the forest: a short walk along the trail
+      // across it, stopping at each end to watch the trail's mouth (out of sight of the START itself, 22 m off)
+      { key: 'E', enabled: true, label: 'Guard E — South Entrance', role: 'patrol', x: -8, z: -14, yaw: 135 * D,
+        personality: { primary: 'curious', secondary: 'focused', seed: 2441 },
+        patrol: { enabled: true, loop: true, push: 0.42, seed: 2442, points: [
+          { x: -8, z: -14, pause: [2.5, 3.5], face: 135, looks: [-35] },     // west end: toward the trail's mouth
+          { x: 8, z: -14, pause: [2.5, 3.5], face: 225, looks: [35] },       // east end: toward it from the other side
         ] } },
       { key: 'D', enabled: false, label: 'Guard D — West Lookout', role: 'lookout', x: -18.3, z: 14.4, yaw: 180 * D,
         personality: { primary: 'careless', secondary: 'curious', seed: 2431 },
@@ -186,18 +199,34 @@
       } else box(x, z, w, d, L.lowH, mats.barrier, kind);
     }
 
-    // trees in play: a trunk (collision, cover) and a canopy above it; one instanced mesh each
+    // trees in play: a trunk (collision, cover) and one canopy above it. The trunks (and the rocks below) are one
+    // instanced mesh each, always tested by the camera and by bullets; everything that's only looked at (canopies,
+    // the forest's edge, bushes) is instanced in chunks of the map, so what's off screen isn't drawn (three.js r128
+    // never culls a single instanced mesh: it would draw every tree every frame, and again into the shadow map)
     const trunkG = new THREE.CylinderGeometry(0.8, 1, 1, 7).translate(0, 0.5, 0), canopyG = new THREE.ConeGeometry(1, 1, 7).translate(0, 0.5, 0);
     const inst = (geo, mat, n, kind, collide) => { const m = new THREE.InstancedMesh(geo, mat, n); m.castShadow = true; m.userData.kind = kind; group.add(m); if (collide) world.meshes.push(m); return m; };
-    const trunks = inst(trunkG, mats.bark, L.trees.length, 'tree', true), crowns = inst(canopyG, mats.leaves, L.trees.length * 2, 'leaves', false);
+    const CHUNK = 26, chunks = [];
+    const chunked = (geo, mat, list, kind, shadow) => {   // list: [{ x, z, m (Matrix4), reach (m) }]
+      const cells = new Map();
+      for (const it of list) { const k = Math.floor(it.x / CHUNK) + ',' + Math.floor(it.z / CHUNK); if (!cells.has(k)) cells.set(k, []); cells.get(k).push(it); }
+      for (const items of cells.values()) {
+        const g = geo.clone(), c = new THREE.Vector3();
+        for (const it of items) c.x += it.x / items.length, c.z += it.z / items.length;
+        let r = 0; for (const it of items) r = Math.max(r, Math.hypot(it.x - c.x, it.z - c.z) + it.reach);
+        c.y = 4; g.boundingSphere = new THREE.Sphere(c, r + 5);
+        const im = new THREE.InstancedMesh(g, mat, items.length); items.forEach((it, i) => im.setMatrixAt(i, it.m));
+        im.frustumCulled = true; im.castShadow = !!shadow; im.userData.kind = kind; im.instanceMatrix.needsUpdate = true; group.add(im); chunks.push(im);
+      }
+    };
+    const trunks = inst(trunkG, mats.bark, L.trees.length, 'tree', true), crownList = [];
     L.trees.forEach(([x, z, r], i) => {
       const h = 7 + rnd() * 3;
       trunks.setMatrixAt(i, M4.compose(P.set(x, 0, z), Q.identity(), S.set(r, h, r)));
       world.addCylinder(x, z, r, h, null);
-      const cr = 1.8 + rnd() * 0.8;
-      crowns.setMatrixAt(i * 2, M4.compose(P.set(x, 4.2 + rnd() * 0.5, z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(cr, 3.4, cr)));
-      crowns.setMatrixAt(i * 2 + 1, M4.compose(P.set(x, 6.2 + rnd() * 0.4, z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(cr * 0.7, 2.8, cr * 0.7)));
+      const cr = 1.9 + rnd() * 0.7;
+      crownList.push({ x, z, reach: cr, m: M4.clone().compose(P.set(x, 4.3 + rnd() * 0.5, z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(cr, 4.6, cr)) });
     });
+    chunked(canopyG, mats.leaves, crownList, 'leaves', true);
     out.meshes.trunks = trunks; out.counts.trees = L.trees.length;
 
     // rocks in play
@@ -209,50 +238,49 @@
     });
     out.counts.rocks = L.rocks.length;
 
-    // the forest's edge: dense trees and some rocks just outside the playable area (looks only:
-    // the bounds keep her and the guards in; nothing out there is ever reached)
-    const edge = [], edgeRocks = [], B = L.bounds;
+    // the forest's edge: a ring of trees just outside the playable area and a sparser one behind it, some rocks
+    // (looks only: the bounds keep her and the guards in; nothing out there is ever reached)
+    const edge = [], edgeRocks = [], B = L.bounds, E = L.edge;
     const insideB = (x, z) => { let ins = false; for (let i = 0, j = B.length - 1; i < B.length; j = i++) { const [ax, az] = B[j], [cx, cz] = B[i]; if ((cz > z) !== (az > z) && x < (ax - cx) * (z - cz) / (az - cz) + cx) ins = !ins; } return ins; };
+    let along = 0;
     for (let i = 0; i < B.length; i++) {
       const [ax, az] = B[i], [bx, bz] = B[(i + 1) % B.length], len = Math.hypot(bx - ax, bz - az);
       let nx = (bz - az) / len, nz = -(bx - ax) / len;
       if (insideB((ax + bx) / 2 + nx * 0.5, (az + bz) / 2 + nz * 0.5)) { nx = -nx; nz = -nz; }   // (outward)
-      for (let k = 0; k < len; k += 2.2) {
-        const t = (k + rnd() * 1.2) / len, x = ax + (bx - ax) * t, z = az + (bz - az) * t;
-        for (const off of [1.4 + rnd() * 1.2, 4 + rnd() * 2.5]) {
+      for (let k = 0; k < len; k += E.spacing) {
+        const t = (k + rnd() * E.spacing * 0.5) / len, x = ax + (bx - ax) * t, z = az + (bz - az) * t, back = (along++ % E.backEvery) === 0;
+        for (const off of back ? [E.near[0] + rnd() * E.near[1], E.far[0] + rnd() * E.far[1]] : [E.near[0] + rnd() * E.near[1]]) {
           const px = x + nx * off, pz = z + nz * off;
-          if (!insideB(px, pz)) (rnd() < 0.08 ? edgeRocks : edge).push([px, pz]);
+          if (!insideB(px, pz)) (rnd() < E.rocks ? edgeRocks : edge).push([px, pz]);
         }
       }
     }
-    const eTrunks = inst(trunkG, mats.bark, edge.length, 'tree', false), eCrowns = inst(canopyG, mats.leavesDark, edge.length * 2, 'leaves', false);
-    edge.forEach(([x, z], i) => {
-      const r = 0.3 + rnd() * 0.15, h = 8 + rnd() * 3, cr = 2 + rnd();
-      eTrunks.setMatrixAt(i, M4.compose(P.set(x, 0, z), Q.identity(), S.set(r, h, r)));
-      eCrowns.setMatrixAt(i * 2, M4.compose(P.set(x, 2.6 + rnd(), z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(cr, 4.2, cr)));
-      eCrowns.setMatrixAt(i * 2 + 1, M4.compose(P.set(x, 5.8 + rnd(), z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(cr * 0.75, 3.4, cr * 0.75)));
+    const eTrunkList = [], eCrownList = [], eRockList = [];
+    edge.forEach(([x, z]) => {
+      const r = 0.3 + rnd() * 0.15, h = 8 + rnd() * 3, cr = 2.2 + rnd();
+      eTrunkList.push({ x, z, reach: r, m: M4.clone().compose(P.set(x, 0, z), Q.identity(), S.set(r, h, r)) });
+      eCrownList.push({ x, z, reach: cr, m: M4.clone().compose(P.set(x, 2.8 + rnd(), z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(cr, 6.4, cr)) });
     });
-    const eRocks = inst(rockG, mats.rock, Math.max(1, edgeRocks.length), 'rock', false);
-    edgeRocks.forEach(([x, z], i) => { const r = 1 + rnd() * 1.2; eRocks.setMatrixAt(i, M4.compose(P.set(x, r * 0.4, z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(r, r * 0.9, r))); });
-    eTrunks.castShadow = eCrowns.castShadow = false;   // (outside the shadowed area round her anyway)
+    edgeRocks.forEach(([x, z]) => { const r = 1 + rnd() * 1.2; eRockList.push({ x, z, reach: r, m: M4.clone().compose(P.set(x, r * 0.4, z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(r, r * 0.9, r)) }); });
+    chunked(trunkG, mats.bark, eTrunkList, 'tree', false); chunked(canopyG, mats.leavesDark, eCrownList, 'leaves', false); chunked(rockG, mats.rock, eRockList, 'rock', false);
     out.counts.edgeTrees = edge.length; out.counts.edgeRocks = edgeRocks.length;
 
     // bushes: looks only (no collision, no concealment yet), kept off the trails and out of the compound
-    const bushG = new THREE.IcosahedronGeometry(1, 0), bushes = inst(bushG, mats.bush, L.bushes, 'bush', false); bushes.castShadow = false;
+    const bushG = new THREE.IcosahedronGeometry(1, 0), bushList = [];
     const onTrail = (x, z) => L.trails.some(([x0, x1, z0, z1]) => x > x0 - 1 && x < x1 + 1 && z > z0 - 1 && z < z1 + 1) || (x > C.minX - 1.5 && x < C.maxX + 1.5 && z > C.minZ - 1.5 && z < C.maxZ + 1.5);
-    let nb = 0;
-    for (let tries = 0; nb < L.bushes && tries < 2000; tries++) {
+    for (let tries = 0; bushList.length < L.bushes && tries < 2000; tries++) {
       const x = -29 + rnd() * 58, z = -24 + rnd() * 52;
       if (!world.inBounds(x, z, 1.5) || onTrail(x, z)) continue;
       const r = 0.5 + rnd() * 0.5;
-      bushes.setMatrixAt(nb++, M4.compose(P.set(x, r * 0.45, z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(r * 1.2, r * 0.75, r * 1.2)));
+      bushList.push({ x, z, reach: r * 1.2, m: M4.clone().compose(P.set(x, r * 0.45, z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(r * 1.2, r * 0.75, r * 1.2)) });
     }
-    bushes.count = nb; out.counts.bushes = nb;
+    chunked(bushG, mats.bush, bushList, 'bush', false); out.counts.bushes = bushList.length;
 
     // the END: a faint marker on the trail's far end
     const X = L.exit, mark = new THREE.Mesh(new THREE.PlaneGeometry(X.maxX - X.minX, X.maxZ - X.minZ).rotateX(-Math.PI / 2), mats.exit);
     mark.position.set((X.minX + X.maxX) / 2, 0.012, (X.minZ + X.maxZ) / 2); mark.renderOrder = 2; group.add(mark);
-    for (const im of [trunks, crowns, rocks, eTrunks, eCrowns, eRocks, bushes]) { im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere && im.computeBoundingSphere(); }
+    for (const im of [trunks, rocks]) im.instanceMatrix.needsUpdate = true;
+    out.counts.chunks = chunks.length;
 
     return Object.assign(out, {
       id: L.id, name: L.name, objective: L.objective, spawn: L.spawn, exit: L.exit, bounds: L.bounds, compound: C,
