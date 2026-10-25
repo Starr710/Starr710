@@ -222,3 +222,6 @@ body:not(.playing) #mv-aim { visibility: hidden; }
 #mv-hitmark u:nth-child(3) { transform: rotate(225deg) translateX(13px); }
 #mv-hitmark u:nth-child(4) { transform: rotate(315deg) translateX(13px); }
 @keyframes mv-hitmark { from { opacity: 1; } to { opacity: 0; } }
+/* Step 20: the hit marker when the shot put him down: red, held a little longer */
+#mv-hitmark.down u { background: #ff4a3d; width: 11px; }
+#mv-hitmark.down { animation-duration: 0.6s; }

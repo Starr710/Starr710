@@ -161,6 +161,32 @@
       } else this.lying(g);
     },
 
+    // ---------------------------------------------------------------- shot down (Step 20)
+    // Not a throw: he buckles where he stands (knees give, hips drop, arms go slack), then
+    // tips over the way the shot pushed him (back: onto his back; forward: onto his front),
+    // hips moving only a little (C.to), and settles. C: { S, back (+1 / −1), fall, to }; k 0…1
+    collapse(g, C, k) {
+      const c = this.cfg, F = g._frozen; if (!F) return;
+      const s = C.back, h0 = F.hipsW.y;
+      const buckle = ease(Math.min(1, k / 0.45)), top = ease(Math.max(0, (k - 0.35) / 0.55)), settle = Math.max(0, (k - 0.9) / 0.1);
+      const kneel = 0.42 * h0;   // hips dropped this much by the buckle
+      const hips = new THREE.Vector3(lerp(C.S.x, C.to.x, top) + (F.hipsW.x - C.S.x) * (1 - top), lerp(h0 - kneel * buckle, 0.15, top), lerp(C.S.z, C.to.z, top) + (F.hipsW.z - C.S.z) * (1 - top));
+      const slump = buckle * (1 - top);
+      const b = { spine: [12 * slump, 0, 0], spine1: [10 * slump, 0, 0], chest: [8 * slump, 0, 0], head: [16 * buckle * (1 - top), c.lyingHead * top * s, 0],
+        leftUpLeg: [-48 * slump, 0, 0], rightUpLeg: [-44 * slump, 0, 0], leftLeg: [75 * slump, 0, 0], rightLeg: [70 * slump, 0, 0],
+        leftArm: [6 * buckle, 0, 10 * buckle * (1 - top) + c.lyingArms * top], rightArm: [6 * buckle, 0, -10 * buckle * (1 - top) - c.lyingArms * top] };
+      const clear = c.lieClear + 0.02 * Math.sin(Math.PI * settle);
+      this.pose(g, { hips, tilt: s * (Math.PI / 2) * top, bones: b, neutral: top, clear, pin: top > 0.98 });
+      // going over, his body comes down onto the ground progressively (never hanging in the air)
+      const w = ease((top - 0.35) / 0.55), over = g.downPose.lowest - clear;
+      if (w > 0 && over > 0) { g.fall.position.y -= over * w; g.root.updateMatrixWorld(true); g.downPose.lowest -= over * w; }
+    },
+    // face down (shot from behind), the counterpart of lying()
+    lyingFront(g) {
+      const c = this.cfg, b = { leftArm: [0, 0, c.lyingArms], rightArm: [0, 0, -c.lyingArms], head: [0, -c.lyingHead, 0] };
+      this.pose(g, { hips: g.position, tilt: -Math.PI / 2, bones: b, neutral: 1, clear: c.lieClear, pin: true });
+    },
+
     // still on the ground: one fixed pose (no breathing, no drift)
     lying(g, extra) {
       const c = this.cfg, b = { leftArm: [0, 0, c.lyingArms], rightArm: [0, 0, -c.lyingArms], head: [0, c.lyingHead, 0] };

@@ -7,6 +7,11 @@
 //                 voice. His memory is kept. Two low colliders along his body stand in for
 //                 his standing cylinder (she can walk round him, not through him)
 //   WAKING        stirring → sitting up → rising, once there's room to stand where he lies
+//   DEAD          Step 20: defeated by gunfire (0 HP, guard-health.js). Terminal until RESET:
+//                 he buckles and collapses where he stood (no throw: no lift, no sweep), lies
+//                 there, and never wakes. Everything else as UNCONSCIOUS (no AI, senses or
+//                 voice; low colliders instead of his standing one). Never both: a guard who's
+//                 already down isn't a target, and a defeated one can't be knocked out
 // Back on his feet he gets his AI back: his awareness picks up from what he knew when he
 // went down (attacked, by an intruder, there) and searches from there; he has no idea
 // where she went meanwhile. For later stages: guard.ko.state and guard.ko.body (where he
@@ -23,6 +28,8 @@
     standRoom: 0.32,       // m: radius that must be free where he stands up (his standing collider)
     playerRoom: 0.7,       // m: and the player at least this far from that spot
     body: { radius: 0.2, along: 0.42, top: 0.3 },   // lying collision: two short cylinders, at his chest and thighs
+    collapseTime: 1.2,     // s for a guard defeated by gunfire to buckle and go down (Step 20)…
+    collapseShift: 0.28,   // …his hips ending this far along the way he falls
   };
 
   mv.GuardKnockout = function (guard, opts) {
@@ -37,7 +44,7 @@
     this._removeBody();
     if (this.guard._frozen && mv.ThrowAnim) mv.ThrowAnim.unfreeze(this.guard);
     this.state = 'CONSCIOUS'; this.phase = ''; this.t = 0; this.left = 0; this.body = null; this.standAt = null; this.note = ''; this.retry = 0;
-    this.knockouts = 0; this.wokeAt = null;
+    this.knockouts = 0; this.wokeAt = null; this.collapse = null; this.defeats = 0;
   };
 
   // is he out of action (thrown, unconscious or getting up)?
@@ -46,6 +53,7 @@
   // the throw starts: he stops being his own man (cqc-throw.js poses him from here)
   mv.GuardKnockout.prototype.beginThrow = function () {
     const g = this.guard;
+    if (this.state === 'DEAD') return;   // (Step 20: never both)
     g.stopMoving(); g.motor.speed = 0; g.motor.targetSpeed = 0; g.motor.angularVelocity = 0; g.motor.reverseGait = false;
     if (mv.ThrowAnim) mv.ThrowAnim.freeze(g);
     this.state = 'THROWN'; this.phase = 'thrown'; this.note = 'being thrown';
@@ -61,6 +69,25 @@
     if (this.state !== 'THROWN') return;
     if (mv.ThrowAnim) mv.ThrowAnim.unfreeze(this.guard);
     this.state = 'CONSCIOUS'; this.phase = ''; this.guard.place();
+  };
+
+  // Step 20: 0 HP from gunfire. info { dir: the shot's travel (he falls with it), from, source }
+  mv.GuardKnockout.prototype.defeat = function (info) {
+    const g = this.guard, c = this.cfg;
+    if (this.state === 'DEAD') return;
+    if (this.state !== 'CONSCIOUS') return;   // (already down: not a target; never both states)
+    g.restraint = null; g.poseHook = null; if (mv.ThrowAnim && mv.ThrowAnim.clearLive) mv.ThrowAnim.clearLive(g);
+    g.stopMoving(); g.motor.speed = 0; g.motor.targetSpeed = 0; g.motor.angularVelocity = 0; g.motor.reverseGait = false;
+    if (mv.ThrowAnim) mv.ThrowAnim.freeze(g);
+    const f = g.forward(new THREE.Vector3()), d = info && info.dir ? info.dir.clone().setY(0) : f.clone().negate();
+    const back = d.lengthSq() < 1e-8 || d.normalize().dot(f) <= 0 ? 1 : -1;   // shot from in front: he goes over backward; from behind: forward
+    const fall = f.clone().multiplyScalar(-back);   // the way his body goes down (head ends that way)
+    this.state = 'DEAD'; this.phase = 'collapsing'; this.t = 0; this.left = Infinity; this.note = 'defeated by gunfire';
+    this.collapse = { S: g.position.clone(), back, fall, to: g.position.clone().addScaledVector(fall, c.collapseShift).setY(0), by: info && info.from ? info.from.clone() : null };
+    this.defeats = (this.defeats || 0) + 1;
+    if (g.collider) g.collider.x = 1e6;
+    g.vision.blind(); if (g.hearing) g.hearing.heard = null;
+    if (g.awareness && g.awareness.onDefeated) g.awareness.onDefeated(this.collapse.by);
   };
 
   // he hit the ground: info { position: where his hips landed (ground), along: unit
@@ -86,6 +113,7 @@
     if (g.hearing) g.hearing.update(dt);
     if (this.state === 'THROWN') return;           // the throw poses him
     this.t += dt;
+    if (this.state === 'DEAD') { this._deadStep(); return; }   // (Step 20: no timer, no waking)
     if (this.state === 'UNCONSCIOUS') {
       this.left = Math.max(0, this.left - dt);
       if (A) A.lying(g);
@@ -103,6 +131,23 @@
     if (i >= order.length) { this._stand(); return; }
     this.phase = order[i][0];
     if (A) A.wake(g, this.phase, this.t / order[i][1], this.standAt);
+  };
+
+  // Step 20: buckling and going down, then lying still where he fell (for good)
+  mv.GuardKnockout.prototype._deadStep = function () {
+    const g = this.guard, c = this.cfg, C = this.collapse, A = mv.ThrowAnim;
+    if (this.phase === 'collapsing') {
+      const k = Math.min(1, this.t / c.collapseTime);
+      if (A && A.collapse) A.collapse(g, C, k);
+      if (k < 1) return;
+      // on the ground: his hips are where he lies (the same lying pose and colliders as a knockout)
+      g.motor.position.x = C.to.x; g.motor.position.z = C.to.z;
+      this.body = { position: C.to.clone(), along: C.fall.clone(), at: g.awareness ? g.awareness.clock : 0, defeated: true };
+      this._addBody();
+      this.phase = 'down'; this.note = 'defeated by gunfire: down';
+    }
+    // (posed once: lying still, nothing animates him any more, so there's nothing to redo each frame)
+    if (A && !C.posed) { if (C.back > 0) A.lying(g); else A.lyingFront(g); C.posed = true; }
   };
 
   // where he can stand up: where he lies, or a little along his body; null = no room yet
@@ -147,6 +192,7 @@
   // short status for the developer view
   mv.GuardKnockout.prototype.status = function () {
     if (this.state === 'CONSCIOUS') return this.knockouts ? `conscious · knocked out ${this.knockouts}×` : 'conscious';
+    if (this.state === 'DEAD') return `DEFEATED (gunfire) · ${this.phase === 'collapsing' ? 'collapsing' : 'down for good'}`;
     if (this.state === 'THROWN') return this.phase === 'lowered' ? 'UNCONSCIOUS · being lowered' : 'THROWN';
     if (this.state === 'UNCONSCIOUS') return `UNCONSCIOUS · ${this.left.toFixed(0)} s${this.left <= 0 && this.note ? ' · ' + this.note : ''}`;
     return `WAKING · ${{ stirring: 'stirring', sittingUp: 'sitting up', rising: 'getting up' }[this.phase] || this.phase}`;

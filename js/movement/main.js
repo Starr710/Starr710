@@ -286,10 +286,12 @@
         put(ui.tkdnstat, cqc.takedownStatus());
         put(ui.aimstat, aim.status(input.crouch));
         put(ui.shotstat, pistol.status());
-        put(ui.ko, guard.ko.status() + (guard.awareness.attack ? ` · remembers attack at ${xz(guard.awareness.attack.position)}` : ''));
+        // Step 20: health first (just HP until he's hurt), then consciousness / defeat
+        const hp = g => !g.health ? '' : g.health.lastDamage ? g.health.status() + ' · ' : `HP ${g.health.current}/${g.health.max} · `;
+        put(ui.ko, hp(guard) + (guard.health && guard.health.lastDamage ? '' : guard.ko.status()) + (guard.awareness.attack ? ` · remembers ${guard.awareness.attack.kind === 'shot' ? 'being shot' : 'attack'} at ${xz(guard.awareness.attack.position)}` : ''));
         if (guard2) { const b = guard2.awareness, tr = `${guard2.personality.traits.primary}/${guard2.personality.traits.secondary}`;
-          put(ui.g2, guard2.isDown() ? `${guard2.ko.status()} · ${tr}${b.attack ? ' · remembers attack at ' + xz(b.attack.position) : ''}`
-            : `${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${tr} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}${guard2.ko.knockouts ? ' · ' + guard2.ko.status() : ''}`); }
+          put(ui.g2, guard2.isDown() ? `${hp(guard2)}${guard2.health && guard2.health.lastDamage ? '' : guard2.ko.status() + ' · '}${tr}${b.attack ? ' · remembers attack at ' + xz(b.attack.position) : ''}`
+            : `${hp(guard2)}${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${tr} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}${guard2.ko.knockouts ? ' · ' + guard2.ko.status() : ''}`); }
         put(ui.post, `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`);
       }
       put(ui.rate, animator ? animator.playRate.toFixed(2) + '×' : '–');

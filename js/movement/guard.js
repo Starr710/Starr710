@@ -127,6 +127,7 @@
     this.awareness = mv.GuardAwareness ? new mv.GuardAwareness(this) : null;
     // Step 14: consciousness (thrown, unconscious, getting up)
     this.ko = mv.GuardKnockout ? new mv.GuardKnockout(this) : null;
+    this.health = mv.GuardHealth ? new mv.GuardHealth(this, o.health) : null;   // Step 20: his own health (guard-health.js)
     this.headYaw = 0; this.tension = 0; this._blBase = new Map();
     if (this.hearing && this.awareness) this.hearing.onHeard = rec => this.awareness.onHeard(rec);
     this.place();
@@ -137,6 +138,7 @@
   // back to his post, calm (the lab's RESET)
   mv.Guard.prototype.reset = function () {
     if (this.ko) this.ko.reset();   // conscious and standing again (Step 14)
+    if (this.health) this.health.reset();   // full health again (Step 20)
     this.poseHook = null; if (mv.ThrowAnim && mv.ThrowAnim.clearLive) mv.ThrowAnim.clearLive(this);
     this.motor.teleport(this.post.x, this.post.z, this.postYaw);
     this.restraint = null;
@@ -311,6 +313,7 @@
     if (this.personality && this.awareness) this.personality.update(dt, this.awareness.state, this.awareness.state === 'NORMAL' && this.isStill());
     this._bodyLanguage(dt);
     if (this.poseHook) this.poseHook(dt);   // Step 15: an extra pose on top (his struggle in a chokehold, cqc-choke.js)
+    if (this.health) this.health.poseReact(dt);   // Step 20: a bullet's hit reaction on top of that
     if (target) this.vision.update(dt, target);
     if (this.awareness) this.awareness.update(dt, target);
   };

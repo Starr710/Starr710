@@ -8,9 +8,9 @@
 //   2. the bullet goes from the pistol's muzzle toward that point; whatever solid it meets
 //      first is what it hits (cover in front of the muzzle that the camera sees over takes
 //      the shot). No penetration: it stops at the first thing
-// What it hit is recorded (lastShot) and handed to onHit (the hook a damage system will
-// use). For now a guard hit is only registered: a brief flinch, a hit marker on the
-// crosshair, his count of hits. No injury, no death, no knockout. The shot is a level 5
+// What it hit is recorded (lastShot) and handed to onHit. A guard hit is a damage event
+// (Step 20: `damage` HP through mv.applyDamage, guard-health.js) and a hit marker on the
+// crosshair (heavier when it puts him down). The shot is a level 5
 // noise ('gunshot') at the muzzle through the normal noise system, so guards hear it by
 // their normal hearing (and react by their normal awareness) or don't.
 // Feedback (all temporary, cheap): a muzzle flash for a few frames, a puff where it hit
@@ -33,7 +33,7 @@
     impactTime: 0.3,       // s an impact puff lasts
     impactPool: 6,         // puffs kept for reuse
     hitMarkerTime: 0.3,    // s the crosshair's hit marker shows (guard hits only)
-    flinch: 7, flinchTime: 0.3,   // ° and s a guard flinches when hit (placeholder, no damage)
+    damage: 35,            // HP per hit on a guard (Step 20; 3 hits defeat a regular 100 HP guard)
     volume: 1,
   };
   const DEG = Math.PI / 180;
@@ -79,8 +79,8 @@
     this.flash.visible = false; if (this.pose) this.pose.kick = 0;
     if (this.cam) this.cam.kick = 0;
     for (const p of this.puffs) { p.visible = false; p.userData.t = 1; }
-    for (const g of this.guards) if (g && g._flinch) { if (g.poseHook === g._flinch.hook) g.poseHook = null; g._flinch = null; }
-    if (this.marker) this.marker.classList.remove('hit');
+    this.series = (this.series || 0) + 1;   // (damage event ids stay unique across RESETs)
+    if (this.marker) this.marker.classList.remove('hit', 'down');
   };
 
   // can it fire right now? ('' = yes)
@@ -109,8 +109,7 @@
       if (u.t >= 1) { p.visible = false; continue; }
       p.scale.setScalar(u.s * (0.6 + 1.6 * u.t)); p.material.opacity = 0.85 * (1 - u.t);
     }
-    if (this.markerT > 0 && (this.markerT -= dt) <= 0 && this.marker) this.marker.classList.remove('hit');
-    for (const g of this.guards) if (g && g._flinch && (g._flinch.t += dt) >= c.flinchTime) { if (g.poseHook === g._flinch.hook) g.poseHook = null; g._flinch = null; }
+    if (this.markerT > 0 && (this.markerT -= dt) <= 0 && this.marker) this.marker.classList.remove('hit', 'down');
   };
 
   // one shot (validated by update)
@@ -174,23 +173,18 @@
       p.position.copy(shot.point); p.material.color.setHex(shot.guard ? 0xffe08a : 0xbdb39a);
       p.userData.t = 0; p.userData.s = shot.guard ? 0.9 : 1; p.visible = true; p.scale.setScalar(0.6);
     }
-    if (shot.guard && this.marker) { this.marker.classList.remove('hit'); void this.marker.offsetWidth; this.marker.classList.add('hit'); this.markerT = c.hitMarkerTime; }
     this._sound();
   };
 
-  // a registered hit on a guard: no damage yet. A brief flinch over his own pose, counted
+  // a guard hit: one damage event for this shot (Step 20: guard-health.js applies it, at most
+  // once per shot; his reaction, awareness and any defeat follow from there)
   mv.Pistol.prototype._guardHit = function (shot) {
     const g = shot.guard, c = this.cfg;
     g.shotHits = (g.shotHits || 0) + 1; g.lastShotHit = { point: shot.point.clone(), from: shot.muzzle.clone() };
-    if (g.poseHook && !(g._flinch && g.poseHook === g._flinch.hook)) return;   // (something else is posing him)
-    const f = g._flinch = { t: 0 }, side = Math.sign(new THREE.Vector3(Math.cos(g.yaw), 0, -Math.sin(g.yaw)).dot(shot.dir)) || 1;
-    f.hook = () => {
-      const k = Math.sin(Math.PI * Math.min(1, f.t / c.flinchTime)), b = g.bones && (g.bones.chest || g.bones.spine);
-      if (!b || k <= 0) return;
-      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), side * c.flinch * DEG * k);
-      b.quaternion.multiply(q); b.updateMatrixWorld(true);
-    };
-    g.poseHook = f.hook;
+    const dir = shot.point.clone().sub(shot.muzzle).normalize();   // the bullet's own travel
+    shot.damage = mv.applyDamage ? mv.applyDamage(g, { amount: c.damage, source: 'pistol', id: this.series + '.' + shot.n, from: shot.muzzle, dir, point: shot.point }) : null;
+    // the hit marker: on any guard hit; a heavier one when it put him down
+    if (this.marker) { this.marker.classList.remove('hit', 'down'); void this.marker.offsetWidth; this.marker.classList.add('hit'); if (shot.damage && shot.damage.defeated) this.marker.classList.add('down'); this.markerT = c.hitMarkerTime * (shot.damage && shot.damage.defeated ? 2 : 1); }
   };
 
   // a temporary synthesized gunshot: a sharp crack, a low boom and a short tail

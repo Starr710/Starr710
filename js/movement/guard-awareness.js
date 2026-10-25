@@ -438,6 +438,29 @@
     this.evasion = null; this.hs = null; this.search = null; this.focus = null; this.startle = null;
     if (this.incident) this.incident.voiced = true;
   };
+  // Step 20: struck by a bullet (and still standing). He knows he's been attacked: that's
+  // certain, so suspicion is full and he goes for it at once. Where she is, he doesn't know:
+  // what he has is what his ears gave him (the gunshot's origin, by the normal hearing; with
+  // its usual uncertainty once alerted). He never gets her position from the hit. Already
+  // searching (or standing down), it restarts his Active Search
+  mv.GuardAwareness.prototype.onShot = function (rec) {
+    const origin = this.heard && this.clock - this.heard.time < 0.5 ? (this.heard.estimate || this.heard.position) : null;
+    this.attack = { position: (origin || this.guard.position).clone().setY(0), time: this.clock, kind: 'shot', heard: !!origin };
+    this.shots = (this.shots || 0) + 1;
+    this.suspicion = 1; this.lastEvidence = this.clock;
+    if (this.incident) this.incident.voiced = true;   // (no "huh": this isn't a curiosity)
+    if (this.confirmed) {
+      if (this.state === 'HEIGHTENED' || this.state === 'RETURNING') { this.lastContact = this.clock; this._startEvasion(); }
+    } else if (origin) this._consider('heard', origin);
+    this.note = origin ? 'shot: attacked from the gunshot\'s direction' : 'shot: attacked, no idea where from';
+  };
+  // Step 20: defeated by gunfire: out for good (nothing more comes in or goes out)
+  mv.GuardAwareness.prototype.onDefeated = function (by) {
+    this.state = 'DEAD'; this.behavior = 'defeated'; this.note = 'defeated by gunfire';
+    this.evasion = null; this.hs = null; this.search = null; this.focus = null; this.startle = null;
+    if (this.incident) this.incident.voiced = true;
+  };
+
   // back on his feet: he was attacked and knows it, so he searches from where it happened
   // (the Active Search, then Heightened Security, then back to his post or route). He has
   // no idea where she went while he was out: no heading, no newer sighting

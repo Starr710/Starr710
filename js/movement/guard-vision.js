@@ -115,7 +115,7 @@
   // short state for the developer view
   mv.GuardVision.prototype.state = function () {
     const s = this.seen;
-    if (s.why === 'unconscious' && this.guard.isDown && this.guard.isDown()) return 'UNCONSCIOUS';
+    if (s.why === 'unconscious' && this.guard.isDown && this.guard.isDown()) return this.guard.ko && this.guard.ko.state === 'DEAD' ? 'DEFEATED' : 'UNCONSCIOUS';
     if (this.meter >= 1 && s.rate > 0) return 'RECOGNISED';
     if (s.rate > 0) return 'SEEING';
     if (this.meter > 0) return this.sinceSeen > this.cfg.holdTime ? 'FADING' : 'HOLDING';
