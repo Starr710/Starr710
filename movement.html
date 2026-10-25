@@ -62,6 +62,7 @@
 </header>
 
 <div class="mv-topright">
+  <button type="button" class="mv-chip" id="mv-menu">LEVELS</button>  <!-- Step 24: back to the level choice (shown while STATS is closed: the open bar needs this corner) -->
   <button type="button" class="mv-chip" id="mv-reset">RESET</button>
   <button type="button" class="mv-chip" id="mv-stats-btn" aria-pressed="true">STATS</button>
 </div>
@@ -80,6 +81,14 @@
 
 <div id="mv-dmg" aria-hidden="true"></div>  <!-- Step 22: a brief red tint at the screen edges when she's hit -->
 <div id="mv-defeat" role="status" hidden>DEFEATED — PRESS RESET TO RETRY</div>
+<div id="mv-objective" role="status" hidden></div>  <!-- Step 24: the level's objective, shown for a moment at its start -->
+<div class="mv-overlay" id="mv-complete" hidden role="status">  <!-- Step 24: reached the END -->
+  <div class="mv-box">
+    <div class="mv-title">LEVEL COMPLETE</div>
+    <div class="mv-sub" id="mv-complete-sub">FOREST OUTPOST</div>
+    <div class="mv-levels"><button type="button" class="mv-chip mv-primary" id="mv-replay">REPLAY</button><button type="button" class="mv-chip mv-primary" id="mv-to-menu">LEVEL SELECT</button></div>
+  </div>
+</div>
 
 <div class="mv-overlay" id="mv-loader" role="status" aria-live="polite">
   <div class="mv-box">
@@ -93,7 +102,15 @@
       <li>Right thumb: turn the camera. AIM: tap to raise the pistol and aim (drag to aim), tap again to lower it. While aiming, CQC becomes FIRE: one shot per tap.</li>
       <li>Keyboard: WASD jog, hold Alt to stealth walk or Ctrl to sneak, C crouch, Q aim, mouse drag to look.</li>
     </ul>
-    <button type="button" class="mv-chip mv-primary" id="mv-start" hidden>START</button>
+    <!-- Step 24: choose a level (the two share every system); #mv-start stays the Test Lab -->
+    <div class="mv-levels" id="mv-levels" hidden>
+      <button type="button" class="mv-chip mv-primary" id="mv-start" hidden>TEST LAB</button>
+      <button type="button" class="mv-chip mv-primary" id="mv-start-forest" hidden>LEVEL 01 — FOREST OUTPOST</button>
+    </div>
+    <div class="mv-opts" id="mv-opts" hidden>
+      <button type="button" class="mv-chip" id="mv-opt-west" aria-pressed="false">FOREST: WEST LOOKOUT OFF</button>
+      <button type="button" class="mv-chip" id="mv-opt-debug" aria-pressed="false">FOREST: PATROL DEBUG OFF</button>
+    </div>
   </div>
 </div>
 <div class="mv-overlay" id="mv-error" hidden role="alert">
@@ -136,6 +153,7 @@
 <script src="js/movement/guard-health.js"></script>
 <script src="js/movement/guard.js"></script>
 <script src="js/movement/test-area.js"></script>
+<script src="js/movement/level-forest.js"></script>
 <script src="js/movement/aim.js"></script>
 <script src="js/movement/aim-pose.js"></script>
 <script src="js/movement/pistol.js"></script>

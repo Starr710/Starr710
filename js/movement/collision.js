@@ -14,6 +14,45 @@ SC.mv = SC.mv || {};
     this.meshes = [];     // meshes the camera must not pass through
     this.surfaces = [];   // {minX,maxX,minZ,maxZ,type}: ground patches (noise, footstep sounds)
     this.defaultSurface = 'concrete';
+    this.bounds = null;   // Step 24: optional playable area, a closed polygon [[x, z], …] (a level's natural edge); none in the Test Lab
+  };
+
+  // Step 24: each level keeps its own obstacles, surfaces and bounds; the one world swaps between them
+  mv.CollisionWorld.prototype.store = function () { return { boxes: this.boxes, cylinders: this.cylinders, meshes: this.meshes, surfaces: this.surfaces, defaultSurface: this.defaultSurface, bounds: this.bounds }; };
+  mv.CollisionWorld.prototype.fresh = function () { this.boxes = []; this.cylinders = []; this.meshes = []; this.surfaces = []; this.defaultSurface = 'concrete'; this.bounds = null; return this.store(); };
+  mv.CollisionWorld.prototype.use = function (s) { Object.assign(this, s); };
+
+  // ---------------------------------------------------------------- bounds (Step 24)
+  // the nearest point on the polygon's edge to (x, z), and whether (x, z) is inside it
+  mv.CollisionWorld.prototype.boundsNearest = function (x, z, out) {
+    const B = this.bounds; out = out || {};
+    let inside = false, best = Infinity, bx = x, bz = z;
+    for (let i = 0, j = B.length - 1; i < B.length; j = i++) {
+      const ax = B[j][0], az = B[j][1], cx = B[i][0], cz = B[i][1];
+      if ((cz > z) !== (az > z) && x < (ax - cx) * (z - cz) / (az - cz) + cx) inside = !inside;
+      const ex = cx - ax, ez = cz - az, l2 = ex * ex + ez * ez, t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / l2)) : 0;
+      const px = ax + ex * t, pz = az + ez * t, d = (x - px) * (x - px) + (z - pz) * (z - pz);
+      if (d < best) { best = d; bx = px; bz = pz; }
+    }
+    out.inside = inside; out.x = bx; out.z = bz; out.d = Math.sqrt(best);
+    return out;
+  };
+  // is (x, z) inside the playable area, at least `margin` m from its edge? (always true without bounds)
+  mv.CollisionWorld.prototype.inBounds = function (x, z, margin) {
+    if (!this.bounds) return true;
+    const n = this.boundsNearest(x, z, this._bn || (this._bn = {}));
+    return n.inside && n.d >= (margin || 0);
+  };
+  // does the ground segment p→q cross the edge of the playable area? (never without bounds)
+  mv.CollisionWorld.prototype.crossesBounds = function (p, q) {
+    const B = this.bounds; if (!B) return false;
+    for (let i = 0, j = B.length - 1; i < B.length; j = i++) {
+      const ax = B[j][0], az = B[j][1], bx = B[i][0], bz = B[i][1];
+      const d1 = (bx - ax) * (p.z - az) - (bz - az) * (p.x - ax), d2 = (bx - ax) * (q.z - az) - (bz - az) * (q.x - ax);
+      const d3 = (q.x - p.x) * (az - p.z) - (q.z - p.z) * (ax - p.x), d4 = (q.x - p.x) * (bz - p.z) - (q.z - p.z) * (bx - p.x);
+      if ((d1 > 0) !== (d2 > 0) && (d3 > 0) !== (d4 > 0)) return true;
+    }
+    return false;
   };
 
   // a rectangular ground patch of a surface type ('metal', 'grass', …)
@@ -102,6 +141,15 @@ SC.mv = SC.mv || {};
         nx += dx; nz += dz; hit = moved = true;
       }
       if (!moved) break;
+    }
+    // Step 24: a level's natural edge: kept inside it, r m from the edge (sliding along it like a wall)
+    if (this.bounds) {
+      const n = this.boundsNearest(x, z, this._bn || (this._bn = {}));
+      if (!n.inside || n.d < r) {
+        let ix = x - n.x, iz = z - n.z, l = Math.hypot(ix, iz) || 1; ix /= l; iz /= l;
+        if (!n.inside) { ix = -ix; iz = -iz; }
+        x = n.x + ix * r; z = n.z + iz * r; nx += ix; nz += iz; hit = true;
+      }
     }
     const nl = Math.hypot(nx, nz) || 1;
     out.x = x; out.z = z; out.nx = hit ? nx / nl : 0; out.nz = hit ? nz / nl : 0; out.hit = hit;

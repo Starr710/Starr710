@@ -249,3 +249,18 @@ body.mv-holding #mv-use, body:not(.playing) #mv-use { visibility: hidden; }
 #mv-defeat { position: absolute; left: 50%; top: 38%; transform: translateX(-50%); pointer-events: none; z-index: 4; padding: 8px 16px; font-family: var(--font-mono); font-size: 14px; letter-spacing: 2px; color: #ffd9cf; background: rgba(20, 10, 8, 0.72); border: 1px solid #c9483b; white-space: nowrap; }
 #mv-defeat[hidden] { display: none; }
 body.mv-defeated #mv-aim, body.mv-defeated #mv-cqc, body.mv-defeated #mv-crouch, body.mv-defeated #mv-use { opacity: 0.25; }
+
+/* Step 24: the level choice (two levels, two forest options), the objective banner, LEVEL COMPLETE, the LEVELS chip */
+.mv-box { max-height: 100%; overflow-y: auto; }
+.mv-levels { display: flex; flex-wrap: wrap; gap: 8px; }
+.mv-levels .mv-primary { flex: 1 1 140px; min-height: 48px; font-size: 13px; letter-spacing: 1.5px; }
+.mv-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.mv-opts .mv-chip { flex: 1 1 160px; font-size: 10px; letter-spacing: 1px; min-height: 36px; }
+#mv-levels[hidden], #mv-opts[hidden], #mv-complete[hidden], #mv-objective[hidden] { display: none; }
+#mv-objective { position: absolute; left: 50%; top: 30%; transform: translateX(-50%); pointer-events: none; z-index: 3; padding: 8px 16px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 2px; color: var(--text); background: rgba(14, 17, 13, 0.7); border: 1px solid var(--line); white-space: nowrap; transition: opacity .6s; }
+#mv-objective.fade { opacity: 0; }
+#mv-complete { z-index: 9; }
+#mv-complete .mv-title { font-size: 26px; color: var(--accent); }
+#mv-menu { display: none; }
+#mv-stats[hidden] ~ .mv-topright #mv-menu { display: inline-block; }
+body:not(.playing) #mv-menu { display: none; }

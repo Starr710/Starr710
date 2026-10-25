@@ -16,6 +16,7 @@
       concrete: { gain: 0.8, voice: 'concrete' },   // dry tap with a soft heel thump
       metal: { gain: 0.75, voice: 'metal' },        // clank with a short metallic ring
       grass: { gain: 0.9, voice: 'grass' },         // soft swish and rustle, no thump
+      dirt: { gain: 0.6, voice: 'concrete' },       // Step 24: a duller tap on a packed trail
     },
   };
 

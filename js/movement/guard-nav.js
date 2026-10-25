@@ -25,6 +25,7 @@
   mv.GuardNav.prototype.clear = function (p, q) {
     const dx = q.x - p.x, dz = q.z - p.z, len = Math.hypot(dx, dz);
     if (len < 1e-6) return !this.inside(p);
+    if (this.world.bounds && this.world.crossesBounds(p, q)) return false;   // (Step 24: never out across a level's edge)
     const nx = -dz / len, nz = dx / len, w = this.radius + 0.05, h = this.cfg.rayHeight;
     for (const o of [-w, 0, w]) {
       _a.set(p.x + nx * o, h, p.z + nz * o); _b.set(q.x + nx * o, h, q.z + nz * o);
@@ -38,6 +39,7 @@
     const r = this.radius;
     for (const b of this.world.boxes) if (p.x > b.minX - r && p.x < b.maxX + r && p.z > b.minZ - r && p.z < b.maxZ + r) return true;
     for (const c of this.world.cylinders) if (!c.noSight && Math.hypot(p.x - c.x, p.z - c.z) < c.r + r) return true;
+    if (this.world.bounds && !this.world.inBounds(p.x, p.z, r)) return true;   // (Step 24: outside a level's edge counts as solid)
     return false;
   };
 
@@ -45,7 +47,8 @@
     const c = this.cfg, off = this.radius + c.clearance, nodes = [];
     for (const b of this.world.boxes) for (const [x, z] of [[b.minX - off, b.minZ - off], [b.maxX + off, b.minZ - off], [b.minX - off, b.maxZ + off], [b.maxX + off, b.maxZ + off]]) nodes.push({ x, z });
     for (const cy of this.world.cylinders) if (!cy.noSight) for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; nodes.push({ x: cy.x + Math.cos(a) * (cy.r + off), z: cy.z + Math.sin(a) * (cy.r + off) }); }
-    this.nodes = nodes.filter(n => Math.abs(n.x) < c.bound && Math.abs(n.z) < c.bound && !this.inside(n));
+    // (a level with its own edge (Step 24) uses that instead of the lab's square perimeter)
+    this.nodes = nodes.filter(n => (this.world.bounds || (Math.abs(n.x) < c.bound && Math.abs(n.z) < c.bound)) && !this.inside(n));
     this.links = this.nodes.map(() => []);
     for (let i = 0; i < this.nodes.length; i++) for (let j = i + 1; j < this.nodes.length; j++) {
       if (this.clear(this.nodes[i], this.nodes[j])) { const d = Math.hypot(this.nodes[i].x - this.nodes[j].x, this.nodes[i].z - this.nodes[j].z); this.links[i].push([j, d]); this.links[j].push([i, d]); }

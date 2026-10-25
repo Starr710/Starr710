@@ -19,6 +19,7 @@
       concrete: { intensity: 0, range: 1 },        // standard: sneak 2.5 m, stealth walk 6 m, jog 14 m
       metal: { intensity: 0.5, range: 1.15 },      // louder: ≈4.9 / 11.5 / 25 m
       grass: { intensity: -0.5, range: 0.85 },     // softer: ≈1.1 / 3.6 / 8.5 m
+      dirt: { intensity: 0, range: 1 },            // Step 24: a packed dirt trail: standard, like concrete (no new balance)
     },
     // footstep noise level per gait id (motor.gait.id); steps taken while
     // turning on the spot or settling after a stop count as the quietest

@@ -17,7 +17,9 @@
     loop: true,            // after the last waypoint, back to the first (false: walk the route back and forth)
     push: 0.42,            // stick-equivalent push: ≈1.15 m/s, a relaxed walk (never a jog)
     // waypoints: { x, z, pause: [min, max] s (0 / omitted = walk straight through),
-    //   face: facing (degrees, 0 = +Z, 90 = +X) to observe in, looks: [° from face, …] }
+    //   face: facing (degrees, 0 = +Z, 90 = +X) to observe in, looks: [° from face, …],
+    //   next: the waypoint after this one (Step 24, optional; otherwise the route order) }
+    // A lookout (Step 24) is a route whose points all stand at his post: he only turns from one facing to the next
     points: [],
     arriveWithin: 0.45,    // m from an observation point where he lets the walk finish
     passWithin: 1.2,       // m from a pass-through point where he heads on to the next one
@@ -52,7 +54,8 @@
 
   mv.GuardPatrol.prototype.point = function (i) { const p = this.cfg.points[i]; return p ? new THREE.Vector3(p.x, 0, p.z) : null; };
   mv.GuardPatrol.prototype.nextIndex = function (i) {
-    const n = this.cfg.points.length;
+    const n = this.cfg.points.length, p = this.cfg.points[i];
+    if (p && p.next != null) return p.next;   // (Step 24: an explicit next waypoint)
     if (this.cfg.loop) return (i + 1) % n;
     if (i + this.dir < 0 || i + this.dir >= n) this.dir = -this.dir;
     return i + this.dir;
