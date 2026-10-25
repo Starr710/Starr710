@@ -3069,13 +3069,15 @@ const CHECKS = {
   // put both guards back at their posts, standing and conscious, and clear the throw
   async throwTouch() {
     const page = await touchPage(), Tc = page.touch;
-    const box = async sel => page.locator(sel).boundingBox();
+    let step = 'start';
+    // a missing button names the step and the state it failed in (instead of a bare crash)
+    const box = async sel => { const b = await page.locator(sel).boundingBox(); if (!b) throw new Error(`${sel} not shown at "${step}": ` + JSON.stringify(await page.evaluate(() => ({ cqc: MV.cqc.state, last: MV.cqc.lastTry, tap: MV.input.cqcLast, heldFor: MV.input.cqcHeldFor, takedown: MV.cqc.lastTakedown, ko: MV.guard2.ko.state, aware: MV.guard2.awareness.state })))); return b; };
     const tapAt = async (b, ms) => { { const down = Tc('touchStart', [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 7 }]); await page.waitForTimeout(ms || 80); const up = Tc('touchEnd', []); await down; await up; /* finger-up on time, not after the page acknowledges finger-down */ } await page.waitForTimeout(120); };
     const behind = async () => { await page.evaluate(() => { const g = MV.guard2; const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); }); await page.waitForTimeout(250); };
     const grab = async () => { await tapAt(await box('#mv-cqc')); await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(300); };
     await page.evaluate(() => { MV.guard2.reset(); document.getElementById('mv-stats').hidden = false; });
     const hiddenFree = await page.evaluate(() => document.getElementById('mv-throw').hidden);
-    await behind(); await grab();
+    step = 'first grab'; await behind(); await grab();
     const shown = await page.evaluate(() => ({ hidden: document.getElementById('mv-throw').hidden, ready: document.getElementById('mv-throw').classList.contains('ready'), cqc: document.getElementById('mv-cqc').textContent }));
     const tb = await box('#mv-throw'), cb = await box('#mv-cqc'), kb = await box('#mv-crouch'), vw = page.viewportSize().width;
     const over = (a, b) => !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
@@ -3088,7 +3090,7 @@ const CHECKS = {
     await tapAt(await box('#mv-cqc')); await page.waitForFunction(() => MV.cqc.state === 'FREE', null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(200);
     const released = await page.evaluate(() => ({ state: MV.cqc.state, restrained: !!MV.guard2.restraint, down: MV.guard2.isDown(), aware: MV.guard2.awareness.state, hidden: document.getElementById('mv-throw').hidden }));
     // grab again; THROW with the stick held, holding the button 600 ms, then a second tap mid-throw
-    await page.evaluate(() => { MV.guard2.reset(); }); await behind(); await grab();
+    step = 'second grab'; await page.evaluate(() => { MV.guard2.reset(); }); await behind(); await grab();
     const t = await box('#mv-throw');
     await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 310, id: 1 }]);
     await Tc('touchStart', [{ x: 150, y: 310, id: 1 }, { x: t.x + t.width / 2, y: t.y + t.height / 2, id: 8 }]);
@@ -3104,7 +3106,7 @@ const CHECKS = {
       g: MV.guards.map(g => ({ ko: g.ko.state, aware: g.awareness.state, post: Math.hypot(g.position.x - g.post.x, g.position.z - g.post.z), tilt: g.fall.quaternion.w, restrained: !!g.restraint, col: Math.hypot(g.collider.x - g.position.x, g.collider.z - g.position.z) })) }));
     const resetKO = await state();
     // RESET mid-throw
-    await behind(); await grab(); await tapAt(await box('#mv-throw'));
+    step = 'grab after RESET'; await behind(); await grab(); await tapAt(await box('#mv-throw'));
     await page.waitForFunction(() => MV.cqc.thr && MV.cqc.thr.phase === 'throw', null, { timeout: 8000, polling: 'raf' }).catch(() => {});
     const during = await page.evaluate(() => MV.cqc.thr && MV.cqc.thr.phase);
     await page.tap('#mv-reset'); await page.waitForTimeout(300);
@@ -3766,6 +3768,97 @@ const CHECKS = {
     const rows = Object.entries(r);
     // still pose ≥ 15 cm; the crouch-walk arm swing passes closer (≈13 cm as approved), so ≥ 12 cm there
     return { pass: rows.every(([k, v]) => v[0] >= (k === 'crouch idle' ? 0.15 : 0.12) && v[1] >= 0.15), detail: rows.map(([k, v]) => `${k}: hand–shin ${cm(v[0])}, thigh–body ${cm(v[1])}`).join('; ') };
+  },
+
+  // Step 18.1: the right-hand controls are one row (AIM · CQC · CROUCH, THROW · CHOKE only while
+  // holding a guard) above an open camera-swipe area in the lower right. On several iPhone
+  // landscape sizes: every button on screen, apart, out of the stick's half and below STATS, none
+  // over the crosshair; the lower-right area holds no control and really takes camera drags
+  // (standing and aiming, with the left thumb walking); taps just outside a button don't press it;
+  // a drag across the row presses nothing; AIM, CROUCH and CQC (grab, release, quick takedown) work
+  // by real touches
+  async controlLayout() {
+    const out = [], fails = [];
+    for (const [w, h, full] of [[844, 390, true], [667, 375], [932, 430], [780, 360]]) {
+      const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true });
+      const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(e.message));
+      await page.goto(base + '/movement.html'); await page.waitForSelector('#mv-start:not([hidden])', { timeout: 120000 });
+      await page.tap('#mv-start'); await page.waitForTimeout(300);
+      const cdp = await ctx.newCDPSession(page), T = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+      await page.evaluate(() => { MV.guard.patrol.enabled = false; MV.guard.personality.enabled = false; MV.guard.reset(); MV.motor.teleport(-6, -20, 0); MV.cam.snap(MV.motor); });
+      const geo = await page.evaluate(() => {
+        const W = innerWidth, H = innerHeight, R = id => { const e = document.getElementById(id), r = e.getBoundingClientRect(); return { id, l: r.left, t: r.top, r: r.right, b: r.bottom, cx: (r.left + r.right) / 2, cy: (r.top + r.bottom) / 2 }; };
+        document.getElementById('mv-throw').hidden = false; document.getElementById('mv-choke').hidden = false;   // (laid out as while holding a guard)
+        const ids = ['mv-aim', 'mv-cqc', 'mv-crouch', 'mv-throw', 'mv-choke'], B = ids.map(R);
+        const stats = R('mv-stats'), chips = ['mv-reset', 'mv-stats-btn'].map(R);
+        document.getElementById('mv-throw').hidden = true; document.getElementById('mv-choke').hidden = true;
+        let gap = Infinity; for (let i = 0; i < B.length; i++) for (let j = i + 1; j < B.length; j++) gap = Math.min(gap, Math.hypot(B[i].cx - B[j].cx, B[i].cy - B[j].cy) - (B[i].r - B[i].l) / 2 - (B[j].r - B[j].l) / 2);
+        const rowBottom = Math.max(...B.map(b => b.b));
+        // the swipe area: right of the screen's middle (55%), below the row, to the edges
+        const zone = { l: 0.55 * W, t: rowBottom + 12, r: W, b: H };
+        let blocked = 0, n = 0;
+        for (let x = zone.l + 4; x < zone.r - 2; x += 12) for (let y = zone.t + 4; y < zone.b - 2; y += 12) { n++; const e = document.elementFromPoint(x, y); if (!e || e.tagName !== 'CANVAS') blocked++; }
+        const inZone = B.filter(b => !(b.r <= zone.l || b.l >= zone.r || b.b <= zone.t || b.t >= zone.b)).map(b => b.id);
+        const xh = { x: W / 2, y: H / 2 }, overXh = B.slice(0, 3).filter(b => xh.x > b.l - 16 && xh.x < b.r + 16 && xh.y > b.t - 16 && xh.y < b.b + 16).map(b => b.id);
+        const centreHit = ids.slice(0, 3).every(id => { const b = R(id); return document.elementFromPoint(b.cx, b.cy).closest('#' + id); });
+        // just outside each circle (the corners of its box) belongs to the camera, not the button
+        const corners = ids.slice(0, 3).every(id => { const b = R(id); return [[b.l + 3, b.t + 3], [b.r - 3, b.t + 3], [b.l + 3, b.b - 3], [b.r - 3, b.b - 3]].every(([x, y]) => !document.elementFromPoint(x, y).closest('button')); });
+        return { W, H, B, gap, rowBottom, zone, zoneW: (zone.r - zone.l) / W, zoneH: (zone.b - zone.t) / H, blocked, n, inZone, overXh, centreHit, corners,
+          onScreen: B.every(b => b.l >= 8 && b.r <= W - 8 && b.t >= 8 && b.b <= H - 8), belowStats: B.every(b => b.t >= stats.b && chips.every(c => b.t >= c.b)), outOfStick: B.every(b => b.l >= 0.45 * W) };
+      });
+      const r = { geo };
+      const tapAt = async (x, y, id) => { const d = T('touchStart', [{ x, y, id }]); await page.waitForTimeout(70); const u = T('touchEnd', [{ x, y, id }]); await d; await u; await page.waitForTimeout(120); };
+      const st = () => page.evaluate(() => ({ aim: MV.aim.active, yaw: MV.cam.yaw, pitch: MV.cam.pitch, crouch: MV.input.crouch, cqc: MV.cqc.state, spd: MV.motor.speed, look: !!MV.input.lookT, joy: !!MV.input.joy, cqcLast: MV.input.cqcLast, ko2: MV.guard2.ko.state }));
+      const wr = a => Math.atan2(Math.sin(a), Math.cos(a));
+      const aim = geo.B[0], cqcB = geo.B[1], cr = geo.B[2], Z = geo.zone;
+      // a drag from the bottom-right corner area turns the camera both ways
+      const drag = async (x0, y0, dx, dy, id, keep) => { await T('touchStart', keep ? [...keep, { x: x0, y: y0, id }] : [{ x: x0, y: y0, id }]); for (let i = 1; i <= 10; i++) { await T('touchMove', keep ? [...keep, { x: x0 + dx * i / 10, y: y0 + dy * i / 10, id }] : [{ x: x0 + dx * i / 10, y: y0 + dy * i / 10, id }]); await page.waitForTimeout(25); } await T('touchEnd', [{ x: x0 + dx, y: y0 + dy, id }]); await page.waitForTimeout(80); };
+      const cx = Z.l + (Z.r - Z.l) * 0.75, cy = Z.t + (Z.b - Z.t) * 0.7;   // well into the corner
+      let s0 = await st(); await drag(cx, cy, -90, -30, 3); let s1 = await st();
+      r.swipe = { yaw: wr(s1.yaw - s0.yaw), pitch: s1.pitch - s0.pitch, stray: s1.aim || s1.crouch !== s0.crouch || s1.cqc !== 'FREE' };
+      // AIM: a tap on it toggles and doesn't move the camera
+      s0 = await st(); await tapAt(aim.cx, aim.cy, 4); await page.waitForTimeout(500); s1 = await st();
+      r.aimOn = { on: s1.aim, yaw: wr(s1.yaw - s0.yaw), pitch: s1.pitch - s0.pitch };
+      // aiming: left thumb walking while the right drags from the corner area
+      const L = [{ x: 0.18 * w, y: 0.8 * h, id: 1 }];
+      await T('touchStart', L); await T('touchMove', [{ x: 0.18 * w, y: 0.8 * h - 55, id: 1 }]); L[0].y -= 55; await page.waitForTimeout(500);
+      s0 = await st(); await drag(cx, cy, 70, 25, 5, L); s1 = await st();
+      r.twoThumbs = { spd: s1.spd, yaw: wr(s1.yaw - s0.yaw), pitch: s1.pitch - s0.pitch, joy: s1.joy, aim: s1.aim };
+      // AIM off by a tap while still walking: the stick keeps going
+      await T('touchStart', [...L, { x: aim.cx, y: aim.cy, id: 6 }]); await page.waitForTimeout(70); await T('touchEnd', [{ x: aim.cx, y: aim.cy, id: 6 }]); await page.waitForTimeout(400);
+      r.aimOff = await st(); await T('touchEnd', L); await page.waitForTimeout(500);
+      // near misses: the corners of AIM's / CROUCH's box, and halfway between neighbours
+      s0 = await st();
+      for (const b of [aim, cr]) await tapAt(b.l + 3, b.t + 3, 7);
+      await tapAt((aim.cx + cqcB.cx) / 2, aim.cy + (aim.b - aim.t) * 0.45, 8);
+      s1 = await st(); r.nearMiss = s1.aim === s0.aim && s1.crouch === s0.crouch && s1.cqc === 'FREE' && s1.cqcLast === s0.cqcLast;
+      // a camera drag starting in the open area and sliding across the row presses nothing
+      s0 = await st(); await drag(cx, Z.t + 6, -(cx - cr.cx), -(Z.t + 6 - cr.cy), 9); s1 = await st();
+      r.across = s1.aim === s0.aim && s1.crouch === s0.crouch && s1.cqc === 'FREE' && s1.cqcLast === s0.cqcLast && Math.abs(wr(s1.yaw - s0.yaw)) > 0.05;
+      // CROUCH
+      await tapAt(cr.cx, cr.cy, 10); const c1 = (await st()).crouch; await tapAt(cr.cx, cr.cy, 11); const c2 = (await st()).crouch;
+      r.crouch = c1 && !c2;
+      if (full) {   // CQC by real touches on Guard 2: TAP grabs, TAP releases, HOLD takes him down
+        const behind = () => page.evaluate(() => { const g = MV.guard2; g.reset(); MV.cqc.cancel(); const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); });
+        await behind(); await page.waitForTimeout(300); await tapAt(cqcB.cx, cqcB.cy, 12);
+        await page.waitForFunction(() => MV.cqc.state === 'GRAPPLING', null, { timeout: 8000 }).catch(() => {}); const grab = (await st()).cqc;
+        const rel = await page.locator('#mv-cqc').boundingBox(); await tapAt(rel.x + rel.width / 2, rel.y + rel.height / 2, 13);
+        await page.waitForFunction(() => MV.cqc.state === 'FREE', null, { timeout: 8000 }).catch(() => {}); const released = (await st()).cqc;
+        await behind(); await page.waitForTimeout(300);
+        await T('touchStart', [{ x: cqcB.cx, y: cqcB.cy, id: 14 }]); await page.waitForFunction(() => MV.cqc.state !== 'FREE', null, { timeout: 8000 }).catch(() => {});
+        await T('touchEnd', [{ x: cqcB.cx, y: cqcB.cy, id: 14 }]); await page.waitForFunction(() => MV.guard2.ko.state === 'UNCONSCIOUS', null, { timeout: 10000 }).catch(() => {});
+        const td = await st(); r.cqc = { grab, released, takedown: td.ko2, last: td.cqcLast };
+        await page.tap('#mv-reset'); await page.waitForTimeout(200);
+      }
+      const g = geo, ok = g.onScreen && g.belowStats && g.outOfStick && g.gap >= 8 && g.inZone.length === 0 && g.blocked === 0 && g.zoneW >= 0.44 && g.zoneH >= 0.4 && g.overXh.length === 0 && g.centreHit && g.corners
+        && Math.abs(r.swipe.yaw) > 0.2 && Math.abs(r.swipe.pitch) > 0.03 && !r.swipe.stray && r.aimOn.on && r.aimOn.yaw === 0 && r.aimOn.pitch === 0
+        && r.twoThumbs.aim && r.twoThumbs.joy && r.twoThumbs.spd > 1.2 && Math.abs(r.twoThumbs.yaw) > 0.1 && Math.abs(r.twoThumbs.pitch) > 0.01 && !r.aimOff.aim && r.aimOff.joy && r.aimOff.spd > 1
+        && r.nearMiss && r.across && r.crouch && (!full || (r.cqc.grab === 'GRAPPLING' && r.cqc.released === 'FREE' && r.cqc.takedown === 'UNCONSCIOUS')) && errs.length === 0;
+      if (!ok) fails.push(w + '×' + h);
+      out.push(`${w}×${h}: row y ${Math.round(g.B[0].t)}–${Math.round(g.rowBottom)} px, gaps ≥ ${g.gap.toFixed(0)} px, on screen/below STATS/out of the stick half ${g.onScreen}/${g.belowStats}/${g.outOfStick}, over the crosshair ${g.overXh.join(',') || 'none'}; swipe area ${Math.round(g.zoneW * 100)}% × ${Math.round(g.zoneH * 100)}% with ${g.inZone.length} controls, ${g.blocked}/${g.n} points not the camera; corner drag turned ${(r.swipe.yaw * 57.3).toFixed(0)}° / pitch ${(r.swipe.pitch * 57.3).toFixed(0)}°; AIM tap → ${r.aimOn.on} (camera still ${r.aimOn.yaw === 0 && r.aimOn.pitch === 0}); aiming, walking ${r.twoThumbs.spd.toFixed(2)} m/s + corner drag ${(r.twoThumbs.yaw * 57.3).toFixed(0)}°; AIM off while walking: ${r.aimOff.aim}, still walking ${r.aimOff.spd.toFixed(2)} m/s; near misses press nothing ${r.nearMiss}; drag across the row presses nothing ${r.across}; CROUCH ${r.crouch}${full ? `; CQC tap ${r.cqc.grab}, tap ${r.cqc.released}, hold → Guard 2 ${r.cqc.takedown}` : ''}${errs.length ? '; errors ' + errs.join(';') : ''}`);
+      await ctx.close();
+    }
+    return { pass: fails.length === 0, detail: (fails.length ? 'FAILED at ' + fails.join(', ') + ' — ' : '') + out.join(' | ') };
   },
 
   // ---------------------------------------------------------------- Step 18: aiming (AIM ONLY)
