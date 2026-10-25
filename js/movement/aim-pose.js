@@ -105,6 +105,8 @@
     P.visible = k > c.showAt; P.updateMatrixWorld(true);
   };
 
+  mv.AimPose.buildPistol = buildPistol;   // (the same placeholder for the guards' pistols, Step 21)
+
   // where a future shot would leave the pistol (world), or null while it isn't out
   mv.AimPose.prototype.muzzle = function (out) {
     if (!this.pistol.visible) return null;

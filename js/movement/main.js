@@ -125,6 +125,8 @@
     aim = new mv.Aim(motor, cam, camera, world, [guard, guard2]);
     aimPose = new mv.AimPose(visual, posture, scene);
     // Step 19: the pistol, fired with the CQC button (FIRE) while aiming
+    // Step 21: each guard's pistol (aiming only: nothing fires); the same rig as hers, so her hand calibration applies
+    guard.weapon = new mv.GuardWeapon(guard, scene, posture); guard2.weapon = new mv.GuardWeapon(guard2, scene, posture);
     pistol = new mv.Pistol({ aim, aimPose, cam, world, guards: [guard, guard2], noise, scene, audio: footAudio, marker: ui.hitmark });
     seeTarget = mv.visionTarget(visual, motor);
     const s = animator.stride;
@@ -272,7 +274,8 @@
         const a = guard.awareness, xz = p => p ? `(${p.x.toFixed(1)}, ${p.z.toFixed(1)})` : '—';
         const left = a.state === 'EVASION' && a.evasion ? ` · ${Math.max(0, a.evasion.end - a.clock).toFixed(0)} s left` : a.state === 'HEIGHTENED' && a.hs ? ` · ${Math.max(0, a.hs.end - a.clock).toFixed(0)} s left` : '';
         const label = { HEIGHTENED: 'HEIGHTENED SECURITY', RETURNING: 'RETURN TO POST' }[a.state] || a.state;
-        put(ui.aware, `${label}${left} · ${Math.round(a.suspicion * 100)}% · ${a.behavior}` + (guard.moving ? ' → ' + xz(guard.goal) : ''));
+        const wpn = g => { const w = g.weapon && g.weapon.status(); return w ? ' · ' + w : ''; };   // Step 21: his pistol (only once it's out)
+        put(ui.aware, `${label}${left} · ${Math.round(a.suspicion * 100)}% · ${a.behavior}` + (guard.moving ? ' → ' + xz(guard.goal) : '') + wpn(guard));
         const ago = t => t == null ? '' : ` ${(a.clock - t).toFixed(0)} s ago`;
         put(ui.memory, `seen ${xz(a.seen && a.seen.position)}${a.seen ? ago(a.seen.time) : ''} · heard ${a.heard && a.heard.uncertainty ? '≈' + xz(a.heard.estimate) + ' ±' + a.heard.uncertainty.toFixed(1) + ' m' : xz(a.heard && a.heard.position)} · ${a.confirmed ? (guard.vision.seen.rate > 0 ? 'CONFIRMED · in sight' : 'CONFIRMED · no contact') : 'not confirmed'}`);
         put(ui.reason, (a.evasion && a.state === 'EVASION' ? a.evasion.reason + (a.note ? ' · ' + a.note : '') : a.hs && a.state === 'HEIGHTENED' ? a.hs.reason + (a.note ? ' · ' + a.note : '') : a.note) || '–');
@@ -291,7 +294,7 @@
         put(ui.ko, hp(guard) + (guard.health && guard.health.lastDamage ? '' : guard.ko.status()) + (guard.awareness.attack ? ` · remembers ${guard.awareness.attack.kind === 'shot' ? 'being shot' : 'attack'} at ${xz(guard.awareness.attack.position)}` : ''));
         if (guard2) { const b = guard2.awareness, tr = `${guard2.personality.traits.primary}/${guard2.personality.traits.secondary}`;
           put(ui.g2, guard2.isDown() ? `${hp(guard2)}${guard2.health && guard2.health.lastDamage ? '' : guard2.ko.status() + ' · '}${tr}${b.attack ? ' · remembers attack at ' + xz(b.attack.position) : ''}`
-            : `${hp(guard2)}${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${tr} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}${guard2.ko.knockouts ? ' · ' + guard2.ko.status() : ''}`); }
+            : `${hp(guard2)}${b.state} · ${Math.round(b.suspicion * 100)}% · seen ${Math.round(guard2.vision.meter * 100)}% · ${tr} · ${guard2.restraint ? 'RESTRAINED' : guard2.atPost() ? 'at post' : 'off post ' + xz(guard2.position)}${guard2.ko.knockouts ? ' · ' + guard2.ko.status() : ''}${wpn(guard2)}`); }
         put(ui.post, `${xz(guard.post)} ${Math.round(guard.postYaw * 57.3)}° · ${guard.atPost() ? 'at post' : 'away from post'}${a.state === 'RETURNING' ? ' · returning' : ''}${a.stoodDownAt != null ? ' · stood down ' + (a.clock - a.stoodDownAt).toFixed(0) + ' s ago' : ''}${a.interrupted ? ' · ' + a.interrupted : ''}`);
       }
       put(ui.rate, animator ? animator.playRate.toFixed(2) + '×' : '–');

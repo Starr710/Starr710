@@ -85,6 +85,7 @@
     if (s.exposure < c.coverBlock) { s.blocked = true; s.why = 'blocked'; return s; }
     s.why = null;
     if (target.position) { s.position = target.position.clone(); s.position.y = 0; }
+    s.centre = (s.centre || new THREE.Vector3()).copy(centre);   // (Step 21: the point he sees her by: where an aim goes)
     if (dist <= c.closeRange) { s.rate = c.closeRate; return s; }
     const far = smooth(c.fullRateDistance, this.range(), dist), distF = 1 - (1 - c.farRateScale) * far;
     const m = c.movement, sp = target.speed;
