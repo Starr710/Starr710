@@ -32,6 +32,7 @@
   <div><span>CHOKE</span><b id="mv-chokestat">–</b></div>
   <div><span>TAKEDOWN</span><b id="mv-tkdnstat">–</b></div>
   <div><span>AIM</span><b id="mv-aimstat">–</b></div>
+  <div><span>SHOT</span><b id="mv-shotstat">–</b></div>
   </div>
   <div class="mv-sec">
   <div><i class="g1">G1</i><span>SEEN</span><b id="mv-guard">–</b></div>
@@ -68,12 +69,12 @@
 <div id="mv-joy-knob"></div>
 <div class="mv-look-hint">DRAG TO LOOK</div>
 <button type="button" id="mv-crouch" aria-pressed="false">CROUCH</button>
-<button type="button" id="mv-cqc"><svg class="mv-ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29"/></svg><span>CQC</span></button>  <!-- TAP: grab; HOLD (Step 16): quick takedown — the ring fills toward it -->
+<button type="button" id="mv-cqc"><svg class="mv-ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29"/></svg><span>CQC</span></button>  <!-- TAP: grab; HOLD (Step 16): quick takedown — the ring fills toward it. RELEASE while holding a guard; FIRE while aiming (Step 19) -->
 <button type="button" id="mv-throw" hidden>THROW</button>  <!-- Step 14: only while holding a guard -->
 <button type="button" id="mv-choke" hidden><svg class="mv-ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29"/></svg><span>CHOKE</span></button>  <!-- Step 15: press and hold while holding a guard; the ring fills as he goes under -->
 
 <button type="button" id="mv-aim" aria-pressed="false">AIM</button>  <!-- Step 18: TAP to aim / stop aiming (no shooting yet) -->
-<div id="mv-crosshair" aria-hidden="true" hidden><i></i><i></i><i></i><i></i><b></b></div>  <!-- Step 18: the aim point (the screen centre) while aiming -->
+<div id="mv-crosshair" aria-hidden="true" hidden><i></i><i></i><i></i><i></i><b></b><s id="mv-hitmark"><u></u><u></u><u></u><u></u></s></div>  <!-- Step 18: the aim point (the screen centre) while aiming -->
 
 <div class="mv-overlay" id="mv-loader" role="status" aria-live="polite">
   <div class="mv-box">
@@ -84,7 +85,7 @@
     <ul class="mv-help">
       <li>Left thumb: move. A light push sneaks, a medium push is a stealth walk, a full push jogs.</li>
       <li>CROUCH: toggle crouch. Crouched, a light push is a slow crouch, a fuller push a fast crouch.</li>
-      <li>Right thumb: turn the camera. AIM: tap to raise the pistol and aim (drag to aim), tap again to lower it.</li>
+      <li>Right thumb: turn the camera. AIM: tap to raise the pistol and aim (drag to aim), tap again to lower it. While aiming, CQC becomes FIRE: one shot per tap.</li>
       <li>Keyboard: WASD jog, hold Alt to stealth walk or Ctrl to sneak, C crouch, Q aim, mouse drag to look.</li>
     </ul>
     <button type="button" class="mv-chip mv-primary" id="mv-start" hidden>START</button>
@@ -131,6 +132,7 @@
 <script src="js/movement/test-area.js"></script>
 <script src="js/movement/aim.js"></script>
 <script src="js/movement/aim-pose.js"></script>
+<script src="js/movement/pistol.js"></script>
 <script src="js/movement/main.js"></script>
 <!-- SCRIPTS:END -->
 </body>

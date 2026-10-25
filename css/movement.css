@@ -210,3 +210,15 @@ body:not(.playing) #mv-aim { visibility: hidden; }
 #mv-crosshair.blocked b { background: transparent; border: 1px solid #f3eedb; left: -3px; top: -3px; }
 /* Step 18.1: the action row draws above the guards' screen-space cards (which never take touches) */
 #mv-aim, #mv-cqc, #mv-crouch, #mv-throw, #mv-choke { z-index: 2; }
+/* Step 19: while aiming the CQC button reads FIRE (same place, same size) */
+#mv-cqc.fire { opacity: 1; color: #ffd9cf; border-color: #e0574a; border-width: 2px; background: rgba(150, 40, 30, 0.45); font-weight: bold; letter-spacing: 1.5px; }
+#mv-cqc.fire.down { background: rgba(224, 87, 74, 0.75); }
+/* the hit marker: four short diagonal ticks round the crosshair, briefly, on a guard hit only */
+#mv-hitmark { position: absolute; left: 0; top: 0; width: 0; height: 0; text-decoration: none; visibility: hidden; }
+#mv-hitmark.hit { visibility: visible; animation: mv-hitmark 0.3s ease-out forwards; }
+#mv-hitmark u { position: absolute; width: 9px; height: 2px; left: -4.5px; top: -1px; background: #fff; box-shadow: 0 0 2px rgba(0, 0, 0, .9); }
+#mv-hitmark u:nth-child(1) { transform: rotate(45deg) translateX(13px); }
+#mv-hitmark u:nth-child(2) { transform: rotate(135deg) translateX(13px); }
+#mv-hitmark u:nth-child(3) { transform: rotate(225deg) translateX(13px); }
+#mv-hitmark u:nth-child(4) { transform: rotate(315deg) translateX(13px); }
+@keyframes mv-hitmark { from { opacity: 1; } to { opacity: 0; } }

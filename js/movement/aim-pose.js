@@ -40,6 +40,7 @@
     this.k = 0; this.t = { q: Q(), q2: Q(), m: new THREE.Matrix4(), m2: new THREE.Matrix4() };
     this._muzzle = new THREE.Vector3(0, 0.034, 0.17);
     this.gunDir = new THREE.Vector3(0, 0, 1);
+    this.kick = 0;   // Step 19: recoil 0…1 (pistol.js), easing back to 0
   };
 
   // per frame, after the posture layer and cqc.poseArms. k: aim blend 0…1; yaw: the aim's
@@ -72,6 +73,9 @@
     const G = sh.clone().addScaledVector(aimF, c.reach).addScaledVector(UP, -c.drop).addScaledVector(right, c.side);
     const gd = point && point.distanceTo(G) > c.near ? point.clone().sub(G).normalize() : dir.clone().normalize();
     this.gunDir.copy(gd);
+    // Step 19 recoil: the pistol kicks back and its muzzle climbs, the arms following it (the shot itself already left)
+    const kk = this.kick || 0, pc0 = mv.PistolDefaults;
+    if (kk > 0 && pc0) { G.addScaledVector(gd, -pc0.kickBack * kk); const ax = gd.clone().cross(UP); if (ax.lengthSq() > 1e-8) gd.applyAxisAngle(ax.normalize(), pc0.kickClimb * Math.PI / 180 * kk); }
     const gy = UP.clone().sub(gd.clone().multiplyScalar(UP.dot(gd))).normalize(), gx = gy.clone().cross(gd);
     const gq = Q().setFromRotationMatrix(new THREE.Matrix4().makeBasis(gx, gy, gd));
     // 5. arms onto it (full), then blended with the pose underneath by k

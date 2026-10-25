@@ -31,6 +31,7 @@
     this.focusVel = new THREE.Vector3();
     this.dist = this.cfg.distance;
     this.idleLook = 0;
+    this.kick = 0;   // Step 19: a shot's small upward camera kick (rad), recovering (pistol.js)
     this.aimTarget = 0; this.aimK = 0; this.aimP = 0;   // Step 18: 0 = normal view, 1 = aiming view (aimK: the eased aimP)
     this.ray = new THREE.Raycaster();
     this._o = new THREE.Vector3(); this._d = new THREE.Vector3();
@@ -82,7 +83,8 @@
     }
 
     // orbit offset + shoulder
-    const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch), sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+    const vp = this.pitch - (this.kick || 0);   // (the kick is on top of her own pitch, which it never changes)
+    const cp = Math.cos(vp), sp = Math.sin(vp), sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const rx = cy, rz = -sy;
     let shoulder = lerp(c.shoulder, A.shoulder);
     const distance = lerp(c.distance, A.distance);

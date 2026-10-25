@@ -8,7 +8,7 @@
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
     error: $('mv-error'), errorText: $('mv-error-text'), start: $('mv-start'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
-    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), chokeBtn: $('mv-choke'), chokestat: $('mv-chokestat'), tkdnstat: $('mv-tkdnstat'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), aimBtn: $('mv-aim'), crosshair: $('mv-crosshair'), aimstat: $('mv-aimstat'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
+    gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), chokeBtn: $('mv-choke'), chokestat: $('mv-chokestat'), tkdnstat: $('mv-tkdnstat'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), aimBtn: $('mv-aim'), crosshair: $('mv-crosshair'), aimstat: $('mv-aimstat'), hitmark: $('mv-hitmark'), shotstat: $('mv-shotstat'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
   const fail = msg => { ui.loader.hidden = true; ui.error.hidden = false; ui.errorText.textContent = msg; };
 
@@ -67,7 +67,7 @@
   // iOS: audio starts on the START tap; any later tap resumes it if the system suspended it
   document.addEventListener('touchend', () => { if (input.enabled) footAudio.unlock(); }, { passive: true });
   let footsteps = null, voice = null, caption = null, traitCard = null, indicator = null, cqc = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
-  let aim = null, aimPose = null;   // Step 18
+  let aim = null, aimPose = null, pistol = null;   // Step 18, Step 19
   let guard2 = null, guard2View = null, aware2View = null, caption2 = null, indicator2 = null, traitCard2 = null;
   // a second copy of a guard's screen-space element (caption, indicator, card), same classes, its own id
   const cloneUi = id => { const src = $(id), el = src.cloneNode(true); el.id = id + '-2'; src.parentNode.insertBefore(el, src.nextSibling); return el; };
@@ -124,11 +124,16 @@
     // Step 18: aiming (AIM ONLY: no shooting yet) and its temporary pose with a placeholder pistol
     aim = new mv.Aim(motor, cam, camera, world, [guard, guard2]);
     aimPose = new mv.AimPose(visual, posture, scene);
+    // Step 19: the pistol, fired with the CQC button (FIRE) while aiming
+    pistol = new mv.Pistol({ aim, aimPose, cam, world, guards: [guard, guard2], noise, scene, audio: footAudio, marker: ui.hitmark });
     seeTarget = mv.visionTarget(visual, motor);
     const s = animator.stride;
     ui.calib.textContent = `walk ${s.walk.speed.toFixed(2)} · run ${s.run.speed.toFixed(2)} m/s`;
     visual.place(motor.position, motor.yaw);
+    // (Step 19: the pistol and its flash and puffs are compiled now too, or the first shot would stall on it)
+    const warm = [aimPose.pistol, pistol.flash, ...pistol.puffs]; for (const o of warm) o.visible = true;
     renderer.compile(scene, camera);
+    for (const o of warm) o.visible = false;
     ui.loadText.textContent = 'Ready';
     ui.start.hidden = false;
   }).catch(err => fail('The character could not be loaded (' + (err && err.message || 'network error') + '). Reload to try again.'));
@@ -141,7 +146,7 @@
     document.body.classList.add('playing');
   });
   // RESET puts the player back at the start and the guard back at his post, calm
-  ui.reset.addEventListener('click', () => { input._cqcDrop(); /* a CQC press still down is cancelled too: no TAP or HOLD after RESET */ if (cqc) cqc.cancel(); if (aim) aim.reset(); spawn(); if (guard) guard.reset(); if (guard2) guard2.reset(); for (const u of [caption, indicator, caption2, indicator2]) if (u) u.hide(); });
+  ui.reset.addEventListener('click', () => { input._cqcDrop(); /* a CQC press still down is cancelled too: no TAP or HOLD after RESET */ if (cqc) cqc.cancel(); if (aim) aim.reset(); if (pistol) pistol.reset(); input._fireDrop(); spawn(); if (guard) guard.reset(); if (guard2) guard2.reset(); for (const u of [caption, indicator, caption2, indicator2]) if (u) u.hide(); });
   // the stats bar leaves room for RESET / STATS in its top-right corner
   const chipRoom = () => document.documentElement.style.setProperty('--chips-w', document.querySelector('.mv-topright').offsetWidth + 8 + 'px');
   chipRoom(); window.addEventListener('resize', chipRoom);
@@ -178,17 +183,18 @@
         if (input.aimTapped) { input.aimTapped = false; if (aim.cfg.mode !== 'hold') aim.toggle(allowed); }
         if (aim.cfg.mode === 'hold') { if (input.aiming()) aim.enter(allowed); else if (aim.active) aim.exit('AIM let go'); }
         if (aim.active && !allowed) aim.exit('interrupted');
-        cqc.blocked = aim.active;
+        cqc.blocked = aim.active; input.fireMode = aim.active;   // Step 19: while aiming the CQC button is FIRE
         const on = aim.active, locked = !on && !allowed;
-        if (cqcUi.aim !== on) { cqcUi.aim = on; ui.aimBtn.classList.toggle('on', on); ui.aimBtn.setAttribute('aria-pressed', String(on)); ui.cqcBtn.classList.toggle('aimlock', on); }
+        if (cqcUi.aim !== on) { cqcUi.aim = on; ui.aimBtn.classList.toggle('on', on); ui.aimBtn.setAttribute('aria-pressed', String(on)); ui.cqcBtn.classList.toggle('fire', on); }
         if (cqcUi.aimLocked !== locked) { cqcUi.aimLocked = locked; ui.aimBtn.classList.toggle('locked', locked); }
       }
       const grappling = cqc ? cqc.update(dt, dx, dz, mag) : false;   // CQC drives both characters while active
       if (cqc) {
         // the button: RELEASE while holding him; bright when a grab is possible (checked a few times a second)
         const choking = cqc.state === 'CHOKING' && cqc.ch.phase === 'hold';   // Step 15: RELEASE / THROW locked while CHOKE is held
-        const lbl = cqc.state === 'GRAPPLING' || choking ? 'RELEASE' : 'CQC', hold = cqc.active();
-        if ((cqcUi.t += dt) > 0.12) { cqcUi.t = 0; cqcUi.ready = !hold && !cqc.check(); cqcUi.thrReady = cqc.state === 'GRAPPLING' && cqc.throwCheck().ok; }
+        // one button, three jobs: FIRE while aiming (Step 19), RELEASE while holding a guard, CQC otherwise
+        const lbl = aim && aim.active ? 'FIRE' : cqc.state === 'GRAPPLING' || choking ? 'RELEASE' : 'CQC', hold = cqc.active();
+        if ((cqcUi.t += dt) > 0.12) { cqcUi.t = 0; cqcUi.ready = !hold && !(aim && aim.active) && !cqc.check(); cqcUi.thrReady = cqc.state === 'GRAPPLING' && cqc.throwCheck().ok; }
         // Step 14: THROW shows only while she holds a guard (lit when there's room to throw him)
         const thr = cqc.state === 'GRAPPLING' || choking;
         if (cqcUi.thr !== thr) { cqcUi.thr = thr; ui.throwBtn.hidden = !thr; ui.chokeBtn.hidden = !thr; document.body.classList.toggle('mv-holding', thr); if (thr) { cqcUi.thrReady = cqc.state === 'GRAPPLING' && cqc.throwCheck().ok; } }
@@ -233,6 +239,7 @@
     cam.update(dt, motor, input.look, input.mouse);
     if (aim) {   // Step 18: the aim ray (the screen centre) once the camera has moved; the crosshair
       if (cam.aimK > 0.002 || aim.active) aim.trace(aimPose.muzzle(aimMz), aimPose.gunDir);
+      if (pistol) pistol.update(dt, input.takeFire());   // Step 19: this frame's FIRE presses, against the crosshair as drawn
       const show = aim.active && cam.aimK > 0.6, onGuard = show && !!aim.target.guard, blocked = show && !aim.target.muzzleClear;
       if (cqcUi.xh !== show) { cqcUi.xh = show; ui.crosshair.hidden = !show; }
       if (cqcUi.xhG !== onGuard) { cqcUi.xhG = onGuard; ui.crosshair.classList.toggle('guard', onGuard); }
@@ -278,6 +285,7 @@
         put(ui.chokestat, cqc.chokeStatus(input.choking()));
         put(ui.tkdnstat, cqc.takedownStatus());
         put(ui.aimstat, aim.status(input.crouch));
+        put(ui.shotstat, pistol.status());
         put(ui.ko, guard.ko.status() + (guard.awareness.attack ? ` · remembers attack at ${xz(guard.awareness.attack.position)}` : ''));
         if (guard2) { const b = guard2.awareness, tr = `${guard2.personality.traits.primary}/${guard2.personality.traits.secondary}`;
           put(ui.g2, guard2.isDown() ? `${guard2.ko.status()} · ${tr}${b.attack ? ' · remembers attack at ' + xz(b.attack.position) : ''}`
@@ -294,5 +302,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { SCmv: mv, tick, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, get aim() { return aim; }, get aimPose() { return aimPose; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { SCmv: mv, tick, motor, cam, input, world, area, noise, footAudio, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, get aim() { return aim; }, get aimPose() { return aimPose; }, get pistol() { return pistol; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

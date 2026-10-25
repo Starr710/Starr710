@@ -3161,7 +3161,7 @@ const CHECKS = {
       const off = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), title: getComputedStyle(document.querySelector('.mv-head')).display !== 'none' }));
       await page.tap('#mv-stats-btn'); await page.waitForTimeout(400);
       const on = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), g2: document.getElementById('mv-g2').textContent }));
-      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 25 && g.fontPx >= 9.5
+      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 26 && g.fontPx >= 9.5
         && long.inside && long.right <= long.W && long.height <= 0.4 * long.H && off.hidden && off.pressed === 'false' && off.title && !on.hidden && on.pressed === 'true' && !/VERY LONG/.test(on.g2) && errs.length === 0;
       if (!ok) errors++;
       out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside}, title hidden and no value over RESET/STATS/CROUCH/CQC/THROW ${g.clear}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside}, ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden} (title back ${off.title}), on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
@@ -3770,6 +3770,252 @@ const CHECKS = {
     return { pass: rows.every(([k, v]) => v[0] >= (k === 'crouch idle' ? 0.15 : 0.12) && v[1] >= 0.15), detail: rows.map(([k, v]) => `${k}: hand–shin ${cm(v[0])}, thigh–body ${cm(v[1])}`).join('; ') };
   },
 
+  // ---------------------------------------------------------------- Step 19: pistol and the contextual CQC / FIRE / RELEASE button
+  // shared helpers (in the page): aim from a spot at a world point; one FIRE press; the shot
+  async _firePage(touch) {
+    const page = touch ? await touchPage() : await simPage();
+    await page.evaluate(() => {
+      const { motor, input, cam } = MV, dt = 1 / 60, A = MV.aim;
+      window.sim = n => { for (let i = 0; i < n; i++) MV.tick(dt, true); };
+      window.__t = 10000; window.press = () => { window.__t += 500; input._firePress(window.__t); };
+      window.aimAt = (px, pz, tx, ty, tz, crouch) => {
+        if (A.active) { input.aimTapped = true; sim(40); }
+        motor.teleport(px, pz, 0); cam.snap(motor); input.setCrouch(!!crouch); sim(40); input.aimTapped = true; sim(60);
+        for (let k = 0; k < 4; k++) { MV.camera.updateMatrixWorld(); const d = new THREE.Vector3(tx, ty, tz).sub(MV.camera.position).normalize(); cam.yaw = Math.atan2(-d.x, -d.z); cam.pitch = Math.asin(-d.y); sim(30); }
+      };
+      window.shotInfo = s => s && { n: s.n, what: s.what, kind: s.kind, guard: s.guard ? s.guard.cfg.label : null, hit: s.hit, dist: s.dist, point: s.point && s.point.clone(), blocked: s.muzzleBlocked, intended: s.intended, aimedPoint: s.aimed.point.clone(), origin: s.origin.clone(), dir: s.dir.clone(), muzzle: s.muzzle.clone(), heard: s.heardBy, level: s.noise.level, type: s.noise.type };
+    });
+    return page;
+  },
+
+  // the one button: CQC normally, FIRE while aiming, RELEASE while holding a guard, always in
+  // the same place; a FIRE press never grabs, a CQC press never fires; nothing carries over a
+  // mode change; HOLD CQC still takes a guard down once AIM is off; RESET clears the pistol
+  async fireButton() {
+    const page = await CHECKS._firePage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, A = MV.aim, cq = MV.cqc, P = MV.pistol, g2 = MV.guard2, B = document.getElementById('mv-cqc');
+      const look = () => { const b = B.getBoundingClientRect(), cs = getComputedStyle(B); return { text: B.textContent.trim(), fire: B.classList.contains('fire'), rect: [b.left, b.top, b.width, b.height].map(v => Math.round(v)).join(','), pos: [cs.right, cs.top, cs.width, cs.height].join(',') }; };
+      const behind = () => { cq.cancel(); g2.reset(); A.reset(); const b = g2.position.clone().addScaledVector(g2.forward(), -1.0); motor.teleport(b.x, b.z, g2.yaw); cam.snap(motor); sim(10); };
+      const out = {};
+      behind(); out.normal = look();
+      input.aimTapped = true; sim(60); out.aiming = look();
+      // a FIRE press behind him: a shot, never a grab
+      const g0 = cq.grabs; press(); sim(30); out.fireNoGrab = { shots: P.shots, grabs: cq.grabs - g0, cqc: cq.state, held: !!g2.restraint };
+      // switching CQC → FIRE with a pending CQC tap and a CQC press held down: no grab, no shot
+      input.aimTapped = true; sim(40);
+      cq.input._cqcPress(performance.now()); input.cqcTapped = true; input.aimTapped = true; sim(60);
+      const s0 = P.shots; cq.input._cqcUp(performance.now() + 900); sim(20);
+      out.cqcToFire = { cqc: cq.state, grabs: cq.grabs - g0, shots: P.shots - s0, takedowns: cq.takedowns || 0 };
+      // FIRE → CQC: presses queued as FIRE when AIM ends are dropped, not turned into CQC
+      press(); input.aimTapped = true; sim(1); sim(40);
+      out.fireToCqc = { shots: P.shots - s0, cqc: cq.state, grabs: cq.grabs - g0 };
+      // normal mode: a CQC tap grabs (no shot) and the button reads RELEASE
+      behind(); const s1 = P.shots; input.cqcTapped = true; sim(40); out.holding = look(); out.grab = { cqc: cq.state, shots: P.shots - s1 };
+      // a FIRE press can't happen while holding him: the button isn't FIRE, presses are ignored
+      press(); sim(5); out.noShotHolding = P.shots - s1 === 0;
+      input.aimTapped = true; sim(5); out.noAimHolding = !A.active;
+      input.cqcTapped = true; sim(40); out.released = cq.state;
+      // HOLD CQC (after aiming) still takes him down
+      behind(); input.aimTapped = true; sim(40); input.aimTapped = true; sim(40);
+      cq.input._cqcPress(performance.now() - 1000); let f = 0; while (cq.state === 'FREE' && f < 90) { MV.tick(1 / 60, true); f++; }   // (a press down 1 s: past the hold time)
+      cq.input._cqcUp(performance.now()); let n = 0; while (g2.ko.state !== 'UNCONSCIOUS' && n < 300) { MV.tick(1 / 60, true); n++; }
+      out.takedown = { ko: g2.ko.state, shots: P.shots - s1 };
+      // shooting disabled during the takedown / with him down and AIM refused while busy is Step 18's rule (aimCqc)
+      // RESET clears the pistol's state
+      behind(); input.aimTapped = true; sim(60); press(); MV.tick(1 / 60, true); const mid = { flash: P.flash.visible, kick: P.kick > 0, marker: document.getElementById('mv-hitmark').classList.contains('hit') };
+      press(); document.getElementById('mv-reset').click(); sim(2);
+      out.reset = { mid, shots: P.shots, last: P.lastShot, flash: P.flash.visible, kick: P.kick, camKick: cam.kick, pending: input._firePresses.length, marker: document.getElementById('mv-hitmark').classList.contains('hit'), text: look().text, fireMode: input.fireMode };
+      out.normalAgain = look();
+      return out;
+    });
+    const o = r, ok = o.normal.text === 'CQC' && !o.normal.fire && o.aiming.text === 'FIRE' && o.aiming.fire && o.holding.text === 'RELEASE' && o.normal.rect === o.aiming.rect && o.aiming.rect === o.holding.rect
+      && o.fireNoGrab.shots === 1 && o.fireNoGrab.grabs === 0 && o.fireNoGrab.cqc === 'FREE' && !o.fireNoGrab.held
+      && o.cqcToFire.cqc === 'FREE' && o.cqcToFire.grabs === 0 && o.cqcToFire.shots === 0 && o.cqcToFire.takedowns === 0
+      && o.fireToCqc.shots === 0 && o.fireToCqc.cqc === 'FREE' && o.fireToCqc.grabs === 0
+      && o.grab.cqc === 'GRAPPLING' && o.grab.shots === 0 && o.noShotHolding && o.noAimHolding && o.released === 'FREE' && o.takedown.ko === 'UNCONSCIOUS' && o.takedown.shots === 0
+      && o.reset.mid.flash && o.reset.mid.kick && o.reset.shots === 0 && o.reset.last === null && !o.reset.flash && o.reset.kick === 0 && o.reset.camKick === 0 && o.reset.pending === 0 && !o.reset.marker && o.reset.text === 'CQC' && o.normalAgain.rect === o.normal.rect && page.errors.length === 0;
+    return { pass: ok, detail: `button: "${o.normal.text}" / aiming "${o.aiming.text}" (fire style ${o.aiming.fire}) / holding "${o.holding.text}", same box ${o.normal.rect === o.aiming.rect && o.aiming.rect === o.holding.rect} (${o.normal.rect} / ${o.aiming.rect} / ${o.holding.rect}); FIRE press behind Guard 2: ${o.fireNoGrab.shots} shot, ${o.fireNoGrab.grabs} grabs; CQC tap pending + CQC held as AIM comes on, let go 0.9 s later: ${o.cqcToFire.grabs} grabs, ${o.cqcToFire.shots} shots, ${o.cqcToFire.takedowns} takedowns; FIRE pressed as AIM goes off: ${o.fireToCqc.shots} shots, ${o.fireToCqc.grabs} grabs; CQC tap → ${o.grab.cqc} (shots ${o.grab.shots}), FIRE press while holding: no shot ${o.noShotHolding}, AIM refused ${o.noAimHolding}, RELEASE → ${o.released}; HOLD CQC after aiming → Guard 2 ${o.takedown.ko}; RESET after a shot: shots ${o.reset.shots}, flash ${o.reset.flash}, kick ${o.reset.kick}, camera kick ${o.reset.camKick}, queued ${o.reset.pending}, hit marker ${o.reset.marker}, button "${o.reset.text}"; page errors ${page.errors.length}` };
+  },
+
+  // the shot: the camera's centre ray gives the point, the muzzle's line decides what it hits.
+  // Guards (Guard 2, and Guard 1 on his patrol), walls, crates, pillars, the floor; cover in
+  // front of the muzzle takes the shot; impact points on the real faces; feedback once per shot
+  // (flash, kick, one gunshot noise event); a hit marker only on a guard hit; slow frames never
+  // double a shot; nothing is injured
+  async fireHits() {
+    const page = await CHECKS._firePage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam, noise } = MV, A = MV.aim, P = MV.pistol, g1 = MV.guard, g2 = MV.guard2, mk = document.getElementById('mv-hitmark'), xh = document.getElementById('mv-crosshair');
+      let events = 0, gunEvents = []; noise.on(ev => { events++; if (ev.type === 'gunshot') gunEvents.push(ev); });
+      const one = () => { const e0 = gunEvents.length, f0 = P.flashes, k0 = P.kicks, s0 = P.shots; press(); MV.tick(1 / 60, true);
+        const s = shotInfo(P.lastShot); s.marker = mk.classList.contains('hit'); s.xhGuard = xh.classList.contains('guard'); s.gun = gunEvents.length - e0; s.flash = P.flashes - f0; s.kick = P.kicks - k0; s.shots = P.shots - s0;
+        // on the camera ray: the aimed point lies on origin + t·dir
+        const v = s.aimedPoint.clone().sub(s.origin); s.offRay = v.clone().sub(s.dir.clone().multiplyScalar(v.dot(s.dir))).length();
+        sim(25); return s; };
+      const out = {};
+      const gp = g2.position.clone();
+      aimAt(gp.x - 4, gp.z + 0.5, gp.x, 1.2, gp.z); out.g2 = one();
+      aimAt(gp.x - 4, gp.z + 0.5, gp.x + 2, 1.2, gp.z + 3); out.past = one();   // aimed past him: on into the yard
+      aimAt(-2, -12, -2, 1.2, -8); out.crate = one();
+      aimAt(4, 10, 4, 1.5, 13); out.wall = one();
+      aimAt(-17, -12, -14, 1.5, -12); out.pillar = one();
+      aimAt(-6, -14, -6, 0, -9); out.ground = one();
+      aimAt(3, -6.2, 3, 1.0, 12.8, true); out.low = one(); input.setCrouch(false);
+      // Guard 1 walking his patrol: aim at him where he is and fire as he moves
+      if (A.active) { input.aimTapped = true; sim(40); }
+      g1.patrol.enabled = true; g1.personality.enabled = false; g1.reset(); g2.reset(); sim(240);
+      const gp1 = g1.position.clone(), fw = g1.forward(); aimAt(gp1.x - fw.x * 5, gp1.z - fw.z * 5, gp1.x, 1.2, gp1.z);
+      let g1hit = null; for (let k = 0; k < 12 && !g1hit; k++) { MV.camera.updateMatrixWorld(); const d = new THREE.Vector3(g1.position.x, 1.2, g1.position.z).sub(MV.camera.position).normalize(); cam.yaw = Math.atan2(-d.x, -d.z); cam.pitch = Math.asin(-d.y); sim(8); const s = one(); if (s.guard && /^Guard 1/.test(s.guard)) g1hit = s; }
+      out.g1 = g1hit; out.g1moving = g1.moving || g1.patrol.status();
+      // slow frames: one press over several 1/20 s frames is one shot; two presses 50 ms apart in one frame are one shot (too fast), 300 ms apart two
+      const s0 = P.shots; window.__t += 1000; input._firePress(window.__t); for (let i = 0; i < 6; i++) MV.tick(1 / 20, true);
+      out.slowOne = P.shots - s0;
+      window.__t += 1000; input._firePress(window.__t); input._firePress(window.__t + 50); MV.tick(1 / 20, true); out.fast = P.shots - s0 - out.slowOne;
+      window.__t += 1000; input._firePress(window.__t); input._firePress(window.__t + 300); MV.tick(1 / 20, true); out.twoApart = P.shots - s0 - out.slowOne - out.fast;
+      // nothing injured: no health anywhere, conscious, his AI running
+      out.noInjury = [g1, g2].every(g => g.ko.state === 'CONSCIOUS' && !('health' in g) && !('hp' in g) && !g.restraint) && (g2.shotHits || 0) >= 1 && (g1.shotHits || 0) >= 1;
+      out.events = events;
+      return out;
+    });
+    const o = r, near = (a, b) => Math.abs(a - b) < 0.05;
+    const per = s => s && s.gun === 1 && s.flash === 1 && s.kick === 1 && s.shots === 1 && s.level === 5 && s.offRay < 1e-6;
+    const ok = [o.g2, o.past, o.crate, o.wall, o.pillar, o.ground, o.low].every(per)
+      && /^Guard 2/.test(o.g2.guard) && !o.g2.blocked && o.g2.marker && o.g2.xhGuard
+      && !o.past.guard && !o.past.marker && o.past.hit && o.past.kind !== 'guard'
+      && o.crate.kind === 'crate' && near(o.crate.point.z, -8.6) && !o.crate.marker && o.wall.kind === 'wall' && near(o.wall.point.z, 12.825) && !o.wall.marker
+      && o.pillar.kind === 'pillar' && Math.abs(Math.hypot(o.pillar.point.x - -14, o.pillar.point.z - -12) - 0.35) < 0.03 && o.ground.kind === 'ground' && Math.abs(o.ground.point.y) < 1e-6
+      && o.low.kind === 'crate' && o.low.blocked && o.low.intended !== 'crate' && o.low.point.z <= -5.49 && !o.low.marker
+      && o.g1 && per(o.g1) && o.g1.marker && o.slowOne === 1 && o.fast === 1 && o.twoApart === 2 && o.noInjury && page.errors.length === 0;
+    const d = s => s ? `${s.guard ? s.guard.split(' —')[0] : s.kind} ${s.dist.toFixed(2)} m${s.blocked ? ' (muzzle blocked, aimed at ' + s.intended + ')' : ''}${s.marker ? ', hit marker' : ''}` : 'none';
+    return { pass: ok, detail: `Guard 2 → ${d(o.g2)}; past him → ${d(o.past)}; tall crate → ${d(o.crate)} at z ${o.crate.point.z.toFixed(2)}; long wall → ${d(o.wall)} at z ${o.wall.point.z.toFixed(2)}; pillar → ${d(o.pillar)}; floor → ${d(o.ground)}; crouched behind the low crate aiming at the wall → ${d(o.low)}; Guard 1 on patrol → ${d(o.g1)}; each shot: 1 gunshot (L5) event, 1 flash, 1 kick, aimed point on the camera ray ${[o.g2, o.wall].every(per)}; slow frames: 1 press → ${o.slowOne} shot, presses 50 ms apart → ${o.fast} (the second too fast), 300 ms apart → ${o.twoApart}; no injury ${o.noInjury}; page errors ${page.errors.length}` };
+  },
+
+  // gunfire through the normal hearing: each guard who hears it has the shot's origin (the
+  // muzzle where she fired), never where she goes afterwards; a calm guard out of sight reacts
+  // by the normal rules (suspicious → investigates the origin), with no ALERT and no sighting;
+  // an unconscious guard hears nothing
+  async fireHearing() {
+    const page = await CHECKS._firePage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, A = MV.aim, P = MV.pistol, g1 = MV.guard, g2 = MV.guard2;
+      g1.patrol.enabled = false; g1.reset(); g2.reset();
+      // in the far corner by the spawn, out of both guards' sight (≈ 35 m away), firing into the perimeter wall
+      aimAt(-18, 18, -25, 1.0, 18);
+      const pre = { g1: g1.awareness.state, g2: g2.awareness.state, seen1: g1.awareness.seen, seen2: g2.awareness.seen };
+      press(); MV.tick(1 / 60, true);
+      const s = P.lastShot, origin = new THREE.Vector3(s.muzzle.x, 0, s.muzzle.z);
+      const rec = g => ({ heard: !!g.hearing.heard && g.hearing.heard.type === 'gunshot', at: g.hearing.heard && g.hearing.heard.position.distanceTo(origin), aw: g.awareness.heard && g.awareness.heard.position.distanceTo(origin) });
+      const right = { g1: rec(g1), g2: rec(g2), heardBy: s.heardBy };
+      // she walks away (out of sight) while they react
+      input.aimTapped = true; sim(30); input.move.x = -1; input.move.y = 0; sim(150); input.move.x = 0; sim(60);
+      const her = motor.position.clone();
+      const after = g => ({ state: g.awareness.state, focus: g.awareness.focus && g.awareness.focus.position.distanceTo(origin), focusHer: g.awareness.focus && Math.hypot(g.awareness.focus.position.x - her.x, g.awareness.focus.position.z - her.z), heardAt: g.awareness.heard && g.awareness.heard.position.distanceTo(origin), seen: g.awareness.seen, goal: g.goal ? Math.hypot(g.goal.x - origin.x, g.goal.z - origin.z) : null, confirmed: g.awareness.confirmed, susp: g.awareness.suspicion });
+      const a1 = after(g1), a2 = after(g2);
+      // an unconscious guard hears nothing
+      g2.reset(); const gp = g2.position.clone(); motor.teleport(gp.x, gp.z - 1, 0); cam.snap(motor); sim(5); g2.ko.knockOut({ position: g2.position.clone(), along: new THREE.Vector3(1, 0, 0), by: motor.position.clone() }); sim(5);
+      const before = g2.hearing.heardCount; aimAt(-2, -10.2, -2, 1.0, -8); press(); MV.tick(1 / 60, true);
+      const ko = { heard: g2.hearing.heardCount - before, state: g2.ko.state, why: g2.hearing.last && g2.hearing.last.why };
+      return { pre, right, a1, a2, her: { d: her.distanceTo(origin) }, ko, noiseRadius: s.noise.radius };
+    });
+    const o = r, okHear = o.right.g1.heard && o.right.g2.heard && o.right.g1.at < 1e-6 && o.right.g2.at < 1e-6 && o.right.g1.aw < 1e-6 && o.right.heardBy.length === 2;
+    const react = a => ['SUSPICIOUS', 'INVESTIGATING'].indexOf(a.state) >= 0 && !a.confirmed && a.seen === null && a.focus != null && a.focus < 0.01 && a.heardAt < 0.01;
+    const ok = okHear && o.pre.seen1 === null && o.pre.seen2 === null && react(o.a1) && react(o.a2) && o.her.d > 2 && o.ko.heard === 0 && o.ko.state === 'UNCONSCIOUS' && o.ko.why === 'unconscious' && page.errors.length === 0;
+    return { pass: ok, detail: `shot from the far corner (L5, reach ${o.noiseRadius.toFixed(0)} m): heard by ${o.right.heardBy.map(l => l.split(' —')[0]).join(', ')} at the muzzle's spot exactly ${okHear}; ${o.her.d.toFixed(1)} m later out of sight: Guard 1 ${o.a1.state} (${Math.round(o.a1.susp * 100)}%), looking at the shot's origin (${o.a1.focus != null ? o.a1.focus.toFixed(2) : '–'} m off), not at her (${o.a1.focusHer != null ? o.a1.focusHer.toFixed(1) : '–'} m), never saw her ${o.a1.seen === null}, not ALERT ${!o.a1.confirmed}; Guard 2 ${o.a2.state} (${Math.round(o.a2.susp * 100)}%), origin ${o.a2.focus != null ? o.a2.focus.toFixed(2) : '–'} m off, saw her ${o.a2.seen !== null}; unconscious Guard 2 heard ${o.ko.heard} (${o.ko.why}); page errors ${page.errors.length}` };
+  },
+
+  // firing while moving and crouched: each shot leaves along the camera's ray at that instant and
+  // hits what the crosshair is on; the aiming pace is unchanged by firing
+  async fireMoving() {
+    const page = await CHECKS._firePage();
+    const r = await page.evaluate(() => {
+      const { motor, input, cam } = MV, A = MV.aim, P = MV.pistol;
+      const out = {};
+      // facing the long wall from 5 m: every shot should land on it, on the crosshair's line
+      for (const [n, x, y, crouch] of [['still', 0, 0], ['forward', 0, 0.8], ['backward', 0, -1], ['left', -1, 0], ['right', 1, 0], ['diagonal', 0.7, 0.7], ['crouched', 1, 0, true], ['crouched still', 0, 0, true]]) {
+        aimAt(4, 7.5, 4, 1.3, 13, crouch);
+        input.move.x = x; input.move.y = y; sim(50);
+        let ok = 0, n0 = 0, spd = 0, off = 0, same = 0;
+        for (let k = 0; k < 4; k++) { press(); MV.tick(1 / 60, true); const s = P.lastShot; n0++; spd = Math.max(spd, motor.speed);
+          const v = s.aimed.point.clone().sub(s.origin); off = Math.max(off, v.clone().sub(s.dir.clone().multiplyScalar(v.dot(s.dir))).length());
+          if (s.kind === 'wall') ok++; if (s.kind === 'wall' && s.point.distanceTo(s.aimed.point) < 0.06) same++; sim(14); }
+        out[n] = { wall: ok, same, shots: n0, spd, off, pace: crouch ? A.cfg.crouchSpeed : A.cfg.speed, moving: x || y };
+        input.move.x = input.move.y = 0; sim(20);
+      }
+      input.setCrouch(false);
+      return out;
+    });
+    const rows = Object.entries(r), ok = rows.every(([k, v]) => v.wall === 4 && v.same === 4 && v.off < 1e-6 && (!v.moving || Math.abs(v.spd - v.pace) < 0.05)) && page.errors.length === 0;
+    return { pass: ok, detail: rows.map(([k, v]) => `${k}: ${v.wall}/4 on the wall, ${v.same}/4 at the crosshair's point${v.moving ? `, ${v.spd.toFixed(2)} m/s` : ''}`).join('; ') + `; page errors ${page.errors.length}` };
+  },
+
+  // iPhone: real touches. AIM, then FIRE taps (one shot each), a FIRE held 1 s (one shot),
+  // rapid taps, a cancelled touch, firing with the left thumb walking and the right dragging
+  // the camera from the lower-right area between taps, a finger held across the mode change
+  // (both ways), the page hidden; the frame rate while firing
+  async fireTouch() {
+    const page = await touchPage(), Tc = page.touch;
+    const B = async sel => { const b = await page.locator(sel).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const aim = await B('#mv-aim'), cqcB = await B('#mv-cqc');
+    const tap = async (p, id, ms) => { const d = Tc('touchStart', [{ x: p.x, y: p.y, id }]); await page.waitForTimeout(ms || 70); const u = Tc('touchEnd', [{ x: p.x, y: p.y, id }]); await d; await u; };
+    const st = () => page.evaluate(() => ({ shots: MV.pistol.shots, aim: MV.aim.active, k: MV.cam.aimK, cqc: MV.cqc.state, text: document.getElementById('mv-cqc').textContent.trim(), yaw: MV.cam.yaw, spd: MV.motor.speed, joy: !!MV.input.joy, look: !!MV.input.lookT, grabs: MV.cqc.grabs, tk: MV.cqc.takedowns || 0, fps: MV.fpsNow ? MV.fpsNow() : null }));
+    const settle = () => page.waitForFunction(() => MV.cam.aimK > 0.98, null, { timeout: 15000, polling: 'raf' }).catch(() => {});
+    const wr = a => Math.atan2(Math.sin(a), Math.cos(a));
+    await page.evaluate(() => { const g = MV.guard2, p = g.position.clone().addScaledVector(g.forward(), -4); MV.motor.teleport(p.x, p.z, g.yaw); MV.cam.snap(MV.motor); });
+    await tap(aim, 5); await settle(); const s0 = await st();
+    await tap(cqcB, 6); await page.waitForTimeout(250); const one = await st();
+    const dh = Tc('touchStart', [{ x: cqcB.x, y: cqcB.y, id: 7 }]); await page.waitForTimeout(1000); await Tc('touchEnd', [{ x: cqcB.x, y: cqcB.y, id: 7 }]); await dh; await page.waitForTimeout(150); const held = await st();
+    for (let i = 0; i < 5; i++) { await tap(cqcB, 10 + i, 60); await page.waitForTimeout(260); } const rapid = await st();
+    await Tc('touchStart', [{ x: cqcB.x, y: cqcB.y, id: 20 }]); await page.waitForTimeout(80); await Tc('touchCancel', []); await page.waitForTimeout(200); const cancelled = await st();
+    // two thumbs: walking + dragging from the lower-right area, firing in between
+    const W = page.viewportSize().width, H = page.viewportSize().height, dragAt = { x: W * 0.85, y: H * 0.82 };
+    await Tc('touchStart', [{ x: 150, y: 300, id: 1 }]); await Tc('touchMove', [{ x: 150, y: 245, id: 1 }]); await page.waitForTimeout(400);
+    const m0 = await st();
+    await Tc('touchStart', [{ x: 150, y: 245, id: 1 }, { x: dragAt.x, y: dragAt.y, id: 2 }]);
+    for (let i = 1; i <= 8; i++) { await Tc('touchMove', [{ x: 150, y: 245, id: 1 }, { x: dragAt.x - i * 6, y: dragAt.y, id: 2 }]); await page.waitForTimeout(25); }
+    await Tc('touchEnd', [{ x: dragAt.x - 48, y: dragAt.y, id: 2 }]); const dragged = await st();
+    const fd = Tc('touchStart', [{ x: 150, y: 245, id: 1 }, { x: cqcB.x, y: cqcB.y, id: 3 }]); await page.waitForTimeout(70); const fu = Tc('touchEnd', [{ x: cqcB.x, y: cqcB.y, id: 3 }]); await fd; await fu; await page.waitForTimeout(150);
+    await Tc('touchStart', [{ x: 150, y: 245, id: 1 }, { x: dragAt.x, y: dragAt.y, id: 4 }]);
+    for (let i = 1; i <= 8; i++) { await Tc('touchMove', [{ x: 150, y: 245, id: 1 }, { x: dragAt.x + i * 5, y: dragAt.y - i * 2, id: 4 }]); await page.waitForTimeout(25); }
+    const mid = await st(); await Tc('touchEnd', [{ x: dragAt.x + 40, y: dragAt.y - 16, id: 4 }]);
+    await page.waitForTimeout(100); const walking = await st(); await Tc('touchEnd', [{ x: 150, y: 245, id: 1 }]); await page.waitForTimeout(400);
+    // a FIRE finger held while AIM goes off (another finger), lifted later: no grab, no takedown, no shot
+    await page.evaluate(() => { const g = MV.guard2; g.reset(); const b = g.position.clone().addScaledVector(g.forward(), -1.0); MV.motor.teleport(b.x, b.z, g.yaw); MV.cam.snap(MV.motor); });
+    await page.waitForTimeout(300);
+    const x0 = await st();
+    await Tc('touchStart', [{ x: cqcB.x, y: cqcB.y, id: 30 }]); await page.waitForTimeout(80);   // (fires one shot: a fresh FIRE press)
+    await Tc('touchStart', [{ x: cqcB.x, y: cqcB.y, id: 30 }, { x: aim.x, y: aim.y, id: 31 }]); await page.waitForTimeout(70); await Tc('touchEnd', [{ x: aim.x, y: aim.y, id: 31 }]);
+    await page.waitForTimeout(900); await Tc('touchEnd', [{ x: cqcB.x, y: cqcB.y, id: 30 }]); await page.waitForTimeout(500);
+    const x1 = await st();
+    // a CQC finger held while AIM comes on, lifted later: no grab, no takedown, no shot
+    await Tc('touchStart', [{ x: cqcB.x, y: cqcB.y, id: 32 }, { x: aim.x, y: aim.y, id: 33 }]); await page.waitForTimeout(70); await Tc('touchEnd', [{ x: aim.x, y: aim.y, id: 33 }]);   // (both land in one event: the CQC press is still pending as AIM comes on)
+    await page.waitForTimeout(900); await Tc('touchEnd', [{ x: cqcB.x, y: cqcB.y, id: 32 }]); await page.waitForTimeout(500);
+    const x2 = await st();
+    // the page hidden with a FIRE finger down: nothing stuck, no shot when it's back
+    await settle(); await Tc('touchStart', [{ x: cqcB.x, y: cqcB.y, id: 40 }]); await page.waitForTimeout(60);
+    const sh0 = (await st()).shots;
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { value: true, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { value: false, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForTimeout(400); const back = await page.evaluate(() => ({ shots: MV.pistol.shots, pending: MV.input._firePresses.length, touches: MV.input._fireTouches.size, down: document.getElementById('mv-cqc').classList.contains('down') }));
+    await Tc('touchEnd', [{ x: cqcB.x, y: cqcB.y, id: 40 }]);
+    // frame rate: 4 s aiming without firing, then 4 s firing (2.5 taps a second), one frame counter
+    await page.evaluate(() => { window.__f = 0; (function f() { window.__f++; requestAnimationFrame(f); })(); }); await page.waitForTimeout(1500);
+    const b0 = await page.evaluate(() => { window.__f = 0; return performance.now(); }); await page.waitForTimeout(4000);
+    const base = await page.evaluate(b0 => window.__f / ((performance.now() - b0) / 1000), b0);
+    const f0 = await page.evaluate(() => { window.__f = 0; return performance.now(); });
+    for (let i = 0; i < 10; i++) { await tap(cqcB, 50 + i, 60); await page.waitForTimeout(340); }
+    const fr = await page.evaluate(f0 => window.__f / ((performance.now() - f0) / 1000), f0);
+    await page.tap('#mv-reset'); await page.waitForTimeout(300); const reset = await st();
+    const errs = page.errors.length;
+    const ok = s0.aim && s0.text === 'FIRE' && one.shots === s0.shots + 1 && held.shots === one.shots + 1 && rapid.shots === held.shots + 5 && cancelled.shots === rapid.shots + 1
+      && m0.joy && Math.abs(wr(dragged.yaw - m0.yaw)) > 0.1 && Math.abs(wr(mid.yaw - dragged.yaw)) > 0.05 && walking.shots === cancelled.shots + 1 && walking.joy && walking.spd > 1.0 && walking.aim
+      && x1.shots === x0.shots + 1 && x1.grabs === x0.grabs && x1.tk === x0.tk && x1.cqc === 'FREE' && !x1.aim && x1.text === 'CQC'
+      && x2.shots === x1.shots && x2.grabs === x1.grabs && x2.tk === x1.tk && x2.cqc === 'FREE' && x2.aim && x2.text === 'FIRE'
+      && back.shots === sh0 && back.pending === 0 && back.touches === 0 && !back.down && reset.shots === 0 && reset.text === 'CQC' && fr > base * 0.8 && errs === 0;
+    return { pass: ok, detail: `AIM → button "${s0.text}"; one tap → ${one.shots - s0.shots} shot; held 1 s → ${held.shots - one.shots}; 5 taps 0.33 s apart → ${rapid.shots - held.shots}; a press then touchcancel → ${cancelled.shots - rapid.shots} (the press itself fires; the cancel adds nothing); walking ${walking.spd.toFixed(2)} m/s with the right thumb dragging from the lower-right (turned ${(Math.abs(wr(dragged.yaw - m0.yaw)) * 57.3).toFixed(0)}°, then ${(Math.abs(wr(mid.yaw - dragged.yaw)) * 57.3).toFixed(0)}° back after the shot) and a FIRE tap between → ${walking.shots - cancelled.shots} shot, still aiming ${walking.aim}; FIRE finger held while AIM goes off, lifted 0.9 s later: shots ${x1.shots - x0.shots} (its own press), grabs ${x1.grabs - x0.grabs}, takedowns ${x1.tk - x0.tk}, button "${x1.text}"; CQC finger held while AIM comes on: shots ${x2.shots - x1.shots}, grabs ${x2.grabs - x1.grabs}, takedowns ${x2.tk - x1.tk}; page hidden with FIRE down: no shot ${back.shots === sh0}, nothing left held ${back.touches === 0 && !back.down}; frame rate firing ${fr.toFixed(0)} fps vs ${base.toFixed(0)} without (≥ 80%); RESET → shots ${reset.shots}, "${reset.text}"; page errors ${errs}` };
+  },
+
   // Step 18.1: the right-hand controls are one row (AIM · CQC · CROUCH, THROW · CHOKE only while
   // holding a guard) above an open camera-swipe area in the lower right. On several iPhone
   // landscape sizes: every button on screen, apart, out of the stick's half and below STATS, none
@@ -4061,7 +4307,7 @@ const CHECKS = {
       input.cqcTapped = true; sim(30); out.tap = cq.state;
       cq.input._cqcPress(performance.now() - 1000); sim(30); cq.input._cqcUp(performance.now()); sim(10); out.hold = cq.state;
       input.throwTapped = true; input._chokeKey = true; input.chokePresses++; sim(20); input._chokeKey = false; out.throwChoke = cq.state;
-      out.cqcStat = cq.status(); out.cqcLocked = document.getElementById('mv-cqc').classList.contains('aimlock');
+      out.cqcStat = cq.status(); out.cqcLocked = document.getElementById('mv-cqc').classList.contains('fire') && document.getElementById('mv-cqc').textContent.trim() === 'FIRE';   // (Step 19: while aiming the CQC button is FIRE, not dimmed)
       out.alerted = g2.awareness.state;   // (he may well have heard her step in behind him: the normal hearing rules; that's not this check)
       out.guard = { aware: g2.awareness.state, held: !!g2.restraint, ko: g2.ko.state };
       // AIM off: CQC is back
@@ -4078,14 +4324,14 @@ const CHECKS = {
       const p = g2.position.clone().addScaledVector(g2.forward(), -5); motor.teleport(p.x, p.z, g2.yaw); cam.snap(motor); sim(20);
       const n0 = MV.noise.last; input.aimTapped = true; sim(240);
       out.calm = { g2: g2.awareness.state, g2s: g2.awareness.suspicion, g1: g1.awareness.state, noise: MV.noise.last === n0, hp: 'health' in g2 || 'hp' in g2 };
-      out.fire = !!document.querySelector('#mv-fire, [id*="fire"], [id*="shoot"], [id*="ammo"]') || /FIRE|SHOOT|AMMO/i.test([...document.querySelectorAll('button')].map(b => b.textContent).join(' '));
+      out.fire = !!document.querySelector('#mv-fire, [id*="shoot"], [id*="ammo"], [id*="reload"]') || /FIRE|SHOOT|AMMO|RELOAD/i.test([...document.querySelectorAll('button')].filter(b => b.id !== 'mv-cqc').map(b => b.textContent).join(' '));   // (Step 19: FIRE is the shared CQC button only)
       input.aimTapped = true; sim(60);
       return out;
     });
     const o = r, ok = o.tap === 'FREE' && o.hold === 'FREE' && o.throwChoke === 'FREE' && /unavailable while aiming/.test(o.cqcStat) && o.cqcLocked && !o.guard.held && o.guard.ko === 'CONSCIOUS'
       && o.after === 'GRAPPLING' && o.grappling === false && o.aimBtnLocked && o.choking === false && o.throwing === false && o.takedown === false && o.breaking === false && o.freeAgain === true
       && o.calm.g2 === 'NORMAL' && o.calm.g2s === 0 && o.calm.g1 === 'NORMAL' && o.calm.noise && !o.calm.hp && !o.fire && page.errors.length === 0;
-    return { pass: ok, detail: `aiming behind Guard 2: TAP → ${o.tap}, HOLD → ${o.hold}, THROW/CHOKE → ${o.throwChoke}, stats "${o.cqcStat}", CQC dimmed ${o.cqcLocked}, he's not held ${!o.guard.held}, ${o.guard.ko}; AIM off then TAP → ${o.after}; AIM accepted while grappling ${o.grappling} (button dimmed ${o.aimBtnLocked}), choking ${o.choking}, throwing ${o.throwing}, quick takedown ${o.takedown}, breaking free ${o.breaking}; free again → AIM ${o.freeAgain}; aiming at Guard 2 for 4 s: G2 ${o.calm.g2} ${o.calm.g2s}%, G1 ${o.calm.g1}, no sound ${o.calm.noise}; FIRE/ammo/health anywhere ${o.fire || o.calm.hp}; page errors ${page.errors.length}` };
+    return { pass: ok, detail: `aiming behind Guard 2: TAP → ${o.tap}, HOLD → ${o.hold}, THROW/CHOKE → ${o.throwChoke}, stats "${o.cqcStat}", CQC button reads FIRE ${o.cqcLocked}, he's not held ${!o.guard.held}, ${o.guard.ko}; AIM off then TAP → ${o.after}; AIM accepted while grappling ${o.grappling} (button dimmed ${o.aimBtnLocked}), choking ${o.choking}, throwing ${o.throwing}, quick takedown ${o.takedown}, breaking free ${o.breaking}; free again → AIM ${o.freeAgain}; aiming at Guard 2 for 4 s: G2 ${o.calm.g2} ${o.calm.g2s}%, G1 ${o.calm.g1}, no sound ${o.calm.noise}; a separate FIRE / ammo / health anywhere ${o.fire || o.calm.hp}; page errors ${page.errors.length}` };
   },
 
   // the guards carry on exactly as they would: Guard 1's patrol and Guard 2 at his post, the
@@ -4150,7 +4396,7 @@ const CHECKS = {
 // ---------------------------------------------------------------- run
 (async () => {
   const only = process.argv.slice(2);
-  const names = only.length ? only : Object.keys(CHECKS);
+  const names = only.length ? only : Object.keys(CHECKS).filter(n => n[0] !== '_');   // (_name: a shared helper, not a check)
   for (const n of names) if (!CHECKS[n]) { console.error('unknown check: ' + n + ' (have: ' + Object.keys(CHECKS).join(', ') + ')'); process.exit(2); }
   const { chromium } = loadPlaywright();
   const server = await serve();

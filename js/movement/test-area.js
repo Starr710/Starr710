@@ -124,13 +124,14 @@
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
       mesh.position.set(x, h / 2, z); mesh.castShadow = true; mesh.receiveShadow = true;
       if (rotY) mesh.rotation.y = rotY;
+      mesh.userData.kind = m === mats.wall ? 'wall' : 'crate';   // (what a shot reports it hit, Step 19)
       scene.add(mesh);
       world.addBox(x, z, rotY ? d : w, rotY ? w : d, h, mesh);
       return mesh;
     };
     const pillar = (x, z, r, h) => {
       const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 16), mats.pillar);
-      mesh.position.set(x, h / 2, z); mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.position.set(x, h / 2, z); mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.kind = 'pillar';
       scene.add(mesh); world.addCylinder(x, z, r, h, mesh);
     };
 

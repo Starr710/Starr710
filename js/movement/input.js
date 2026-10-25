@@ -35,6 +35,12 @@
     // AIM button (Step 18): aimTapped is one request per press (toggle mode, read and cleared by
     // main.js); aiming() is true while it's held (hold mode): a touch on it, the Q key or the mouse
     this.aimTapped = false; this._aimTouches = new Set(); this._aimKey = false; this._aimMouse = false;
+    // Step 19: while fireMode is on (main.js: she's aiming) the CQC button is FIRE. Each new press
+    // (touch, F key, click) on it is one FIRE request, kept with its own timestamp until main.js
+    // takes it (takeFire); it's never a CQC press, so it can't become a grab, a hold or a release,
+    // and a finger already down when the mode changes does nothing either way (a fresh press is
+    // needed). Dropped with everything else on blur, a hidden page or RESET (clear / _fireDrop)
+    this.fireMode = false; this._firePresses = []; this._fireTouches = new Set(); this.firePressCount = 0;
     this._bind();
   };
 
@@ -79,7 +85,7 @@
     });
     window.addEventListener('mouseup', () => { drag = null; });
     this.els.crouch.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail !== 0) this.setCrouch(!this.crouch); });
-    if (this.els.cqc) this.els.cqc.addEventListener('click', e => { if (this.enabled && e.pointerType !== 'touch' && e.detail !== 0) this.cqcTapped = true; });
+    if (this.els.cqc) this.els.cqc.addEventListener('click', e => { if (this.enabled && e.pointerType !== 'touch' && e.detail !== 0) { if (!this.fireMode) this.cqcTapped = true; else if (!this.sourceCapabilitiesTouch(e)) this._firePress(when(e)); } });
     if (this.els.throw) this.els.throw.addEventListener('click', e => { if (this.enabled && e.pointerType !== 'touch' && e.detail !== 0) this.throwTapped = true; });
     if (this.els.aim) {
       this.els.aim.addEventListener('mousedown', e => { if (this.enabled && !this.sourceCapabilitiesTouch(e)) { this._aimMouse = true; this.aimTapped = true; this.els.aim.classList.add('down'); } });
@@ -102,6 +108,7 @@
     for (const t of e.changedTouches) {
       const el = document.elementFromPoint(t.clientX, t.clientY);
       if (el && el.closest && el.closest('#mv-crouch')) { this.btn.set(t.identifier, 'crouch'); this.setCrouch(!this.crouch); continue; }
+      if (el && el.closest && el.closest('#mv-cqc') && this.fireMode) { this.btn.set(t.identifier, 'fire'); this._fireTouches.add(t.identifier); this._firePress(when(e), true); continue; }   // Step 19: FIRE
       if (el && el.closest && el.closest('#mv-cqc')) {
         this.btn.set(t.identifier, 'cqc');
         // a press whose finger is no longer on the screen (its touchend never arrived) is dropped, never left stuck
@@ -152,6 +159,7 @@
       } else if (this.lookT && t.identifier === this.lookT.id) this.lookT = null;
       if (this.btn.get(t.identifier) === 'cqc' && t.identifier === this._cqcTouch) { this._cqcTouch = null; if (e.type === 'touchcancel') this._cqcDrop(); else this._cqcUp(when(e)); }
       if (this.btn.get(t.identifier) === 'throw' && this.els.throw) this.els.throw.classList.remove('down');
+      if (this.btn.get(t.identifier) === 'fire') { this._fireTouches.delete(t.identifier); if (!this._fireTouches.size && this.els.cqc && this._cqcDown == null) this.els.cqc.classList.remove('down'); }
       if (this.btn.get(t.identifier) === 'aim') { this._aimTouches.delete(t.identifier); if (!this._aimTouches.size && this.els.aim) this.els.aim.classList.remove('down'); }
       if (this.btn.get(t.identifier) === 'choke') { this._chokeTouches.delete(t.identifier); if (!this._chokeTouches.size && this.els.choke) this.els.choke.classList.remove('down'); }
       this.btn.delete(t.identifier);
@@ -165,7 +173,7 @@
     const k = e.code;
     if (down) this.keys.add(k); else this.keys.delete(k);
     if (k === 'KeyC' && down && !e.repeat) this.setCrouch(!this.crouch);
-    if (k === 'KeyF' && !e.repeat) { if (down) { if (this._cqcDown == null) this._cqcPress(when(e)); } else this._cqcUp(when(e)); }
+    if (k === 'KeyF' && !e.repeat) { if (down && this.fireMode) this._firePress(when(e)); else if (down) { if (this._cqcDown == null) this._cqcPress(when(e)); } else this._cqcUp(when(e)); }   // (FIRE while aiming, Step 19)
     if (k === 'KeyT' && down && !e.repeat) this.throwTapped = true;   // THROW (Step 14)
     if (k === 'KeyQ' && !e.repeat) { if (down) { this._aimKey = true; this.aimTapped = true; } else this._aimKey = false; }   // AIM (Step 18)
     if (k === 'KeyG' && !e.repeat) { if (down) { this._chokeKey = true; this.chokePresses++; } else this._chokeKey = false; }   // CHOKE, held (Step 15)
@@ -179,6 +187,14 @@
     const l = Math.hypot(x, y) || 1;
     if (!this.joy) { this.move.x = x / l * m; this.move.y = y / l * m; }
   };
+
+  // Step 19: one FIRE press (its event time, ms); takeFire hands main.js the presses since the last frame
+  P._firePress = function (at, touch) {
+    this.firePressCount++; if (this._firePresses.length < 4) this._firePresses.push(at);
+    if (touch && this.els.cqc) this.els.cqc.classList.add('down');   // (pressed look while the finger is on it)
+  };
+  P.takeFire = function () { const out = this._firePresses; this._firePresses = []; return out; };
+  P._fireDrop = function () { this._firePresses = []; this._fireTouches.clear(); if (this.els.cqc && this._cqcDown == null) this.els.cqc.classList.remove('down'); };
 
   // the CQC button let go: TAP or HOLD by how long it was pressed
   P._cqcPress = function (at) {
@@ -221,6 +237,7 @@
     this.joy = this.lookT = null; this.btn.clear(); this.keys.clear(); this._cqcDrop(); this._cqcTouch = null;
     this._chokeTouches.clear(); this._chokeKey = false; this._chokeMouse = false; if (this.els.choke) this.els.choke.classList.remove('down');
     this.aimTapped = false; this._aimTouches.clear(); this._aimKey = false; this._aimMouse = false; if (this.els.aim) this.els.aim.classList.remove('down');
+    this._fireDrop();
     this.els.root.classList.remove('stick-on');
   };
 })(SC.mv);

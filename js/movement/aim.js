@@ -123,7 +123,8 @@
     T.muzzleClear = muzzle ? !this.world.segmentBlocked(_p.copy(muzzle), _q.copy(T.point).addScaledVector(T.dir, -0.05)) : true;
     return T;
   };
-  // distance along a ray to an upright cylinder (x, z, r, height 0…h), or null
+  // distance along a ray to an upright cylinder (x, z, r, height 0…h), or null (also used by the pistol, Step 19)
+  mv.Aim.rayCylinder = rayCylinder;
   function rayCylinder(o, d, x, z, r, h) {
     const fx = o.x - x, fz = o.z - z, A = d.x * d.x + d.z * d.z, B = 2 * (fx * d.x + fz * d.z), C = fx * fx + fz * fz - r * r;
     if (A < 1e-9) return null;
