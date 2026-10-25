@@ -19,7 +19,8 @@
     react: { rise: 0.08, settle: 0.35, recoil: 12, twist: 9, head: 8, slow: 1, keep: 2 },   // gentler than a guard's, and her pace is never checked (slow 1)
     hitbox: { radius: 0.24, headClear: 0.12 },
     tint: 0.45,            // s the screen-edge tint lasts
-    defeatTime: 1.3,       // s for her to go down
+    reactFor: 0.12,        // s of the last hit's flinch before she goes down…
+    defeatTime: 0.95,      // …and s to go down
     historyMax: 12,
   };
   const ease = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
@@ -36,8 +37,8 @@
   mv.PlayerHealth.prototype.reset = function () {
     this.current = this.max; this.history = []; this.lastDamage = null; this.received = 0; this.events = new Set();
     this.reactions = []; this.reactPhase = 'none'; if (this._base && this._base.size) mv.GuardHealth.prototype._restore.call(this);
-    this.state = 'OK'; this.defeatT = 0; this.defeatedAt = null; this.downTilt = 0; this._lift = 0;
-    if (this.visual && this.visual.root) { this.visual.root.rotation.x = 0; this.visual.root.rotation.z = 0; }   // (upright again: place() only sets her yaw)
+    this.state = 'OK'; this.defeatT = 0; this.defeatedAt = null;
+    if (this._g) this._unfreeze();   // (on her feet again: her animation takes over)
     if (this.tintEl) this.tintEl.classList.remove('hit');
   };
   mv.PlayerHealth.prototype.percent = function () { return this.max > 0 ? this.current / this.max * 100 : 0; };
@@ -53,8 +54,8 @@
     this.current = after; this.received += before - after;
     const rec = { amount: before - after, source: ev.source || '?', before, after, from: ev.from ? ev.from.clone() : null, dir: ev.dir ? ev.dir.clone() : null, point: ev.point ? ev.point.clone() : null };
     this.lastDamage = rec; this.history.push(rec); if (this.history.length > this.cfg.historyMax) this.history.shift();
-    if (after <= 0) { this.state = 'PLAYER_DEFEATED'; this.defeatT = 0; this.reactions = []; this.reactPhase = 'none'; }
-    else mv.GuardHealth.prototype._react.call(this, rec);
+    if (after <= 0) { this.state = 'PLAYER_DEFEATED'; this.defeatT = 0; }
+    mv.GuardHealth.prototype._react.call(this, rec);   // (the last hit too: she flinches, then goes down)
     if (this.tintEl) { this.tintEl.classList.remove('hit'); void this.tintEl.offsetWidth; this.tintEl.classList.add('hit'); }
     this._thud();
     return { applied: true, why: '', before, after, defeated: after <= 0 };
@@ -72,20 +73,38 @@
   // per frame, after her animation and posture, before the aiming pose (so the pistol stays in her hands)
   mv.PlayerHealth.prototype.poseReact = function (dt) { mv.GuardHealth.prototype.poseReact.call(this, dt); };
 
-  // per frame at the very end (after every pose): going down when she's defeated
+  // Defeated: the last hit's flinch plays for `reactFor` s, then her pose is frozen (main.js stops her animation,
+  // posture and aim layers) and she collapses as the guards do when shot down (throw-anim.js collapse: the knees
+  // give, the hips drop, the trunk and legs go over together, forward onto her front, her skin kept on the ground),
+  // then lies face down. Posed once when she's settled: nothing is recalculated after that. RESET unfreezes her
+  mv.PlayerHealth.prototype.frozen = function () { return !!this._frozen; };
+  mv.PlayerHealth.prototype._shim = function () {
+    if (this._g) return this._g;
+    const v = this.visual, m = this.motor;
+    this._g = { root: v.root, fall: v.fall, bones: v.bones, model: v.model, get position() { return m.position; }, get yaw() { return m.yaw; }, set yaw(x) {},
+      place() { v.place(m.position, m.yaw); v.root.updateMatrixWorld(true); }, forward: out => out.set(Math.sin(m.yaw), 0, Math.cos(m.yaw)) };
+    return this._g;
+  };
+  // per frame at the very end (after every pose)
   mv.PlayerHealth.prototype.defeatPose = function (dt) {
     if (!this.defeated()) return;
-    const c = this.cfg, R = this.visual.root;
-    this.defeatT += dt; const k = Math.min(1, this.defeatT / c.defeatTime);
-    const tilt = ease((k - 0.35) / 0.65) * 84 * Math.PI / 180;   // (first she sinks, crouched; then forward onto the ground)
-    R.rotation.order = 'YXZ'; R.rotation.set(tilt, this.motor.yaw, 0); R.updateMatrixWorld(true);   // (her facing, then forward over it)
-    // the ground: her lowest point (skin) never below it, resting on it once she's down
-    if (k < 1 || this._lift === 0) {
-      const low = mv.ThrowAnim ? mv.ThrowAnim.lowest({ model: this.visual.model, bones: this.visual.bones }) - this.motor.position.y : 0;
-      this._lift = tilt > 0.01 ? Math.max(0, -low + 0.005) : Math.max(0, -low);
+    const c = this.cfg, A = mv.ThrowAnim; if (!A || !this.visual.fall) return;
+    this.defeatT += dt;
+    if (this.defeatT < c.reactFor) return;   // (the last hit's flinch first)
+    const g = this._shim();
+    if (!this._frozen) {
+      this.visual.lean.rotation.set(0, 0, 0); g.place();
+      A.freeze(g); this._frozen = true; this._posed = false;
+      const f = g.forward(new THREE.Vector3());
+      this.collapse = { S: this.motor.position.clone(), back: -1, fall: f, to: this.motor.position.clone().setY(0), kneel: true };   // (forward, onto her knees and chest, where she stands)
     }
-    if (this._lift) { R.position.y += this._lift; R.updateMatrixWorld(true); }
-    this.downTilt = tilt;
+    const k = Math.min(1, (this.defeatT - c.reactFor) / c.defeatTime);
+    if (k < 1) { A.collapse(g, this.collapse, k); this.downK = k; }
+    else if (!this._posed) { A.lyingFront(g); this._posed = true; this.downK = 1; }
+  };
+  mv.PlayerHealth.prototype._unfreeze = function () {
+    if (this._frozen && mv.ThrowAnim) mv.ThrowAnim.unfreeze(this._g);
+    this._frozen = false; this._posed = false; this.downK = 0;
   };
 
   // a dull hit sound (temporary, synthesized)

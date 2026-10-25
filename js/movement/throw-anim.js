@@ -171,14 +171,15 @@
       const buckle = ease(Math.min(1, k / 0.45)), top = ease(Math.max(0, (k - 0.35) / 0.55)), settle = Math.max(0, (k - 0.9) / 0.1);
       const kneel = 0.42 * h0;   // hips dropped this much by the buckle
       const hips = new THREE.Vector3(lerp(C.S.x, C.to.x, top) + (F.hipsW.x - C.S.x) * (1 - top), lerp(h0 - kneel * buckle, 0.15, top), lerp(C.S.z, C.to.z, top) + (F.hipsW.z - C.S.z) * (1 - top));
-      const slump = buckle * (1 - top);
+      // (C.kneel, the player's defeat: her knees stay bent through the fall, so she goes down onto knees and chest)
+      const slump = C.kneel ? buckle * (1 - top * top * top) : buckle * (1 - top);
       const b = { spine: [12 * slump, 0, 0], spine1: [10 * slump, 0, 0], chest: [8 * slump, 0, 0], head: [16 * buckle * (1 - top), c.lyingHead * top * s, 0],
         leftUpLeg: [-48 * slump, 0, 0], rightUpLeg: [-44 * slump, 0, 0], leftLeg: [75 * slump, 0, 0], rightLeg: [70 * slump, 0, 0],
         leftArm: [6 * buckle, 0, 10 * buckle * (1 - top) + c.lyingArms * top], rightArm: [6 * buckle, 0, -10 * buckle * (1 - top) - c.lyingArms * top] };
       const clear = c.lieClear + 0.02 * Math.sin(Math.PI * settle);
       this.pose(g, { hips, tilt: s * (Math.PI / 2) * top, bones: b, neutral: top, clear, pin: top > 0.98 });
       // going over, his body comes down onto the ground progressively (never hanging in the air)
-      const w = ease((top - 0.35) / 0.55), over = g.downPose.lowest - clear;
+      const w = C.kneel ? ease((top - 0.1) / 0.45) : ease((top - 0.35) / 0.55), over = g.downPose.lowest - clear;
       if (w > 0 && over > 0) { g.fall.position.y -= over * w; g.root.updateMatrixWorld(true); g.downPose.lowest -= over * w; }
     },
     // face down (shot from behind), the counterpart of lying()

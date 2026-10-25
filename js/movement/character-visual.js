@@ -86,9 +86,10 @@
   mv.CharacterVisual = function (profile) {
     this.profile = profile;
     this.root = new THREE.Group();       // placed by the motor (position + yaw)
+    this.fall = new THREE.Group();       // whole-body pose when she's defeated (identity otherwise; as the guards' fall group)
     this.lean = new THREE.Group();       // procedural body lean, pivots at the feet
     this.pivot = new THREE.Group();      // static correction of the asset's forward axis
-    this.root.add(this.lean);
+    this.root.add(this.fall); this.fall.add(this.lean);
     this.lean.add(this.pivot);
     this.pivot.rotation.y = profile.forwardYaw || 0;
     this.model = null;

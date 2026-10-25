@@ -185,7 +185,7 @@
       // Step 22: defeated: everything she does stops (CQC let go, AIM off, no movement) until RESET
       const down = !!(playerHealth && playerHealth.defeated());
       if (down && !wasDown) { wasDown = true; if (cqc) cqc.cancel(); if (aim) aim.exit('defeated'); input._cqcDrop(); input._fireDrop(); input.move.x = input.move.y = 0; ui.defeat.hidden = false; document.body.classList.add('mv-defeated'); }
-      if (down) { input.move.x = input.move.y = 0; motor.stance = 'crouch'; }
+      if (down) { input.move.x = input.move.y = 0; }
       // Step 18: AIM (only while she's free); anything else taking over ends it; while aiming CQC is unavailable
       if (aim && cqc) {
         const allowed = cqc.state === 'FREE' && !actions.busy() && !down;
@@ -228,11 +228,15 @@
       if (aim && !aim.active) aim.idle(dt);
       actions.update({ motor, world, visual, input }, dt, false);
       visual.place(motor.position, motor.yaw + (aim ? aim.legYaw : 0));   // (aiming: the legs turn toward the travel, the upper body stays on the aim)
-      animator.update(dt, motor);
-      posture.update(dt, motor, animator);
-      if (cqc) cqc.poseArms();
-      if (playerHealth) playerHealth.poseReact(dt);   // Step 22: a hit's flinch (before the aim pose: her pistol stays in her hands)
-      if (aimPose) aimPose.apply(cam.aimK, motor.yaw, aim.target.dir, aim.target.point);
+      // (once she's going down after a defeat, her pose is the defeat's alone: no animation, posture or aim layer under it)
+      const frozen = !!(playerHealth && playerHealth.frozen());
+      if (!frozen) {
+        animator.update(dt, motor);
+        posture.update(dt, motor, animator);
+        if (cqc) cqc.poseArms();
+        if (playerHealth) playerHealth.poseReact(dt);   // Step 22: a hit's flinch (before the aim pose: her pistol stays in her hands)
+        if (aimPose) aimPose.apply(cam.aimK, motor.yaw, aim.target.dir, aim.target.point);
+      } else if (aimPose) aimPose.pistol.visible = false;
       if (playerHealth) playerHealth.defeatPose(dt);   // (going down at 0 HP, over everything)
       visual.root.updateMatrixWorld(true);
       if (!down) footsteps.update(dt);

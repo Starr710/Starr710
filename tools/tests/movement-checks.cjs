@@ -3788,6 +3788,28 @@ const CHECKS = {
     return { pass: rows.every(([k, v]) => v[0] >= (k === 'crouch idle' ? 0.15 : 0.12) && v[1] >= 0.15), detail: rows.map(([k, v]) => `${k}: hand–shin ${cm(v[0])}, thigh–body ${cm(v[1])}`).join('; ') };
   },
 
+  // Step 22 correction: her defeat is a collapse, not a sit: within ~1.1 s her hips and head are
+  // both down at the floor (lying, not sitting: the head as low as the hips), never below the
+  // ground, no jumps, posed once and still; her animation doesn't run under it; RESET stands her up
+  async playerCollapse() {
+    const page = await CHECKS._gunPage();
+    const r = await page.evaluate(() => {
+      const { motor } = MV, P = MV.playerHealth, B = MV.visual.bones, A = MV.SCmv.ThrowAnim, W = b => b.getWorldPosition(new THREE.Vector3());
+      range(40); sim(30);
+      const t0 = MV.animator.time != null ? MV.animator.time : null;
+      for (let k = 0; k < 5; k++) P.take({ amount: 20, source: 'Guard 1', id: 'c' + k, dir: new THREE.Vector3(0, 0, -1) });
+      let minLow = 9, maxStep = 0, prev = W(B.hips), downAt = null, n = 0;
+      for (let i = 0; i < 120; i++) { MV.tick(1 / 60, true); const h = W(B.hips), hd = W(B.head); maxStep = Math.max(maxStep, h.distanceTo(prev)); prev = h; minLow = Math.min(minLow, A.lowest({ model: MV.visual.model, bones: B }) - motor.position.y); if (downAt == null && h.y < 0.35 && hd.y < 0.45) downAt = (i + 1) / 60; }
+      const hipsY = W(B.hips).y, headY = W(B.head).y, q = B.leftLeg.quaternion.clone(); sim(120);
+      const settled = B.leftLeg.quaternion.equals(q), frozen = P.frozen(), posedOnce = P._posed;
+      document.getElementById('mv-reset').click(); sim(40);
+      return { hp: 0, downAt, minLow, maxStep, hipsY, headY, settled, frozen, posedOnce, after: { head: W(B.head).y, frozen: P.frozen(), hp: P.current } };
+    });
+    const o = r, ok = o.downAt != null && o.downAt <= 1.25 && o.hipsY < 0.35 && o.headY < 0.45 && Math.abs(o.headY - o.hipsY) < 0.25 && o.minLow > -0.01 && o.maxStep < 0.08 && o.settled && o.frozen && o.posedOnce
+      && o.after.head > 1.35 && !o.after.frozen && o.after.hp === 100 && page.errors.length === 0;
+    return { pass: ok, detail: `0 HP: down on the floor ${o.downAt != null ? o.downAt.toFixed(2) + ' s' : 'never'} later (hips ${o.hipsY.toFixed(2)} m, head ${o.headY.toFixed(2)} m: lying, not sitting), never below the ground (lowest ${cm(o.minLow)}), hips ≤ ${cm(o.maxStep)} per frame, still after 2 s ${o.settled}, her animation off under it ${o.frozen}; RESET: head ${o.after.head.toFixed(2)} m up, ${o.after.hp} HP; page errors ${page.errors.length}` };
+  },
+
   // ---------------------------------------------------------------- Step 22: guard gunfire, player health and defeat
   async _gunPage(touch) {
     const page = touch ? await touchPage() : await simPage();
@@ -3953,23 +3975,24 @@ const CHECKS = {
       for (const id of ['c', 'd', 'e']) P.take({ amount: 20, source: 'Guard 2', id }); MV.tick(1 / 60, true);
       const p0 = motor.position.clone();
       input.move.y = 1; input.aimTapped = true; input.cqcTapped = true; window.__t += 1000; input._firePress(window.__t); sim(120); input.move.y = 0;
-      const R = MV.visual.root;
-      out.down = { state: P.state, aim: A.active, moved: motor.position.distanceTo(p0), cqc: MV.cqc.state, shots: MV.pistol.shots - s0, msg: !msg.hidden && /DEFEATED/.test(msg.textContent), tilt: R.rotation.x * 57.3, low: MV.SCmv.ThrowAnim.lowest({ model: MV.visual.model, bones: MV.visual.bones }) - motor.position.y, more: P.take({ amount: 20, source: 'Guard 1', id: 'z' }).applied, hp: P.current, gait: document.getElementById('mv-gait').textContent };
+      const R = MV.visual.root, Wp = b => b.getWorldPosition(new THREE.Vector3()), Bv = MV.visual.bones, spineQ = Bv.spine.quaternion.clone(), headP = Wp(Bv.head);
+      sim(90); const still = Bv.spine.quaternion.equals(spineQ) && Wp(Bv.head).distanceTo(headP) < 1e-9;   /* (settled: posed once, never redone) */
+      out.down = { state: P.state, aim: A.active, moved: motor.position.distanceTo(p0), cqc: MV.cqc.state, shots: MV.pistol.shots - s0, msg: !msg.hidden && /DEFEATED/.test(msg.textContent), hipsY: Wp(Bv.hips).y, headY: Wp(Bv.head).y, still, low: MV.SCmv.ThrowAnim.lowest({ model: MV.visual.model, bones: MV.visual.bones }) - motor.position.y, more: P.take({ amount: 20, source: 'Guard 1', id: 'z' }).applied, hp: P.current, gait: document.getElementById('mv-gait').textContent };
       // the guards stop firing at a defeated player
       range(7); P.take({ amount: 500, source: 'test', id: 'end' }); shotLog.length = 0; for (let i = 0; i < 60 * 8; i++) MV.tick(1 / 60, true);
       out.noFire = { shots: shotLog.length, why: g1.gunfire.why };
       // RESET
       document.getElementById('mv-reset').click(); sim(3);
-      out.reset = { hp: P.current, state: P.state, msg: msg.hidden, tilt: R.rotation.x, spawn: Math.hypot(motor.position.x - MV.area.spawn.x, motor.position.z - MV.area.spawn.z), g: [g1, MV.guard2].map(g => [g.gunfire.shots, g.gunfire.cooldown, g.weapon.state].join(',')), body: document.body.classList.contains('mv-defeated') };
+      out.reset = { hp: P.current, state: P.state, msg: msg.hidden, upright: MV.visual.fall.quaternion.w === 1 && MV.visual.fall.position.length() === 0 && MV.visual.bones.head.getWorldPosition(new THREE.Vector3()).y > 1.35, spawn: Math.hypot(motor.position.x - MV.area.spawn.x, motor.position.z - MV.area.spawn.z), g: [g1, MV.guard2].map(g => [g.gunfire.shots, g.gunfire.cooldown, g.weapon.state].join(',')), body: document.body.classList.contains('mv-defeated') };
       input.move.y = 1; let spd2 = 0; for (let i = 0; i < 110; i++) { MV.tick(1 / 60, true); spd2 = Math.max(spd2, motor.speed); } input.move.y = 0;
       out.reset.spd = spd2;
       return out;
     });
     const o = r, ok = o.hurt.hp === 60 && o.hurt.spd > 3.1 && o.hurt.aimOn && o.hurt.shot === 1
-      && o.down.state === 'PLAYER_DEFEATED' && !o.down.aim && o.down.moved < 0.05 && o.down.cqc === 'FREE' && o.down.shots === 1 && o.down.msg && o.down.tilt > 70 && o.down.low > -0.01 && o.down.low < 0.1 && !o.down.more && o.down.hp === 0 && /PLAYER_DEFEATED/.test(o.down.gait)
+      && o.down.state === 'PLAYER_DEFEATED' && !o.down.aim && o.down.moved < 0.05 && o.down.cqc === 'FREE' && o.down.shots === 1 && o.down.msg && o.down.hipsY < 0.35 && o.down.headY < 0.45 && o.down.still && o.down.low > -0.01 && o.down.low < 0.1 && !o.down.more && o.down.hp === 0 && /PLAYER_DEFEATED/.test(o.down.gait)
       && o.noFire.shots === 0 && o.noFire.why === 'target down'
-      && o.reset.hp === 100 && o.reset.state === 'OK' && o.reset.msg && o.reset.tilt === 0 && o.reset.spawn < 0.01 && o.reset.g.every(x => x === '0,0,LOWERED') && !o.reset.body && o.reset.spd > 3.1 && page.errors.length === 0;
-    return { pass: ok, detail: `at ${o.hurt.hp} HP: jogs at ${o.hurt.spd.toFixed(2)} m/s, AIM ${o.hurt.aimOn}, FIRE → ${o.hurt.shot} shot; three more hits: ${o.down.state}, AIM ${o.down.aim}, moved ${cm(o.down.moved)} with the stick held, CQC ${o.down.cqc}, FIRE presses after: ${o.down.shots - 1} shots, message ${o.down.msg}, tilted ${o.down.tilt.toFixed(0)}°, lowest point ${cm(o.down.low)}, more damage ${o.down.more}, STATS "${o.down.gait}"; guards at a defeated player: ${o.noFire.shots} shots (${o.noFire.why}); RESET: ${o.reset.hp} HP ${o.reset.state}, message hidden ${o.reset.msg}, upright ${o.reset.tilt === 0}, at the spawn, guards ${o.reset.g.join(' / ')}, jogs ${o.reset.spd.toFixed(2)} m/s; page errors ${page.errors.length}` };
+      && o.reset.hp === 100 && o.reset.state === 'OK' && o.reset.msg && o.reset.upright && o.reset.spawn < 0.01 && o.reset.g.every(x => x === '0,0,LOWERED') && !o.reset.body && o.reset.spd > 3.1 && page.errors.length === 0;
+    return { pass: ok, detail: `at ${o.hurt.hp} HP: jogs at ${o.hurt.spd.toFixed(2)} m/s, AIM ${o.hurt.aimOn}, FIRE → ${o.hurt.shot} shot; three more hits: ${o.down.state}, AIM ${o.down.aim}, moved ${cm(o.down.moved)} with the stick held, CQC ${o.down.cqc}, FIRE presses after: ${o.down.shots - 1} shots, message ${o.down.msg}, lying: hips ${o.down.hipsY.toFixed(2)} m, head ${o.down.headY.toFixed(2)} m, lowest point ${cm(o.down.low)}, still once settled ${o.down.still}, more damage ${o.down.more}, STATS "${o.down.gait}"; guards at a defeated player: ${o.noFire.shots} shots (${o.noFire.why}); RESET: ${o.reset.hp} HP ${o.reset.state}, message hidden ${o.reset.msg}, upright ${o.reset.upright}, at the spawn, guards ${o.reset.g.join(' / ')}, jogs ${o.reset.spd.toFixed(2)} m/s; page errors ${page.errors.length}` };
   },
 
   // CQC against armed, ALERT guards: grab (his firing stops), THROW and CHOKE knock him out,
