@@ -3903,7 +3903,7 @@ const CHECKS = {
     const r = await page.evaluate(() => {
       const o = MV.observer, out = {}, C = G('C'), D = G('D'), m = MV.motor;
       MV.enterObserve(); while (o.sel !== C) o.selectNext(); sim(30);
-      const lines = o.vLines.geometry.drawRange.count; out.zones = { n: C.vision.cfg.zones.map(z => z.angle).join('/'), lines, facing: (() => { const a = o.vFacing.geometry.attributes.position.array; return Math.atan2(a[3] - a[0], a[5] - a[2]) - C.yaw; })() };
+      const lines = o.vLines.geometry.drawRange.count; out.zones = { n: C.vision.cfg.zones.map(z => z.angle).join('/'), lines, facing: (() => { const a = o.vFacing.userData; return Math.atan2(a.to[0] - a.from[0], a.to[1] - a.from[1]) - C.yaw; })() };   // (Forest cleanup: the mark is an arrow now; its line is in userData)
       // the body test across known cover, from Guard C held at (2, 11.5) facing south (the long northern block 3 m ahead)
       C.patrol.enabled = false; C.motor.teleport(2, 11.5, Math.PI); C.wantYaw = Math.PI; sim(20);
       out.wall = o.sightAt(C, -5, 15.5);           // beyond the north wall's western part (behind him: the test is sight, not the cone)
@@ -4245,9 +4245,181 @@ const CHECKS = {
       document.getElementById('mv-opt-debug').click(); sim(5); out.off2 = shown();
       return out;
     });
-    const o = r, ok = o.chunks >= 4 && o.contained && o.solid === 'tree:21,rock:9' && o.inMeshes && o.inPlay[1] === o.inPlay[0] && o.inPlay[2] === o.inPlay[0] && o.inPlay[3] === o.inPlay[0]
+    const o = r, ok = o.chunks >= 4 && o.contained && o.solid === 'tree:14,rock:6' /* (Forest cleanup: 21 trees and 9 rocks before it) */ && o.inMeshes && o.inPlay[1] === o.inPlay[0] && o.inPlay[2] === o.inPlay[0] && o.inPlay[3] === o.inPlay[0]
       && o.edgeGap < 6 && o.edgeTrees >= 80 && o.off[0] === 0 && o.off[1] === 0 && o.on[0] === 3 * 4 && o.off2[0] === 0 && page.errors.length === 0;
     return { pass: ok, detail: `${o.chunks} culled chunks (each holding its trees ${o.contained}), always-tested meshes ${o.solid} (in the collision meshes ${o.inMeshes}); trees ${o.counts.trees}, rocks ${o.counts.rocks}, edge trees ${o.counts.edgeTrees}, edge rocks ${o.counts.edgeRocks}, bushes ${o.counts.bushes}; all ${o.inPlay[0]} trees and rocks in play stop a bullet ${o.inPlay[1]}, a line of sight ${o.inPlay[2]} and her ${o.inPlay[3]}; the edge never more than ${o.edgeGap.toFixed(1)} m from a tree (${o.edgeTrees} edge trees); developer drawings shown: off ${o.off[0]} (${o.off[1]} at the origin), with PATROL DEBUG ${o.on[0]} (3 for each of the 4 guards in play), off again ${o.off2[0]}; page errors ${page.errors.length}` };
+  },
+
+  // ---------------------------------------------------------------- Forest cleanup: a thinner forest, readable overlays, no stray labels
+  // the forest after the cleanup: it loads with the agreed props (14 trees and 6 rocks in play, 12 bushes, a closed edge); every
+  // piece of built cover is still solid and hides a body (the blocks, the logs, the barrier, the trail's rock, and each prop that was
+  // moved out of a trail, from the guard it hides from); nothing solid stands in a trail or on a patrol leg; the trails can be walked
+  // end to end; the bushes keep to the outer band, off the trails, the compound and the routes; the boundary still holds her in
+  async forestCleanup() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const W = MV.world, F = MV.levels.forest, L = MV.SCmv.FOREST_OUTPOST, o = MV.observer, m = MV.motor, out = {}, M = new THREE.Matrix4(), P = new THREE.Vector3();
+      out.level = MV.level.id; out.counts = F.area.counts; out.solid = [W.boxes.length, W.cylinders.filter(c => !c.noSight).length];
+      // built cover: each box and each tree or rock in play blocks a line of sight across it at chest height
+      let blocks = 0; for (const b of W.boxes) if (W.segmentBlocked(new THREE.Vector3(b.minX - 0.5, 0.6, (b.minZ + b.maxZ) / 2), new THREE.Vector3(b.maxX + 0.5, 0.6, (b.minZ + b.maxZ) / 2))) blocks++;
+      let props = 0; for (const c of W.cylinders) if (!c.noSight && W.segmentBlocked(new THREE.Vector3(c.x - c.r - 0.5, 0.6, c.z), new THREE.Vector3(c.x + c.r + 0.5, 0.6, c.z))) props++;
+      out.cover = [blocks, W.boxes.length, props, W.cylinders.filter(c => !c.noSight).length];
+      // the moved props, from the guard each hides from: a body just behind it is hidden (the real line-of-sight test), beside it seen
+      const G_ = k => G(k), hold = (g, x, z, yaw) => { g.patrol.enabled = false; g.motor.teleport(x, z, yaw); g.wantYaw = yaw; sim(10); };
+      const behind = (g, px, pz, d) => { const dx = px - g.position.x, dz = pz - g.position.z, L2 = Math.hypot(dx, dz); return [px + dx / L2 * d, pz + dz / L2 * d]; };
+      // (hidden by that prop itself: with its sight-blocking off for one sample, the same body is seen)
+      const check = (g, px, pz, d, name) => { const [bx, bz] = behind(g, px, pz, d), hid = o.sightAt(g, bx, bz), c = W.cylinders.find(c => Math.hypot(c.x - px, c.z - pz) < 0.05); c.noSight = true; const without = o.sightAt(g, bx, bz); c.noSight = false; return { name, hidden: !hid.standing, byIt: without.standing }; };
+      const B = G_('B'), A = G_('A'), D = G_('D'), E = G_('E'), moved = [];
+      hold(B, 19.5, -4.5, Math.PI); moved.push(check(B, 21.5, -10.8, 2.0, 'rock (21.5, −10.8) from B\'s south stop'), check(B, 14.5, -11.6, 1.2, 'tree (14.5, −11.6) from B\'s south stop'));
+      hold(A, -4, 22.7, Math.PI); moved.push(check(A, 6.8, 17.8, 1.6, 'rock (6.8, 17.8) from A\'s post'), check(A, -13.6, 18.4, 1.2, 'tree (−13.6, 18.4) from A\'s post'), check(A, -12, 27, 1.6, 'rock (−12, 27) from A\'s post'));
+      hold(D, -18.3, 14.4, Math.PI); moved.push(check(D, -19.6, 1.5, 1.2, 'tree (−19.6, 1.5) from D\'s post'));
+      hold(E, -3.5, -13, Math.PI); moved.push(check(E, -3.5, -17, 2.0, 'the trail\'s rock from E'), check(B, 20, -15.9, 1.2, 'tree (20, −15.9) from B\'s south stop'));
+      out.moved = moved;
+      // nothing solid in a trail (its own width, a body's radius in) or on a patrol leg (a guard's radius)
+      const inTrail = []; for (const [x0, x1, z0, z1] of L.trails) { for (const c of W.cylinders) if (!c.noSight && c.x + c.r > x0 + 0.3 && c.x - c.r < x1 - 0.3 && c.z + c.r > z0 + 0.3 && c.z - c.r < z1 - 0.3) inTrail.push(`prop (${c.x}, ${c.z}) in trail ${[x0, x1, z0, z1]}`);
+        for (const b of W.boxes) if (b.maxX > x0 + 0.3 && b.minX < x1 - 0.3 && b.maxZ > z0 + 0.3 && b.minZ < z1 - 0.3 && b.top > 1.5) inTrail.push(`box (${(b.minX + b.maxX) / 2}, ${(b.minZ + b.maxZ) / 2}) in trail ${[x0, x1, z0, z1]}`); }
+      out.inTrail = inTrail;
+      const segD = (x, z, a, b) => { const vx = b.x - a.x, vz = b.z - a.z, L2 = vx * vx + vz * vz, t = L2 ? Math.max(0, Math.min(1, ((x - a.x) * vx + (z - a.z) * vz) / L2)) : 0; return Math.hypot(x - a.x - vx * t, z - a.z - vz * t); };
+      const onLeg = []; for (const g of L.guards) g.patrol.points.forEach((q, i, pts) => { const n = pts[(i + 1) % pts.length]; for (const c of W.cylinders) if (!c.noSight && segD(c.x, c.z, q, n) < c.r + 0.36) onLeg.push(`${g.key}: prop (${c.x}, ${c.z}) on W${i}→W${(i + 1) % pts.length}`); });
+      out.onLeg = onLeg;
+      // the bushes: in the outer band only, clear of the trails, the compound and every route
+      const B_ = L.bounds, toEdge = (x, z) => { let d = 1e9; for (let i = 0; i < B_.length; i++) { const [ax, az] = B_[i], [bx, bz] = B_[(i + 1) % B_.length]; d = Math.min(d, segD(x, z, { x: ax, z: az }, { x: bx, z: bz })); } return d; };
+      const bushes = []; F.group.traverse(ob => { if (ob.isInstancedMesh && ob.userData.kind === 'bush') for (let i = 0; i < ob.count; i++) { ob.getMatrixAt(i, M); P.setFromMatrixPosition(M); bushes.push([P.x, P.z]); } });
+      const C = L.compound, bushBad = bushes.filter(([x, z]) => toEdge(x, z) > L.bushBand + 0.01 || L.trails.some(([x0, x1, z0, z1]) => x > x0 - 2 && x < x1 + 2 && z > z0 - 2 && z < z1 + 2) || (x > C.minX - 2 && x < C.maxX + 2 && z > C.minZ - 2 && z < C.maxZ + 2)
+        || L.guards.some(g => g.patrol.points.some((q, i, pts) => segD(x, z, q, pts[(i + 1) % pts.length]) < 3.9)));
+      out.bushes = [bushes.length, bushBad.length, Math.max(...bushes.map(([x, z]) => toEdge(x, z)))];
+      // the trails walked end to end (the guards held still, her shielded: the walk is what's tested)
+      for (const g of MV.active) { g.parked = true; g.collider.x = 1e6; } MV.playerHealth.shielded = true;   // (their bodies aside: Guard A's post is on the END trail)
+      const walks = []; for (const [sx, sz, tx, tz, name] of [[0, -36, 0, -21, 'START trail'], [-16, -14, -16, 20.5, 'western way'], [25, -14, 25, 20.5, 'eastern way'], [-16, 20.5, 25, 20.5, 'across the north'], [-19, -14, 25, -14, 'across the south'], [-3.75, 20, -3.75, 35, 'END trail (short of the END itself)'], [2.5, -12, 2.5, -9, 'to the south opening'], [1.75, 14.5, 1.75, 18.5, 'from the north opening']]) {
+        m.teleport(sx, sz, 0); MV.cam.snap(m); const ok = walkTo(tx, tz, 0.78, 60 * 40); walks.push(`${name} ${ok}`); if (!ok) out.walkFail = true; }
+      out.walks = walks; for (const g of MV.active) { g.parked = false; g.collider.x = g.position.x; } MV.playerHealth.shielded = false;
+      // the boundary: she can't be pushed out of it
+      m.teleport(-28, 0, 0); MV.cam.snap(m); let worst = 0; for (let i = 0; i < 180; i++) { MV.cam.yaw = Math.PI / 2; MV.input.move.x = 0; MV.input.move.y = 1; sim(1); if (!W.inBounds(m.position.x, m.position.z, 0)) worst = Math.max(worst, 1); } MV.input.move.y = 0;
+      out.bounds = { out: worst, at: m.position.x, outsideIsOut: !W.inBounds(-40, 0, 0) };
+      return out;
+    });
+    const o = r, ok = o.level === 'forest' && o.counts.trees === 14 && o.counts.rocks === 6 && o.counts.bushes === 12 && o.counts.edgeTrees >= 80 && o.solid[0] === 16 && o.solid[1] === 20
+      && o.cover[0] === o.cover[1] && o.cover[2] === o.cover[3] && o.moved.every(x => x.hidden && x.byIt) && o.inTrail.length === 0 && o.onLeg.length === 0 && o.bushes[1] === 0 && !o.walkFail
+      && o.bounds.out === 0 && o.bounds.at > -31 && o.bounds.outsideIsOut && page.errors.length === 0;
+    return { pass: ok, detail: `${o.level}: ${o.counts.trees} trees, ${o.counts.rocks} rocks, ${o.counts.bushes} bushes, ${o.counts.edgeTrees} edge trees; ${o.solid[0]} boxes and ${o.solid[1]} props in the world, all blocking a line of sight (${o.cover[0]}/${o.cover[1]}, ${o.cover[2]}/${o.cover[3]}); the moved props hide a body behind them, and it's each prop that does (seen with its blocking off): ${o.moved.map(x => `${x.name} ${x.hidden}/${x.byIt}`).join('; ')}; in a trail: ${o.inTrail.join(', ') || 'nothing'}; on a patrol leg: ${o.onLeg.join(', ') || 'nothing'}; bushes ${o.bushes[0]}, out of place ${o.bushes[1]} (farthest in ${o.bushes[2].toFixed(1)} m); walked: ${o.walks.join(', ')}; pushed west 3 s at the edge: out ${o.bounds.out} (x ${o.bounds.at.toFixed(1)}); page errors ${page.errors.length}` };
+  },
+
+  // the overlays, as drawn: the three zones in distinct, strong colours (fastest / normal / slower, each far from the others
+  // and from the ground's greens and browns), a solid fill for what he sees, a white edge round it at least 0.2 m wide, faint
+  // outlines of the whole cones beyond; the effective area stops at real geometry (nothing drawn behind the compound's block
+  // while the outline reaches past it); VISION off draws nothing and costs nothing; the route: every leg's ends on the line,
+  // an arrowhead per leg pointing the way he walks, each stop's facing, the numbered labels, the target marked; ROUTE off hides
+  // the drawing and every label; no label is ever long (the lookout's long facing bar is gone: his post gets one short label)
+  async observeOverlays() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const o = MV.observer, out = {}, C = G('C'), B = G('B'), A = G('A'), D = o.cfg.draw;
+      const hex = c => '#' + c.clone().convertLinearToSRGB().getHexString(), dist = (a, b) => Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+      const Z = o.zoneCol, ground = [new THREE.Color(0x3c5228), new THREE.Color(0x6b5638), new THREE.Color(0x6d6d66), new THREE.Color(0x6f706a)].map(c => c.convertSRGBToLinear());
+      out.colours = { fastest: hex(Z.fastest), normal: hex(Z.normal), slower: hex(Z.slower), apart: Math.min(dist(Z.fastest, Z.normal), dist(Z.fastest, Z.slower), dist(Z.normal, Z.slower)), offGround: Math.min(...[Z.fastest, Z.normal, Z.slower].flatMap(c => ground.map(g => dist(c, g)))) };
+      out.fills = { full: o.vFull.material.opacity, stand: o.vStand.material.opacity, edge: o.vEdge.material.opacity, edgeW: D.edge, outline: o.vLines.material.opacity, outlineW: D.outline };
+      // Guard C held facing the long northern block, 3 m ahead: the overlay stops at it
+      MV.enterObserve(); while (o.sel !== C) o.selectNext();
+      C.patrol.enabled = false; C.motor.teleport(2, 11.5, Math.PI); C.wantYaw = Math.PI; sim(20); o.drawVision(C);
+      const verts = (mesh, n) => { const a = mesh.geometry.attributes.position.array, pts = []; for (let i = 0; i < n; i++) pts.push([a[i * 3], a[i * 3 + 2]]); return pts; };
+      const fill = verts(o.vFull, o.vFull.geometry.drawRange.count).concat(verts(o.vStand, o.vStand.geometry.drawRange.count));
+      out.behind = fill.filter(([x, z]) => Math.hypot(x - 2, z - 4.5) < 1.2).length;        // (2, 4.5): behind the block
+      out.before = fill.filter(([x, z]) => Math.hypot(x - 2, z - 9.8) < 1.0).length;        // (2, 9.8): the open floor just ahead
+      const outline = verts(o.vLines, o.vLines.geometry.drawRange.count); out.outlineReach = Math.max(...outline.map(([x, z]) => Math.hypot(x - 2, z - 11.5)));
+      out.edges = o.vstat.edges; out.stat = { seen: o.vstat.seen, hidden: o.vstat.hidden };
+      // VISION off: the group hidden, nothing computed for 2 s
+      o.show.vision = false; o.visionMs = null; const st0 = o.vstat; sim(120); out.off = { visible: o.vision.visible, computed: o.visionMs != null, stat: o.vstat === st0 }; o.show.vision = true;
+      // the route for Guard B, drawn: the legs, the arrowheads, the facings, the labels
+      while (o.sel !== B) o.selectNext(); sim(2);
+      const pts = B.patrol.cfg.points, legs = pts.map((q, i) => [q, pts[(i + 1) % pts.length]]);
+      const line = verts(o.rLine, o.rLine.geometry.drawRange.count), near = (x, z) => line.some(([px, pz]) => Math.hypot(px - x, pz - z) < 0.25);
+      out.legEnds = legs.every(([a, b]) => near(a.x, a.z) && near(b.x, b.z));
+      const heads = verts(o.rHeads, o.rHeads.geometry.drawRange.count), tris = []; for (let i = 0; i + 2 < heads.length; i += 3) tris.push(heads.slice(i, i + 3));
+      const along = legs.map(([a, b]) => { const ang = Math.atan2(b.x - a.x, b.z - a.z); return tris.some(t => { const mx = (t[1][0] + t[2][0]) / 2, mz = (t[1][1] + t[2][1]) / 2, dx = t[0][0] - mx, dz = t[0][1] - mz, dir = Math.atan2(dx, dz); const onLeg = (() => { const vx = b.x - a.x, vz = b.z - a.z, L2 = vx * vx + vz * vz, tt = ((t[0][0] - a.x) * vx + (t[0][1] - a.z) * vz) / L2; return tt > 0.1 && tt < 0.9 && Math.hypot(t[0][0] - a.x - vx * tt, t[0][1] - a.z - vz * tt) < 0.3; })(); return onLeg && Math.abs(Math.atan2(Math.sin(dir - ang), Math.cos(dir - ang))) < 0.05; }); });
+      out.arrows = { legs: legs.length, pointing: along.filter(Boolean).length, heads: tris.length, stops: pts.filter(q => q.pause).length };
+      out.width = { route: D.route, facing: D.facing, y: D.y };
+      out.labelsB = o.routeLabels(B).map(l => l.text); out.curB = o.routeLabels(B).filter(l => l.cur).length; out.target = B.patrol.state !== 'interrupted' ? Math.hypot(o.rTarget.position.x - pts[B.patrol.index].x, o.rTarget.position.z - pts[B.patrol.index].z) : 0;
+      // the lookout: one short label, no facing bar
+      out.labelsA = o.routeLabels(A).map(l => l.text);
+      out.longest = Math.max(...MV.active.map(g => Math.max(...o.routeLabels(g).map(l => l.text.length))));
+      out.bar = MV.active.some(g => o.routeLabels(g).some(l => /faces .*→/.test(l.text)));
+      // on the page: the camera over B's loop, the labels shown at most one per waypoint, none wide, the target's green
+      o.pos.set(19.5, 22, -12); o.yaw = Math.PI; o.pitch = -1.0; o.mode = 'free'; sim(3);
+      const els = [...document.querySelectorAll('.mv-routelabel')], shown = els.filter(e => e.style.opacity === '1');
+      out.page = { shown: shown.length, widest: Math.max(0, ...shown.map(e => e.getBoundingClientRect().width)), cur: shown.filter(e => e.classList.contains('mv-cur')).length, els: els.length };
+      // ROUTE off: the drawing and every label gone; on again: back
+      o.show.route = false; sim(2); out.routeOff = { visible: o.route.visible, shown: els.filter(e => e.style.opacity === '1').length };
+      o.show.route = true; sim(2); out.routeOn = { visible: o.route.visible, shown: els.filter(e => e.style.opacity === '1').length };
+      MV.exitObserve();
+      return out;
+    });
+    const o = r, ok = o.colours.apart > 0.5 && o.colours.offGround > 0.3 && o.fills.full >= 0.4 && o.fills.stand < o.fills.full && o.fills.stand >= 0.15 && o.fills.edge >= 0.9 && o.fills.edgeW >= 0.2 && o.fills.outline < o.fills.edge && o.fills.outlineW >= 0.1
+      && o.behind === 0 && o.before > 0 && o.outlineReach > 12 && o.edges > 0 && o.stat.hidden > 0 && !o.off.visible && !o.off.computed && o.off.stat
+      && o.legEnds && o.arrows.pointing === o.arrows.legs && o.arrows.heads === o.arrows.legs + o.arrows.stops && o.width.route >= 0.18 && o.width.facing >= 0.12 && o.width.y > 0.01
+      && o.labelsB.length === 6 && o.labelsB.every((t, i) => t.indexOf('W' + i) === 0) && o.curB === 1 && o.target < 1e-6
+      && o.labelsA.length === 1 && /^POST/.test(o.labelsA[0]) && o.longest <= 48 && !o.bar
+      && o.page.shown >= 4 && o.page.shown <= 6 && o.page.widest <= 180 && o.page.cur === 1 && !o.routeOff.visible && o.routeOff.shown === 0 && o.routeOn.visible && o.routeOn.shown >= 4 && page.errors.length === 0;
+    return { pass: ok, detail: `zones fastest ${o.colours.fastest}, normal ${o.colours.normal}, slower ${o.colours.slower} (${o.colours.apart.toFixed(2)} apart, ${o.colours.offGround.toFixed(2)} from the ground's colours); fills ${o.fills.full} / ${o.fills.stand}, edge ${o.fills.edge} × ${o.fills.edgeW} m, outline ${o.fills.outline} × ${o.fills.outlineW} m; Guard C facing the block: ${o.stat.seen} cells seen, ${o.stat.hidden} hidden, ${o.edges} edge pieces, fill behind the block ${o.behind}, before it ${o.before}, outline reaching ${o.outlineReach.toFixed(1)} m; VISION off: drawn ${o.off.visible}, computed ${o.off.computed}; route B: leg ends on the line ${o.legEnds}, ${o.arrows.pointing}/${o.arrows.legs} arrowheads along their legs (${o.arrows.heads} heads for ${o.arrows.legs} legs + ${o.arrows.stops} stops), line ${o.width.route} m wide ${(o.width.y * 100).toFixed(0)} cm up; labels ${o.labelsB.join(' | ')} (target marked ${o.curB}, ring on it ${o.target < 1e-6}); lookout A: ${o.labelsA.join(' | ')}; longest label ${o.longest} chars, facing bar ${o.bar}; on the page over B's loop: ${o.page.shown} labels shown of ${o.page.els}, widest ${o.page.widest.toFixed(0)} px, ${o.page.cur} green; ROUTE off → drawn ${o.routeOff.visible}, labels ${o.routeOff.shown}; on → ${o.routeOn.visible}, ${o.routeOn.shown}; page errors ${page.errors.length}` };
+  },
+
+  // nothing of Observation Mode outlives it: EXIT hides the world drawings and every label (and they come back next time);
+  // RESET while observing leaves no stale label or ring; choosing a level from the menu ends observation first, so the new
+  // level starts with nothing of it (the Test Lab's own developer drawings untouched); HIDE is cleared by EXIT
+  async observeCleanup() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const o = MV.observer, out = {}, A = G('A');
+      const labels = () => [...document.querySelectorAll('.mv-routelabel')], shown = () => labels().filter(e => e.style.opacity === '1').length;
+      const world = () => { let n = 0; o.group.traverse(x => { if ((x.isMesh || x.isLine) && x.visible) { let v = true; for (let q = x; q; q = q.parent) v = v && q.visible; if (v) n++; } }); return n; };
+      const over = () => { o.pos.set(-4, 14, 34); o.yaw = 0; o.pitch = -0.9; o.mode = 'free'; };
+      MV.enterObserve(); while (o.sel !== A) o.selectNext(); over(); sim(3);
+      out.in1 = { labels: shown(), world: world() };
+      MV.exitObserve(); sim(2); out.out1 = { labels: shown(), world: world(), active: o.active, body: document.body.classList.contains('mv-observing'), hud: document.getElementById('mv-obs').hidden };
+      MV.enterObserve(); over(); sim(3); out.in2 = { labels: shown(), world: world() };
+      // RESET while observing: still observing, the camera over the level, rings and old labels gone, the route for the selected guard only
+      MV.noise.emit(3, 'clatter', new THREE.Vector3(0, 0, -20), 'grass', 'test'); sim(5); out.ringsBefore = MV.noise.rings.filter(m => m.visible).length;
+      document.getElementById('mv-reset').click(); sim(3);
+      out.reset = { active: o.active, rings: MV.noise.rings.filter(m => m.visible).length, labels: shown(), expected: o.routeLabels(o.sel).length, sel: o.sel && o.sel.levelKey };
+      // HIDE, then a level choice: observation ends with the level
+      document.getElementById('mv-obs-hide').click(); out.min = document.body.classList.contains('mv-obs-min');
+      document.getElementById('mv-to-menu').click(); MV.begin('lab'); sim(5);
+      out.lab = { level: MV.level.id, active: o.active, labels: shown(), world: o.group.visible ? world() : 0, body: document.body.classList.contains('mv-observing'), min: document.body.classList.contains('mv-obs-min'), hud: document.getElementById('mv-obs').hidden, her: MV.visual.root.visible, shielded: !!MV.playerHealth.shielded, labRoute: MV.area.route ? MV.area.route.group.visible : null };
+      document.getElementById('mv-to-menu').click(); MV.begin('forest'); sim(5);
+      out.back = { level: MV.level.id, active: o.active, labels: shown(), world: o.group.visible ? world() : 0 };
+      return out;
+    });
+    const o = r, ok = o.in1.labels >= 1 && o.in1.world >= 3 && o.out1.labels === 0 && o.out1.world === 0 && !o.out1.active && !o.out1.body && o.out1.hud && o.in2.labels >= 1 && o.in2.world >= 3
+      && o.ringsBefore >= 1 && o.reset.active && o.reset.rings === 0 && o.reset.labels <= o.reset.expected && o.min
+      && o.lab.level === 'lab' && !o.lab.active && o.lab.labels === 0 && o.lab.world === 0 && !o.lab.body && !o.lab.min && o.lab.hud && o.lab.her && !o.lab.shielded
+      && o.back.level === 'forest' && !o.back.active && o.back.labels === 0 && o.back.world === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `observing A: ${o.in1.labels} label, ${o.in1.world} drawings; EXIT: ${o.out1.labels} labels, ${o.out1.world} drawings, observing ${o.out1.active}, HUD hidden ${o.out1.hud}; again: ${o.in2.labels} label, ${o.in2.world} drawings; RESET while observing: observing ${o.reset.active}, rings ${o.ringsBefore} → ${o.reset.rings}, labels ${o.reset.labels} (≤ ${o.reset.expected} for ${o.reset.sel}); HIDE ${o.min}; LEVELS → Test Lab: ${o.lab.level}, observing ${o.lab.active}, labels ${o.lab.labels}, drawings ${o.lab.world}, controls hidden ${o.lab.hud} (HIDE cleared ${!o.lab.min}), her shown ${o.lab.her}, shielded ${o.lab.shielded}; → forest: observing ${o.back.active}, labels ${o.back.labels}, drawings ${o.back.world}; page errors ${page.errors.length}` };
+  },
+
+  // iPhone, real touches: HIDE puts the observer's controls away (SHOW and EXIT OBSERVE stay) and the stick still flies the
+  // camera; SHOW brings them back; VISION and ROUTE toggle their overlays; EXIT OBSERVE ends it with the controls back
+  async observeControls() {
+    const page = await touchPage(), T = page.touch;
+    await page.evaluate(() => { MV.toMenu(); }); await page.tap('#mv-start-forest'); await page.waitForTimeout(800);
+    const vis = ids => page.evaluate(ids => ids.map(id => { const e = document.getElementById(id); return !!e && getComputedStyle(e).display !== 'none' && !e.closest('[hidden]'); }), ids);
+    const ctl = ['mv-obs-up', 'mv-obs-down', 'mv-obs-trigger', 'mv-obs-next', 'mv-obs-follow', 'mv-obs-kind', 'mv-obs-vis', 'mv-obs-route', 'mv-obs-rings'];
+    await page.tap('#mv-stats-btn'); await page.waitForTimeout(300); await page.tap('#mv-observe'); await page.waitForTimeout(500);
+    const s1 = { ctl: await vis(ctl), keep: await vis(['mv-obs-hide', 'mv-obs-exit']) };
+    await page.tap('#mv-obs-hide'); await page.waitForTimeout(300);
+    const s2 = { ctl: await vis(ctl), keep: await vis(['mv-obs-hide', 'mv-obs-exit']), text: await page.evaluate(() => document.getElementById('mv-obs-hide').textContent), pos: await page.evaluate(() => MV.observer.pos.toArray()) };
+    await T('touchStart', [{ x: 150, y: 300, id: 1 }]); await T('touchMove', [{ x: 150, y: 236, id: 1 }]); await page.waitForTimeout(1000); await T('touchEnd', [{ x: 150, y: 236, id: 1 }]); await page.waitForTimeout(200);
+    const moved = await page.evaluate(() => MV.observer.pos.toArray());
+    await page.tap('#mv-obs-hide'); await page.waitForTimeout(300);
+    const s3 = { ctl: await vis(ctl), text: await page.evaluate(() => document.getElementById('mv-obs-hide').textContent) };
+    await page.tap('#mv-obs-vis'); await page.tap('#mv-obs-route'); await page.waitForTimeout(300);
+    const off = await page.evaluate(() => ({ v: MV.observer.show.vision, r: MV.observer.show.route, vg: MV.observer.vision.visible, rg: MV.observer.route.visible, labels: [...document.querySelectorAll('.mv-routelabel')].filter(e => e.style.opacity === '1').length, pressed: [document.getElementById('mv-obs-vis').getAttribute('aria-pressed'), document.getElementById('mv-obs-route').getAttribute('aria-pressed')] }));
+    await page.tap('#mv-obs-vis'); await page.tap('#mv-obs-route'); await page.waitForTimeout(300);
+    const on = await page.evaluate(() => ({ v: MV.observer.show.vision, r: MV.observer.show.route, vg: MV.observer.vision.visible, rg: MV.observer.route.visible }));
+    await page.tap('#mv-obs-exit'); await page.waitForTimeout(400);
+    const s4 = { on: await page.evaluate(() => MV.observer.active), min: await page.evaluate(() => document.body.classList.contains('mv-obs-min')), play: await vis(['mv-aim', 'mv-cqc', 'mv-crouch']) };
+    const flew = Math.hypot(moved[0] - s2.pos[0], moved[2] - s2.pos[2]);
+    const ok = s1.ctl.every(Boolean) && s1.keep.every(Boolean) && s2.ctl.every(v => !v) && s2.keep.every(Boolean) && s2.text === 'SHOW' && flew > 2 && s3.ctl.every(Boolean) && s3.text === 'HIDE'
+      && !off.v && !off.r && !off.vg && !off.rg && off.labels === 0 && off.pressed.join() === 'false,false' && on.v && on.r && on.vg && on.rg && !s4.on && !s4.min && s4.play.every(Boolean) && page.errors.length === 0;
+    return { pass: ok, detail: `observing: ${s1.ctl.filter(Boolean).length}/${ctl.length} controls shown; HIDE → ${s2.ctl.filter(Boolean).length} shown, SHOW and EXIT kept ${s2.keep.every(Boolean)} (button reads ${s2.text}), the stick flew the camera ${flew.toFixed(1)} m; SHOW → ${s3.ctl.filter(Boolean).length} back (reads ${s3.text}); VISION + ROUTE off: drawn ${off.vg}/${off.rg}, labels ${off.labels}, pressed ${off.pressed.join('/')}; on again: ${on.vg}/${on.rg}; EXIT: observing ${s4.on}, HIDE cleared ${!s4.min}, gameplay buttons back ${s4.play.every(Boolean)}; page errors ${page.errors.length}` };
   },
 
   // ---------------------------------------------------------------- Step 24: Level 01, the Forest Outpost

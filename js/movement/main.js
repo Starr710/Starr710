@@ -226,6 +226,9 @@
   const kindLabel = () => { const k = observer.sounds[observer.soundIdx]; $('mv-obs-kind').textContent = `L${k.level} ${k.name} ▸`; };
   press('mv-obs-kind', () => { observer.soundIdx = (observer.soundIdx + 1) % observer.sounds.length; kindLabel(); });
   press('mv-obs-trigger', () => { observer.trigger(); obsUi.t = 7; });
+  // Forest cleanup: HIDE puts the observer's controls away (the stick and the drag still fly the camera); SHOW brings them back
+  const setObsMin = on => { document.body.classList.toggle('mv-obs-min', on); const b = $('mv-obs-hide'); b.textContent = on ? 'SHOW' : 'HIDE'; b.setAttribute('aria-pressed', String(on)); };
+  press('mv-obs-hide', () => setObsMin(!document.body.classList.contains('mv-obs-min')));
   press('mv-obs-next', () => { observer.selectNext(); obsUi.t = 7; });
   press('mv-obs-follow', () => { const m = observer.toggleFollow(); $('mv-obs-follow').setAttribute('aria-pressed', String(m === 'follow')); $('mv-obs-follow').textContent = m === 'follow' ? 'FREE' : 'FOLLOW'; });
   for (const [id, k] of [['mv-obs-vis', 'vision'], ['mv-obs-route', 'route'], ['mv-obs-rings', 'sound']]) press(id, () => { observer.show[k] = !observer.show[k]; $(id).setAttribute('aria-pressed', String(observer.show[k])); if (k === 'sound') { noise.cfg.debug = observer.show.sound && forestOpts.sound; if (!noise.cfg.debug) hideNoiseLabels(); } });
@@ -271,6 +274,7 @@
       if (!p || !p.enabled) return name + ' · no patrol (stationary)';
       L.push(`${name} · ${p.cfg.loop ? 'loop' : 'back and forth'} of ${p.cfg.points.length} waypoints · ${p.status()}`);
       p.cfg.points.forEach((q, i) => L.push(`  W${i} (${q.x}, ${q.z})${q.pause ? ` stop ${q.pause.join('–')} s facing ${q.face}°${q.looks && q.looks.length ? ' looks ' + q.looks.join('/') : ''}` : ' pass'}${i === p.index ? (p.state === 'interrupted' ? '' : '  ◀ current') : ''}${p.state === 'interrupted' && i === p.resumeIndex ? '  ◀ rejoins here' : ''}`));
+      if (p.cfg.points.length > 1 && p.cfg.points.every(q => Math.hypot(q.x - p.cfg.points[0].x, q.z - p.cfg.points[0].z) < 0.1)) L.push(`  lookout at his post: faces ${p.cfg.points.map(q => q.face + '°').join(' → ')} in turn`);
       L.push(`legs walked ${p.legs} · resumed ${p.resumes}× · interrupted ${p.interrupts}×${p.state === 'interrupted' ? ' · NOW interrupted: ' + (p.why || g.awareness.state) : ''}${p.why && p.state !== 'interrupted' ? ' · note: ' + p.why : ''}`);
     } else if (tab === 'sound') {
       const k = o ? o.sounds[o.soundIdx] : null, at = o && o.active ? o.previewAt : null, n = noise.last;
@@ -281,6 +285,8 @@
       if (!fps) { L.push('not measured yet: no drawn frames (the figures need the running game)'); return L.join('\n'); }
       L.push(`MEASURED: ${fps.toFixed(0)} fps · ${perf.frameMs.toFixed(1)} ms between frames · simulation ${perf.tickMs.toFixed(2)} ms · guards ${perf.guardMs.toFixed(2)} ms (${active.length} active) · drawing submitted in ${perf.renderMs.toFixed(1)} ms (CPU side; the GPU's own time isn't measurable here)`);
       L.push(`renderer: ${renderer.info.render.calls} draw calls, ${Math.round(renderer.info.render.triangles / 1000)}k triangles · quality ${TIERS[tier].n} ${TIERS[tier].d}×`);
+      const K = level.area.counts; if (K) L.push(`level props: ${K.trees} trees and ${K.rocks} rocks in play, ${K.bushes} bushes, edge ${K.edgeTrees} trees + ${K.edgeRocks} rocks, in ${K.chunks} culled chunks`);
+      if (o && o.active) L.push(`overlays: vision ${o.show.vision ? (o.visionMs != null ? o.visionMs.toFixed(1) + ' ms per update at ' + o.cfg.vision.hz + '/s' : 'on') : 'off (nothing computed)'} · route ${o.show.route ? 'on' : 'off'}`);
       L.push(`overlays: ${o && o.active ? `observing (vision ${o.show.vision ? 'on' + (o.visionMs != null ? ', ' + o.visionMs.toFixed(1) + ' ms per update' : '') : 'off'}, route ${o.show.route ? 'on' : 'off'}, sound ${noise.cfg.debug ? 'on' : 'off'})` : 'not observing'} · patrol debug ${level.debug ? 'on' : 'off'} · sound rings ${noise.cfg.debug ? 'on' : 'off'}`);
     }
     return L.join('\n');
@@ -340,6 +346,7 @@
   function enterLevel(id) {
     const next = levels[id] || (id === 'forest' ? buildForest() : null);
     if (!next) return false;
+    if (observer && observer.active) exitObserve();   // (Forest cleanup: observation ends with the level; no overlay or label is carried over)
     // the one that was loaded: back at their posts while its collision is still loaded (a knocked-out guard's
     // ground colliders live there), then parked (hidden, deaf, not updated), its marks hidden
     for (const g of active) g.reset();
@@ -453,7 +460,8 @@
     if (!observer || !observer.active) return;
     observer.exit(); visual.root.visible = true; if (playerHealth) playerHealth.shielded = false;
     input.move.x = input.move.y = 0; input.look.dx = input.look.dy = 0; input.cqcTapped = input.useTapped = input.aimTapped = input.throwTapped = false; input.takeFire();
-    document.body.classList.remove('mv-observing'); ui.obs.hidden = true; ui.obsInfo.hidden = true; for (const el of obsUi.labels) el.style.opacity = '0';
+    document.body.classList.remove('mv-observing'); ui.obs.hidden = true; ui.obsInfo.hidden = true; for (const el of obsUi.labels) { el.style.opacity = '0'; el._shown = false; }
+    setObsMin(false);
     if (footsteps) for (const f of footsteps.feet) { f.down = true; f.prev = null; }   // (no footstep for the frames she was set aside)
     cam.update(0, motor, input.look, input.mouse);
   }
@@ -467,11 +475,15 @@
     const o = observer, g = o.sel, W = renderer.domElement.clientWidth, H = renderer.domElement.clientHeight, P = new THREE.Vector3();
     if (g) o.drawSightRay(g, seeTarget);
     const items = g && o.show.route && g.patrol && g.patrol.enabled ? o.routeLabels(g) : [];
+    // (Forest cleanup: a label sits just above its own waypoint, only while that point is on screen and within sight of the
+    // camera; off screen, too far, ROUTE off, another guard or EXIT, and it's gone. It never spans the screen)
+    const hide = el => { if (el._shown) { el.style.opacity = '0'; el._shown = false; } };
     obsUi.labels.forEach((el, i) => {
-      const it = items[i]; if (!it) { if (el._shown) { el.style.opacity = '0'; el._shown = false; } return; }
-      P.set(it.q.x, 0.6, it.q.z).project(camera);
-      if (P.z > 1 || Math.abs(P.x) > 1.2 || Math.abs(P.y) > 1.2) { if (el._shown) { el.style.opacity = '0'; el._shown = false; } return; }
+      const it = items[i]; if (!it) { hide(el); return; }
+      P.set(it.q.x, 0.5, it.q.z); const far = P.distanceTo(camera.position) > o.cfg.draw.labelRange; P.project(camera);
+      if (far || P.z > 1 || Math.abs(P.x) > 0.98 || Math.abs(P.y) > 0.98) { hide(el); return; }
       if (el._t !== it.text) { el._t = it.text; el.textContent = it.text; }
+      const cls = 'mv-routelabel' + (it.cur ? ' mv-cur' : it.rejoin ? ' mv-rejoin' : ''); if (el.className !== cls) el.className = cls;
       el.style.transform = `translate(${((P.x + 1) / 2 * W).toFixed(0)}px, ${((1 - P.y) / 2 * H).toFixed(0)}px) translate(-50%, -100%)`; if (!el._shown) { el.style.opacity = '1'; el._shown = true; }
     });
     if ((obsUi.t = (obsUi.t || 0) + 1) % 8 === 0) {

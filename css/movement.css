@@ -300,7 +300,12 @@ body.mv-observing #mv-crosshair, body.mv-observing .mv-head, body.mv-observing #
 .mv-obsrow .mv-primary { font-size: 10px; min-height: 30px; }
 #mv-obs-info { position: absolute; z-index: 2; pointer-events: none; top: calc(26px + env(safe-area-inset-top, 0px)); left: calc(10px + env(safe-area-inset-left, 0px)); max-width: 46vw;
   font-family: var(--font-mono); font-size: 9.5px; line-height: 13px; padding: 2px 5px; color: #f3eedb; background: rgba(8, 10, 8, 0.66); border-radius: 2px; white-space: pre-wrap; }
-.mv-routelabel { position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; white-space: nowrap; font-family: var(--font-mono); font-size: 9px; padding: 1px 4px; color: #0e1a28; background: rgba(159, 208, 255, 0.85); border-radius: 2px; opacity: 0; }
+/* (Forest cleanup: a waypoint's label is compact, in the route's colour; the one he's heading for in the target's; never wider than this) */
+.mv-routelabel { position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; white-space: nowrap; font-family: var(--font-mono); font-size: 9px; line-height: 12px; padding: 1px 4px; color: #1a0a16; background: rgba(255, 79, 216, 0.9); border-radius: 2px; opacity: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; will-change: transform, opacity; }
+.mv-routelabel.mv-cur { background: rgba(125, 255, 106, 0.92); color: #0b1a08; }
+.mv-routelabel.mv-rejoin { background: rgba(255, 178, 60, 0.92); color: #1a1000; }
+/* HIDE: the observer's controls away (EXIT OBSERVE and SHOW stay) */
+body.mv-obs-min .mv-obsbtn, body.mv-obs-min #mv-obs-kind, body.mv-obs-min #mv-obs-vis, body.mv-obs-min #mv-obs-route, body.mv-obs-min #mv-obs-rings { display: none !important; }
 #mv-report textarea { width: 100%; font-family: var(--font-mono); font-size: 10px; color: var(--text); background: rgba(8, 10, 8, 0.8); border: 1px solid var(--line); -webkit-user-select: text; user-select: text; }
 .mv-statbar > * { flex-shrink: 0; }   /* (Step 24.2: never squeezed: what's longer than the cap scrolls) */
 .mv-devtabs { height: 23px; }

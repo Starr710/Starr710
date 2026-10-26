@@ -59,22 +59,33 @@
     trees: [
       // (Step 24.1: the decorative ones by the edge, where the edge's own trees already stand, are gone: (−26, −6),
       // (−27, 3), (27, −8), (27.3, 4), (14, −17), (13, 22.5); every tree kept gives cover on a way through)
-      [-9, -17, 0.34], [4.5, -17.5, 0.3], [9.5, -19.5, 0.36], [-15, -18, 0.38], [20, -15.5, 0.34], [-21, -12, 0.36],
-      [-18.5, -7.5, 0.34], [-13, -3, 0.3], [-17, 1.5, 0.32], [-12, 10.5, 0.36], [-25, 17, 0.4], [-14.5, 18.5, 0.34], [-20, 22, 0.36], [-11.5, 24, 0.32],
-      [26, 12.5, 0.38], [14.5, -12.5, 0.3], [22, 19.5, 0.36],
-      [6, 24.5, 0.36], [10.5, 18.5, 0.32], [3, 27.5, 0.3], [-7.5, 16.8, 0.34],
+      // Forest cleanup: 21 → 14. Gone, crowding an area without breaking any guard's view, or standing in a trail:
+      // (9.5, −19.5), (−15, −18), (−21, −12), (−25, 17), (3, 27.5), (26, 12.5) (in the eastern trail), (22, 19.5) (in the northern
+      // one). Moved out of a trail, keeping the sightline break each gives: (−17, 1.5) → (−19.6, 1.5) (the western trail, in
+      // Guard D's view down it), (−14.5, 18.5) → (−13.6, 18.4) (in Guard A's), (14.5, −12.5) → (14.5, −11.6) (in Guard B's south stop's)
+      [-9, -17, 0.34], [4.5, -17.5, 0.3], [20, -15.9, 0.34],   // ((20, −15.5) stood on the southern trail's edge: 0.4 m south of it now)
+      [-18.5, -7.5, 0.34], [-13, -3, 0.3], [-19.6, 1.5, 0.32], [-12, 10.5, 0.36], [-13.6, 18.4, 0.34], [-20, 22, 0.36], [-11.5, 24, 0.32],
+      [14.5, -11.6, 0.3],
+      [6, 24.5, 0.36], [10.5, 18.5, 0.32], [-7.5, 16.8, 0.34],
     ],
     // rocks in play: [x, z, radius, height] (≥ 1.6 m tall: full cover; under 1 m: waist-high)
     rocks: [
+      // Forest cleanup: 9 → 6. Gone: (16, 21) and (−9.5, 20) (both filled the northern trail; the trees at (−7.5, 16.8), (−13.6, 18.4)
+      // and (−11.5, 24) still break the north lookout's view there) and (−26.5, −12.5) (the far south-west corner, in nobody's view).
+      // Moved out of a trail, keeping the cover each gives: (24.5, −12) → (21.5, −10.8) (the eastern trail; cover from Guard B's south
+      // stop), (6.8, 20.5) → (6.8, 17.8) (the northern trail; cover from Guard A, 21° off his south-east facing). (−12, 27) stays: it hides a crouch
+      // from the north lookout on the way to the END trail
       [-3.5, -17, 1.3, 2.0],     // the first look at the forest, at the trail's mouth
       [8, -17.8, 1.0, 1.1],
-      [-21, 4.5, 1.2, 2.2], [-9.5, 20, 1.1, 1.8], [24.5, -12, 1.2, 2.0], [16, 21, 0.9, 1.0], [6.8, 20.5, 1.0, 1.6], [-12, 27, 1.1, 1.8],
-      [-26.5, -12.5, 1.0, 0.9],
+      [-21, 4.5, 1.2, 2.2], [21.5, -10.8, 1.2, 2.0], [6.8, 17.8, 1.0, 1.6], [-12, 27, 1.1, 1.8],
     ],
-    bushes: 26,   // scattered, for looks only (no collision, no concealment yet)
+    // bushes: for looks only (no collision, no concealment yet: that's a later step), and only in the outer band of the
+    // forest, `bushBand` m in from its edge, clear of the trails, the compound and every patrol route (Forest cleanup: were 26 anywhere)
+    bushes: 12, bushBand: 8,
     // the forest's edge (looks only): a ring every `spacing` m along the boundary, `near` [from, + up to] m outside it, and every
-    // `backEvery`-th spot a second tree further out (`far`); this share of the spots are rocks instead
-    edge: { spacing: 2.8, near: [1.5, 1.6], far: [4.5, 2.2], backEvery: 2, rocks: 0.1 },
+    // `backEvery`-th spot a second tree further out (`far`); this share of the spots are rocks instead (Forest cleanup: a little
+    // sparser than the 2.8 m / 10 % it was; still a closed wood all round)
+    edge: { spacing: 3.2, near: [1.5, 1.6], far: [4.5, 2.2], backEvery: 2, rocks: 0.06 },
     // dirt trails (standard ground for noise, like the lab's concrete): [minX, maxX, minZ, maxZ]
     trails: [
       [-1.8, 1.8, -40, -20],      // the southern START trail
@@ -270,12 +281,15 @@
     chunked(trunkG, mats.bark, eTrunkList, 'tree', false); chunked(canopyG, mats.leavesDark, eCrownList, 'leaves', false); chunked(rockG, mats.rock, eRockList, 'rock', false);
     out.counts.edgeTrees = edge.length; out.counts.edgeRocks = edgeRocks.length;
 
-    // bushes: looks only (no collision, no concealment yet), kept off the trails and out of the compound
+    // bushes: looks only (no collision, no concealment yet), in the outer band only, kept off the trails, out of the compound
+    // and away from every patrol route, so the ground round the routes and the compound stays open
     const bushG = new THREE.IcosahedronGeometry(1, 0), bushList = [];
-    const onTrail = (x, z) => L.trails.some(([x0, x1, z0, z1]) => x > x0 - 1 && x < x1 + 1 && z > z0 - 1 && z < z1 + 1) || (x > C.minX - 1.5 && x < C.maxX + 1.5 && z > C.minZ - 1.5 && z < C.maxZ + 1.5);
-    for (let tries = 0; bushList.length < L.bushes && tries < 2000; tries++) {
+    const onTrail = (x, z) => L.trails.some(([x0, x1, z0, z1]) => x > x0 - 2.5 && x < x1 + 2.5 && z > z0 - 2.5 && z < z1 + 2.5) || (x > C.minX - 2.5 && x < C.maxX + 2.5 && z > C.minZ - 2.5 && z < C.maxZ + 2.5);
+    const toEdge = (x, z) => { let d = 1e9; for (let i = 0; i < B.length; i++) { const [ax, az] = B[i], [bx, bz] = B[(i + 1) % B.length], vx = bx - ax, vz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / (vx * vx + vz * vz))); d = Math.min(d, Math.hypot(x - ax - vx * t, z - az - vz * t)); } return d; };
+    const nearRoute = (x, z) => L.guards.some(g => g.patrol.points.some((q, i, pts) => { const r = pts[(i + 1) % pts.length], vx = r.x - q.x, vz = r.z - q.z, L2 = vx * vx + vz * vz, t = L2 ? Math.max(0, Math.min(1, ((x - q.x) * vx + (z - q.z) * vz) / L2)) : 0; return Math.hypot(x - q.x - vx * t, z - q.z - vz * t) < 4; }));
+    for (let tries = 0; bushList.length < L.bushes && tries < 4000; tries++) {
       const x = -29 + rnd() * 58, z = -24 + rnd() * 52;
-      if (!world.inBounds(x, z, 1.5) || onTrail(x, z)) continue;
+      if (!world.inBounds(x, z, 1.5) || toEdge(x, z) > L.bushBand || onTrail(x, z) || nearRoute(x, z)) continue;
       const r = 0.5 + rnd() * 0.5;
       bushList.push({ x, z, reach: r * 1.2, m: M4.clone().compose(P.set(x, r * 0.45, z), Q.setFromAxisAngle(UP, rnd() * 6), S.set(r * 1.2, r * 0.75, r * 1.2)) });
     }

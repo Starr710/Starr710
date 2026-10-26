@@ -1,17 +1,20 @@
 // SHADOW CELL — Observation Mode (Step 24.2): a developer tool, not a player ability. The camera leaves her
 // (she stays exactly where she was, hidden: no footsteps, nothing for a guard to see or shoot) and flies freely or
 // follows one guard, while the level runs on as usual. It shows, for the selected guard only:
-//   vision   his three zones as drawn by the real vision settings (faint outlines: where he COULD see), and over
-//            the ground where a body there WOULD be seen, sampled through the same line-of-sight test his eyes use
-//            (bright: seen standing or crouched; dim: seen standing only, so low cover hides a crouched body there;
-//            nothing: hidden). The sampled area is an approximation of the real check (a few heights per cell,
-//            not her posed body); her own current visibility is the real check itself
-//   route    his waypoints in order, the way he walks them, stops with their pauses and facings, where he's
-//            heading, and where he'll rejoin when his route is interrupted
+//   vision   his three zones as drawn by the real vision settings (faint outlines, one colour per zone: where he
+//            COULD see), and over the ground where a body there WOULD be seen, sampled through the same line-of-sight
+//            test his eyes use (a strong fill: seen standing or crouched; a weaker one: seen standing only, so low
+//            cover hides a crouched body there; nothing: hidden), with a white edge round what he can see. The sampled
+//            area is an approximation of the real check (a few heights per cell, not her posed body); her own current
+//            visibility is the real check itself
+//   route    his waypoints in order, the way he walks them (a thick line with arrowheads), numbered, stops with their
+//            pauses and facings, where he's heading, and where he'll rejoin when his route is interrupted
 //   sound    a test sound of an existing kind (footsteps L1 / L2, the magazine's clatter, a gunshot) at the
 //            ground under the camera, through the normal noise system: the guards hear it as they hear anything
 // It also keeps each guard's decision history (real state changes, a bounded log) and writes a plain-text report.
 // Nothing it does changes what a guard knows, except a test sound, which he hears like any other.
+// (Forest cleanup: the overlays are flat ribbons, not GL lines, which are always 1 px; the zone colours are distinct
+// from the ground; the route is magenta, nothing else in the forest is)
 (function (mv) {
   'use strict';
 
@@ -23,11 +26,25 @@
     vision: { stepDeg: 4, step: 0.75, hz: 3, stand: [1.6, 1.3, 1.0, 0.5], crouch: [0.8, 0.6, 0.4], need: 0.5 },
     history: 40,                     // decisions kept per guard
     previewHz: 10,
+    // the drawings: widths in m, heights above the ground (the trails sit at 4 mm, the slab at 8 mm)
+    draw: { y: 0.05, edge: 0.22, outline: 0.12, route: 0.2, facing: 0.14, labelRange: 48 },
   };
   const D = Math.PI / 180, UP = new THREE.Vector3(0, 1, 0);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
   const lin = hex => new THREE.Color(hex).convertSRGBToLinear();
+  // a thick ground line (a flat quad `w` m wide from a to b: 6 vertices), a triangle, an arrowhead pointing along `ang`
+  const rib = (arr, n, ax, az, bx, bz, w, y) => {
+    const dx = bx - ax, dz = bz - az, L = Math.hypot(dx, dz) || 1, nx = -dz / L * w / 2, nz = dx / L * w / 2;
+    const v = [ax + nx, az + nz, ax - nx, az - nz, bx - nx, bz - nz, ax + nx, az + nz, bx - nx, bz - nz, bx + nx, bz + nz];
+    for (let k = 0; k < 6; k++) { arr[n++] = v[k * 2]; arr[n++] = y; arr[n++] = v[k * 2 + 1]; }
+    return n;
+  };
+  const tri = (arr, n, pts, y) => { for (const [x, z] of pts) { arr[n++] = x; arr[n++] = y; arr[n++] = z; } return n; };
+  const head = (arr, n, x, z, ang, len, y) => tri(arr, n, [[x, z], [x - Math.sin(ang + 0.5) * len, z - Math.cos(ang + 0.5) * len], [x - Math.sin(ang - 0.5) * len, z - Math.cos(ang - 0.5) * len]], y);
+  const paint = (carr, from, to, c) => { for (let k = from; k < to; k += 3) { carr[k] = c.r; carr[k + 1] = c.g; carr[k + 2] = c.b; } };
+  const geo = (verts, colours) => { const b = new THREE.BufferGeometry(); b.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts * 3), 3)); if (colours) b.setAttribute('color', new THREE.BufferAttribute(new Float32Array(verts * 3), 3)); b.setDrawRange(0, 0); return b; };
+  const flush = (m, verts) => { const g = m.geometry; g.setDrawRange(0, verts); g.attributes.position.needsUpdate = true; if (g.attributes.color) g.attributes.color.needsUpdate = true; };
 
   // o: { camera, scene, world, input, noise, guards() → the level's active guards, level() → { id, area }, sounds: [{ name, level, type }] }
   mv.Observer = function (o) {
@@ -43,32 +60,35 @@
   // ---------------------------------------------------------------- the drawings (made once, reused)
   O._build = function () {
     const g = this.group, flat = geo => geo.rotateX(-Math.PI / 2), mat = (c, op) => new THREE.MeshBasicMaterial({ color: lin(c), transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide });
+    const vmat = op => new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = (gm, m, order) => { const x = new THREE.Mesh(gm, m); x.frustumCulled = false; x.renderOrder = order; return x; };
     // sound preview: where TRIGGER SOUND would go
     this.preview = new THREE.Group();
     const pr = new THREE.Mesh(flat(new THREE.RingGeometry(0.35, 0.5, 32)), mat(0xffffff, 0.9)), pd = new THREE.Mesh(flat(new THREE.CircleGeometry(0.09, 12)), mat(0xffffff, 1));
     pr.renderOrder = pd.renderOrder = 4; this.preview.add(pr, pd); g.add(this.preview); this.previewAt = null; this._pt = 1;
-    // vision: the cells (seen standing and crouched / standing only), the three zones' outlines, his facing
+    // vision: the cells (seen standing and crouched / standing only) in their zone's colour, the white edge of what's seen,
+    // the three zones' outlines (faint, each its zone's colour), his facing (a white arrow)
     const cells = 64 * 40;
-    const vgeo = () => { const b = new THREE.BufferGeometry(); b.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cells * 18), 3)); b.setAttribute('color', new THREE.BufferAttribute(new Float32Array(cells * 18), 3)); b.setDrawRange(0, 0); return b; };
-    const vmat = op => new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide });
-    this.vFull = new THREE.Mesh(vgeo(), vmat(0.34)); this.vStand = new THREE.Mesh(vgeo(), vmat(0.14));
-    this.vLines = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(600 * 3), 3)), new THREE.LineBasicMaterial({ color: lin(0xf3eedb), transparent: true, opacity: 0.45 }));
-    this.vLines.geometry.setDrawRange(0, 0);
-    this.vFacing = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)), new THREE.LineBasicMaterial({ color: lin(0xffffff) }));
+    this.vFull = mesh(geo(cells * 6, true), vmat(0.46), 3); this.vStand = mesh(geo(cells * 6, true), vmat(0.22), 3);
+    this.vEdge = mesh(geo(2400 * 6, false), mat(0xffffff, 0.95), 4);
+    this.vLines = mesh(geo(400 * 6, true), vmat(0.6), 3);
+    this.vFacing = mesh(geo(9, false), mat(0xffffff, 0.95), 4); this.vFacing.userData = { from: [0, 0], to: [0, 0] };
     this.vRay = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)), new THREE.LineBasicMaterial({ color: lin(0xff5546) }));
-    for (const m of [this.vFull, this.vStand, this.vLines, this.vFacing, this.vRay]) { m.frustumCulled = false; m.renderOrder = 3; }
-    this.vision = new THREE.Group(); this.vision.add(this.vFull, this.vStand, this.vLines, this.vFacing, this.vRay); g.add(this.vision);
-    this.zoneCol = { fastest: [0xff5a3c, 1], normal: [0xffb23c, 1], slower: [0xffe58a, 1] };
-    for (const k in this.zoneCol) this.zoneCol[k] = lin(this.zoneCol[k][0]);
+    this.vRay.frustumCulled = false; this.vRay.renderOrder = 4;
+    this.vision = new THREE.Group(); this.vision.add(this.vFull, this.vStand, this.vEdge, this.vLines, this.vFacing, this.vRay); g.add(this.vision);
+    // (debug colours, distinct from one another and from grass, dirt, rock and concrete: fastest red, normal yellow, slower cyan)
+    this.zoneCol = { fastest: 0xff3b2f, normal: 0xffd23c, slower: 0x29e3ff };
+    for (const k in this.zoneCol) this.zoneCol[k] = lin(this.zoneCol[k]);
     this._vt = 1; this.vstat = null;
-    // route: the path, its direction marks, the stops, the facings, the target and the rejoin point
-    this.rLine = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(400 * 3), 3)), new THREE.LineBasicMaterial({ color: lin(0x9fd0ff), transparent: true, opacity: 0.85 }));
-    this.rLine.frustumCulled = false; this.rLine.renderOrder = 3;
-    this.rMarks = []; for (let i = 0; i < 12; i++) { const m = new THREE.Mesh(flat(new THREE.RingGeometry(0.22, 0.32, 20)), mat(0x9fd0ff, 0.8)); m.renderOrder = 3; m.visible = false; this.rMarks.push(m); }
-    this.rTarget = new THREE.Mesh(flat(new THREE.RingGeometry(0.42, 0.56, 24)), mat(0x7dff6a, 0.95)); this.rTarget.renderOrder = 4;
-    this.rRejoin = new THREE.Mesh(flat(new THREE.RingGeometry(0.42, 0.56, 24)), mat(0xffb23c, 0.95)); this.rRejoin.renderOrder = 4;
-    this.route = new THREE.Group(); this.route.add(this.rLine, this.rTarget, this.rRejoin, ...this.rMarks); g.add(this.route);
-    this.labels = []; this._routeFor = null;
+    // route: the path (legs with arrowheads), the stops' facings, the waypoint rings, the target and the rejoin point
+    this.routeCol = lin(0xff4fd8); this.targetCol = lin(0x7dff6a); this.rejoinCol = lin(0xffb23c);
+    this.rLine = mesh(geo(400 * 6, true), vmat(0.92), 3);
+    this.rHeads = mesh(geo(80 * 3, true), vmat(0.95), 4);
+    this.rMarks = []; for (let i = 0; i < 12; i++) { const m = new THREE.Mesh(flat(new THREE.RingGeometry(0.3, 0.44, 24)), mat(0xff4fd8, 0.9)); m.renderOrder = 3; m.visible = false; this.rMarks.push(m); }
+    this.rTarget = new THREE.Mesh(flat(new THREE.RingGeometry(0.5, 0.7, 28)), mat(0x7dff6a, 0.95)); this.rTarget.renderOrder = 4;
+    this.rRejoin = new THREE.Mesh(flat(new THREE.RingGeometry(0.5, 0.7, 28)), mat(0xffb23c, 0.95)); this.rRejoin.renderOrder = 4;
+    this.route = new THREE.Group(); this.route.add(this.rLine, this.rHeads, this.rTarget, this.rRejoin, ...this.rMarks); g.add(this.route);
+    this._routeFor = null;
   };
 
   // ---------------------------------------------------------------- entering, leaving
@@ -79,7 +99,8 @@
     const gs = this.guards(); if (!this.sel || gs.indexOf(this.sel) < 0) this.sel = gs[0] || null;
     this._routeFor = null; this._vt = 1;
   };
-  O.exit = function () { this.active = false; this.group.visible = false; this.mode = 'free'; this.vert = 0; for (const l of this.labels) l.el.style.opacity = '0'; };
+  // (the world drawings go with the group; the page's labels are the page's to hide)
+  O.exit = function () { this.active = false; this.group.visible = false; this.mode = 'free'; this.vert = 0; };
 
   // a useful look over the level (after RESET while observing)
   O.overview = function () {
@@ -129,7 +150,7 @@
     if ((this._pt += dt) >= 1 / c.previewHz) { this._pt = 0; this.previewAt = this.groundBelow(); }
     this.preview.visible = !!this.previewAt && this.show.sound;
     if (this.previewAt) this.preview.position.set(this.previewAt.point.x, this.previewAt.point.y + 0.03, this.previewAt.point.z);
-    // the selected guard's drawings
+    // the selected guard's drawings (nothing is computed for an overlay that's off)
     this.vision.visible = !!this.sel && this.show.vision;
     if (this.vision.visible && (this._vt += dt) >= 1 / c.vision.hz) { this._vt = 0; const t0 = performance.now(); this.drawVision(this.sel); this.visionMs = performance.now() - t0; }
     this.route.visible = !!this.sel && this.show.route && !!(this.sel.patrol && this.sel.patrol.enabled);
@@ -169,18 +190,18 @@
     return { standing: count(V.stand) >= V.need, crouched: count(V.crouch) >= V.need };
   };
   O.drawVision = function (g) {
-    const V = this.cfg.vision, vis = g.vision, range = vis.range(), eye = g.eye(new THREE.Vector3()), W = g.world;
+    const V = this.cfg.vision, DR = this.cfg.draw, vis = g.vision, range = vis.range(), eye = g.eye(new THREE.Vector3()), W = g.world;
     const zones = vis.cfg.zones.slice().sort((a, b) => a.angle - b.angle), half = zones[zones.length - 1].angle / 2;
     const fy = g.yaw, rays = Math.round(2 * half / V.stepDeg) + 1, steps = Math.min(40, Math.ceil(range / V.step));
     const fp = this.vFull.geometry.attributes.position.array, fc = this.vFull.geometry.attributes.color.array, sp = this.vStand.geometry.attributes.position.array, sc = this.vStand.geometry.attributes.color.array;
     let nf = 0, ns = 0, cells = 0, hidden = 0, standOnly = 0;
-    const P = new THREE.Vector3(), y = 0.05;
-    // per ray, per distance step: the state of a body at that cell's middle
+    const P = new THREE.Vector3(), y = DR.y, gx = g.position.x, gz = g.position.z;
+    // per ray, per distance step: the state of a body at that cell's middle (0 hidden, 1 seen standing only, 2 seen either way)
     const state = [];
     for (let i = 0; i < rays; i++) {
       const a = fy + (-half + i * V.stepDeg) * D, ca = Math.cos(a), sa = Math.sin(a), col = [];
       for (let j = 0; j < steps; j++) {
-        const d = (j + 0.5) * V.step, x = g.position.x + sa * d, z = g.position.z + ca * d;
+        const d = (j + 0.5) * V.step, x = gx + sa * d, z = gz + ca * d;
         if (W.bounds && !W.inBounds(x, z, 0)) { col.push(0); continue; }
         let st = 0, ns2 = 0, nc = 0;
         for (const h of V.stand) { P.set(x, h, z); if (!W.segmentBlocked(eye, P)) ns2++; }
@@ -190,32 +211,44 @@
       }
       state.push(col);
     }
+    // a column (between rays i and i + 1) is seen only where both its rays are
+    const cell = (i, j) => (i < 0 || i >= rays - 1 || j < 0 || j >= steps) ? 0 : Math.min(state[i][j], state[i + 1][j]);
+    const X = (a, r) => [gx + Math.sin(a) * r, gz + Math.cos(a) * r];
     const put = (arr, carr, n, pts, c) => { for (let k = 0; k < 6; k++) { const q = pts[k]; arr[(n * 6 + k) * 3] = q[0]; arr[(n * 6 + k) * 3 + 1] = y; arr[(n * 6 + k) * 3 + 2] = q[1]; carr[(n * 6 + k) * 3] = c.r; carr[(n * 6 + k) * 3 + 1] = c.g; carr[(n * 6 + k) * 3 + 2] = c.b; } };
+    // the white edge of what he sees: each seen cell's sides that face a hidden cell (or the cone's or the range's end)
+    const ep = this.vEdge.geometry.attributes.position.array; let ne = 0;
+    const edge = (A, B) => { if (ne + 18 <= ep.length) ne = rib(ep, ne, A[0], A[1], B[0], B[1], DR.edge, y + 0.012); };
     for (let i = 0; i < rays - 1; i++) {
       const a0 = fy + (-half + i * V.stepDeg) * D, a1 = a0 + V.stepDeg * D, mid = Math.abs(-half + (i + 0.5) * V.stepDeg);
       const zone = zones.find(zz => mid <= zz.angle / 2) || zones[zones.length - 1], c = this.zoneCol[zone.id];
       for (let j = 0; j < steps; j++) {
-        const st = Math.min(state[i][j], state[i + 1][j]); cells++;
+        const st = cell(i, j); cells++;
         if (!st) { hidden++; continue; }
-        const r0 = j * V.step, r1 = Math.min(range, (j + 1) * V.step), X = (a, r) => [g.position.x + Math.sin(a) * r, g.position.z + Math.cos(a) * r];
+        const r0 = j * V.step, r1 = Math.min(range, (j + 1) * V.step);
         const A = X(a0, r0), B = X(a1, r0), C = X(a1, r1), E = X(a0, r1), quad = [A, B, C, A, C, E];
         if (st === 2) put(fp, fc, nf++, quad, c); else { put(sp, sc, ns++, quad, c); standOnly++; }
+        if (!cell(i, j + 1)) edge(E, C);        // beyond it: hidden, or his range
+        if (!cell(i, j - 1)) edge(A, B);        // before it: hidden (sight resuming past something)
+        if (!cell(i - 1, j)) edge(A, E);        // the column beside it
+        if (!cell(i + 1, j)) edge(B, C);
       }
     }
-    this.vFull.geometry.setDrawRange(0, nf * 6); this.vFull.geometry.attributes.position.needsUpdate = this.vFull.geometry.attributes.color.needsUpdate = true;
-    this.vStand.geometry.setDrawRange(0, ns * 6); this.vStand.geometry.attributes.position.needsUpdate = this.vStand.geometry.attributes.color.needsUpdate = true;
-    // the theoretical zones: their edges out to his range and their arcs (faint)
-    const lp = this.vLines.geometry.attributes.position.array; let nl = 0;
-    const seg = (x0, z0, x1, z1) => { lp[nl++] = x0; lp[nl++] = y + 0.01; lp[nl++] = z0; lp[nl++] = x1; lp[nl++] = y + 0.01; lp[nl++] = z1; };
+    flush(this.vFull, nf * 6); flush(this.vStand, ns * 6); flush(this.vEdge, ne / 3);
+    // the theoretical zones: their edges out to his range and their arcs, faint, each in its zone's colour
+    const lp = this.vLines.geometry.attributes.position.array, lc = this.vLines.geometry.attributes.color.array; let nl = 0;
+    const seg = (x0, z0, x1, z1, c) => { if (nl + 18 > lp.length) return; const from = nl; nl = rib(lp, nl, x0, z0, x1, z1, DR.outline, y + 0.006); paint(lc, from, nl, c); };
     for (const zz of zones) {
-      const h = zz.angle / 2 * D;
-      for (const s of [-1, 1]) seg(g.position.x, g.position.z, g.position.x + Math.sin(fy + s * h) * range, g.position.z + Math.cos(fy + s * h) * range);
-      const n = Math.max(4, Math.round(zz.angle / 6));
-      for (let k = 0; k < n; k++) { const a0 = fy - h + 2 * h * k / n, a1 = fy - h + 2 * h * (k + 1) / n; seg(g.position.x + Math.sin(a0) * range, g.position.z + Math.cos(a0) * range, g.position.x + Math.sin(a1) * range, g.position.z + Math.cos(a1) * range); }
+      const h = zz.angle / 2 * D, c = this.zoneCol[zz.id];
+      for (const s of [-1, 1]) seg(gx, gz, gx + Math.sin(fy + s * h) * range, gz + Math.cos(fy + s * h) * range, c);
+      const n = Math.max(6, Math.round(zz.angle / 4));
+      for (let k = 0; k < n; k++) { const a0 = fy - h + 2 * h * k / n, a1 = fy - h + 2 * h * (k + 1) / n; seg(gx + Math.sin(a0) * range, gz + Math.cos(a0) * range, gx + Math.sin(a1) * range, gz + Math.cos(a1) * range, c); }
     }
-    this.vLines.geometry.setDrawRange(0, nl / 3); this.vLines.geometry.attributes.position.needsUpdate = true;
-    const fa = this.vFacing.geometry.attributes.position.array; fa[0] = g.position.x; fa[1] = 0.1; fa[2] = g.position.z; fa[3] = g.position.x + Math.sin(fy) * 2.5; fa[4] = 0.1; fa[5] = g.position.z + Math.cos(fy) * 2.5; this.vFacing.geometry.attributes.position.needsUpdate = true;
-    this.vstat = { cells, hidden, standOnly, seen: cells - hidden, rays, steps, range };
+    flush(this.vLines, nl / 3);
+    // his facing: a white arrow 2.5 m long
+    const fa = this.vFacing.geometry.attributes.position.array, tx = gx + Math.sin(fy) * 2.5, tz = gz + Math.cos(fy) * 2.5;
+    let nfa = rib(fa, 0, gx, gz, gx + Math.sin(fy) * 2.0, gz + Math.cos(fy) * 2.0, DR.route, y + 0.02); nfa = head(fa, nfa, tx, tz, fy, 0.7, y + 0.02);
+    flush(this.vFacing, nfa / 3); this.vFacing.userData.from = [gx, gz]; this.vFacing.userData.to = [tx, tz];
+    this.vstat = { cells, hidden, standOnly, seen: cells - hidden, rays, steps, range, edges: ne / 18 };
   };
   // the red line: his eye to her (when she's in his range and cone), to what blocks it if something does
   O.drawSightRay = function (g, target) {
@@ -226,30 +259,45 @@
   };
 
   // ---------------------------------------------------------------- the route
+  // a lookout's route: every waypoint at his post (he only turns from one facing to the next)
+  const atPost = pts => pts.length > 1 && pts.every(q => Math.hypot(q.x - pts[0].x, q.z - pts[0].z) < 0.1);
   O.drawRoute = function (g) {
-    const p = g.patrol, pts = p.cfg.points, lp = this.rLine.geometry.attributes.position.array; let n = 0;
-    const seg = (a, b) => { lp[n++] = a.x; lp[n++] = 0.06; lp[n++] = a.z; lp[n++] = b.x; lp[n++] = 0.06; lp[n++] = b.z; };
-    const legs = []; for (let i = 0; i < pts.length; i++) { const j = p.cfg.loop || i < pts.length - 1 ? (pts[i].next != null ? pts[i].next : (i + 1) % pts.length) : null; if (j != null && !(Math.hypot(pts[i].x - pts[j].x, pts[i].z - pts[j].z) < 0.1)) legs.push([pts[i], pts[j]]); }
-    for (const [a, b] of legs) {
-      seg(a, b);
-      // a direction mark (a small arrowhead) at each leg's middle
-      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, ang = Math.atan2(b.x - a.x, b.z - a.z);
-      for (const s of [-1, 1]) seg({ x: mx, z: mz }, { x: mx - Math.sin(ang + s * 0.5) * 0.6, z: mz - Math.cos(ang + s * 0.5) * 0.6 });
+    const p = g.patrol, pts = p.cfg.points, DR = this.cfg.draw, y = DR.y + 0.03, same = atPost(pts);
+    const lp = this.rLine.geometry.attributes.position.array, lc = this.rLine.geometry.attributes.color.array; let n = 0;
+    const hp = this.rHeads.geometry.attributes.position.array, hc = this.rHeads.geometry.attributes.color.array; let nh = 0;
+    const line = (a, b, w, c) => { if (n + 18 > lp.length) return; const from = n; n = rib(lp, n, a.x, a.z, b.x, b.z, w, y); paint(lc, from, n, c); };
+    const arrow = (x, z, ang, len, c) => { if (nh + 9 > hp.length) return; const from = nh; nh = head(hp, nh, x, z, ang, len, y + 0.01); paint(hc, from, nh, c); };
+    const cur = p.state === 'interrupted' ? -1 : p.index, rj = p.state === 'interrupted' ? (p.resumeIndex != null ? p.resumeIndex : p.index) : -1;
+    if (!same) {
+      // the legs, the way he walks them: a thick line with an arrowhead at each leg's middle (two on a long leg)
+      const legs = []; for (let i = 0; i < pts.length; i++) { const j = p.cfg.loop || i < pts.length - 1 ? (pts[i].next != null ? pts[i].next : (i + 1) % pts.length) : null; if (j != null && !(Math.hypot(pts[i].x - pts[j].x, pts[i].z - pts[j].z) < 0.1)) legs.push([pts[i], pts[j]]); }
+      for (const [a, b] of legs) {
+        line(a, b, DR.route, this.routeCol);
+        const len = Math.hypot(b.x - a.x, b.z - a.z), ang = Math.atan2(b.x - a.x, b.z - a.z);
+        for (const t of len > 10 ? [0.3, 0.7] : [0.5]) arrow(a.x + (b.x - a.x) * t + Math.sin(ang) * 0.45, a.z + (b.z - a.z) * t + Math.cos(ang) * 0.45, ang, 0.9, this.routeCol);
+      }
     }
-    // each stop's facing
-    pts.forEach(q => { if (q.pause && q.face != null) { const a = q.face * D; seg(q, { x: q.x + Math.sin(a) * 1.6, z: q.z + Math.cos(a) * 1.6 }); } });
-    this.rLine.geometry.setDrawRange(0, n / 3); this.rLine.geometry.attributes.position.needsUpdate = true;
-    this.rMarks.forEach((m, i) => { const q = pts[i]; m.visible = !!q; if (q) { m.position.set(q.x, 0.05, q.z); m.scale.setScalar(q.pause ? 1.3 : 0.6); } });
-    const tgt = p.state === 'interrupted' ? null : pts[p.index], rj = p.state === 'interrupted' ? pts[p.resumeIndex != null ? p.resumeIndex : p.index] : null;
-    this.rTarget.visible = !!tgt; if (tgt) this.rTarget.position.set(tgt.x, 0.07, tgt.z);
-    this.rRejoin.visible = !!rj; if (rj) this.rRejoin.position.set(rj.x, 0.07, rj.z);
+    // each stop's facing: an arrow (a lookout's facings fan out from his post); the one he's at or heading for in the target's colour
+    pts.forEach((q, i) => {
+      if (!(q.pause && q.face != null)) return;
+      const a = q.face * D, c = i === cur ? this.targetCol : this.routeCol, len = same ? 2.4 : 1.6;
+      line(q, { x: q.x + Math.sin(a) * (len - 0.4), z: q.z + Math.cos(a) * (len - 0.4) }, DR.facing, c);
+      arrow(q.x + Math.sin(a) * len, q.z + Math.cos(a) * len, a, 0.5, c);
+    });
+    flush(this.rLine, n / 3); flush(this.rHeads, nh / 3);
+    // the waypoints: a ring each (bigger at a stop; one for a post), the target and the rejoin point
+    this.rMarks.forEach((m, i) => { const q = pts[i]; m.visible = !!q && (!same || i === 0); if (q) { m.position.set(q.x, y - 0.01, q.z); m.scale.setScalar(q.pause ? 1.3 : 0.8); } });
+    const tgt = cur >= 0 ? pts[cur] : null, rjp = rj >= 0 ? pts[rj] : null;
+    this.rTarget.visible = !!tgt; if (tgt) this.rTarget.position.set(tgt.x, y + 0.01, tgt.z);
+    this.rRejoin.visible = !!rjp; if (rjp) this.rRejoin.position.set(rjp.x, y + 0.01, rjp.z);
   };
-  // the waypoints' labels (screen space): number, pause, facing; a lookout's facings in one label
+  // the waypoints' labels (screen space, compact, one per waypoint): its number, a stop's pause and facing, a mark on the
+  // one he's heading for or will rejoin. A lookout gets one label at his post (his facing sequence is in the PATROL section)
   O.routeLabels = function (g) {
-    const p = g.patrol, pts = p && p.enabled ? p.cfg.points : [], same = pts.length > 1 && pts.every(q => Math.hypot(q.x - pts[0].x, q.z - pts[0].z) < 0.1);
-    const items = same ? [{ q: pts[0], text: `LOOKOUT · faces ${pts.map((q, i) => (i === p.index && p.state !== 'interrupted' ? '[' : '') + q.face + '°' + (i === p.index && p.state !== 'interrupted' ? ']' : '')).join(' → ')} · ${pts[0].pause.join('–')} s each` }]
-      : pts.map((q, i) => ({ q, text: `W${i}${q.pause ? ` · stop ${q.pause.join('–')} s · faces ${q.face}°` : ''}${i === p.index && p.state !== 'interrupted' ? ' ◀ NEXT' : ''}${p.state === 'interrupted' && i === p.resumeIndex ? ' ◀ REJOIN' : ''}` }));
-    return items;
+    const p = g.patrol, pts = p && p.enabled ? p.cfg.points : [];
+    const cur = p && p.state !== 'interrupted' ? p.index : -1, rj = p && p.state === 'interrupted' ? (p.resumeIndex != null ? p.resumeIndex : p.index) : -1;
+    if (atPost(pts)) return [{ q: pts[0], text: `POST · ${pts.length} facings · ${pts[0].pause.join('–')} s${cur >= 0 ? ` · now ${pts[cur].face}°` : ''}`, cur: false, rejoin: rj >= 0 }];
+    return pts.map((q, i) => ({ q, text: `W${i}${q.pause ? ` · stop ${q.pause.join('–')} s · ${q.face}°` : ''}${i === cur ? ' ◀' : i === rj ? ' ◀ rejoin' : ''}`, cur: i === cur, rejoin: i === rj }));
   };
 
   // ---------------------------------------------------------------- decision history (real changes only)
