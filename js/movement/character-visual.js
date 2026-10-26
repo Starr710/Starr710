@@ -80,6 +80,9 @@
       extraClips: 'assets/characters/test-soldier-crouch.json',
       inPlace: true,                // strip any horizontal hips drift from clips
       materialFix: { roughness: 0.8 },
+      // walk → run blend (m/s): the 2.4 m/s stealth walk stays on the walk clip (~80/20
+      // otherwise, which slid the planted foot on stopping); the 3.8 m/s jog is all run
+      blend: { walkToRun: [2.2, 3.8], runToSprint: [3.8, 5.3] },
     },
   };
 

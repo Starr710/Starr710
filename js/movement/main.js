@@ -3,10 +3,11 @@
 (function (mv) {
   'use strict';
 
+  mv.BUILD = 'Step 24.2';   // (the debug report names it)
   const $ = id => document.getElementById(id);
   const ui = {
     loader: $('mv-loader'), loadBar: $('mv-load-bar'), loadText: $('mv-load-text'),
-    error: $('mv-error'), errorText: $('mv-error-text'), fpsBadge: $('mv-fpsbadge'), resume: $('mv-resume'), optSound: $('mv-opt-sound'), start: $('mv-start'), startForest: $('mv-start-forest'), levelsRow: $('mv-levels'), opts: $('mv-opts'), optWest: $('mv-opt-west'), optDebug: $('mv-opt-debug'), menu: $('mv-menu'), complete: $('mv-complete'), completeSub: $('mv-complete-sub'), replay: $('mv-replay'), toMenu: $('mv-to-menu'), objective: $('mv-objective'),
+    error: $('mv-error'), errorText: $('mv-error-text'), obs: $('mv-obs'), obsInfo: $('mv-obs-info'), devtabs: $('mv-devtabs'), devpane: $('mv-devpane'), report: $('mv-report'), reportText: $('mv-report-text'), reportMsg: $('mv-report-msg'), fpsBadge: $('mv-fpsbadge'), resume: $('mv-resume'), optSound: $('mv-opt-sound'), start: $('mv-start'), startForest: $('mv-start-forest'), levelsRow: $('mv-levels'), opts: $('mv-opts'), optWest: $('mv-opt-west'), optDebug: $('mv-opt-debug'), menu: $('mv-menu'), complete: $('mv-complete'), completeSub: $('mv-complete-sub'), replay: $('mv-replay'), toMenu: $('mv-to-menu'), objective: $('mv-objective'),
     stats: $('mv-stats'), statsBtn: $('mv-stats-btn'), reset: $('mv-reset'),
     gait: $('mv-gait'), speed: $('mv-speed'), noise: $('mv-noise'), guard: $('mv-guard'), detect: $('mv-detect'), hear: $('mv-hear'), aware: $('mv-aware'), memory: $('mv-memory'), reason: $('mv-reason'), post: $('mv-post'), voice: $('mv-voice'), patrol: $('mv-patrol'), persona: $('mv-persona'), startle: $('mv-startle'), cqcstat: $('mv-cqcstat'), g2: $('mv-g2'), throwBtn: $('mv-throw'), chokeBtn: $('mv-choke'), chokestat: $('mv-chokestat'), tkdnstat: $('mv-tkdnstat'), throwstat: $('mv-throwstat'), ko: $('mv-ko'), cqcBtn: $('mv-cqc'), aimBtn: $('mv-aim'), crosshair: $('mv-crosshair'), aimstat: $('mv-aimstat'), hitmark: $('mv-hitmark'), shotstat: $('mv-shotstat'), dmg: $('mv-dmg'), useBtn: $('mv-use'), equip: $('mv-equip'), useItem: $('mv-use-item'), defeat: $('mv-defeat'), fps: $('mv-fps'), rate: $('mv-rate'), quality: $('mv-quality'), calib: $('mv-calib'),
   };
@@ -77,6 +78,7 @@
   let footsteps = null, voice = null, caption = null, traitCard = null, indicator = null, cqc = null, guard = null, guardView = null, awareView = null, patrolView = null, seeTarget = null;
   let aim = null, aimPose = null, pistol = null, playerHealth = null, wasDown = false;   // Step 18, Step 19, Step 22
   let equipment = null;   // Step 23
+  let observer = null;    // Step 24.2: Observation Mode (developer)
   let guard2 = null, guard2View = null, aware2View = null, caption2 = null, indicator2 = null, traitCard2 = null;
   // a second copy of a guard's screen-space element (caption, indicator, card), same classes, its own id
   const cloneUi = (id, n) => { const src = $(id), el = src.cloneNode(true); el.id = id + '-' + (n || 2); src.parentNode.insertBefore(el, src.nextSibling); return el; };
@@ -144,6 +146,11 @@
     // Step 23: the equipped weapon (the pistol above, registered, not rebuilt) and item (the Empty Magazine), used through USE
     equipment = new mv.Equipment({ pistol, motor, visual, posture, cam, world, noise, scene, audio: footAudio, guards: active });
     seeTarget = mv.visionTarget(visual, motor);
+    // Step 24.2: Observation Mode, with the existing sound kinds (footsteps by gait, the magazine's clatter, the pistol's shot)
+    const FL = noise.cfg.footstepLevel, MG = mv.EQUIPMENT['empty-magazine'].config;
+    observer = new mv.Observer({ camera, scene, world, input, noise, guards: () => active, level: () => level,
+      sounds: [{ name: 'QUIET FOOTSTEP', level: FL.sneak, type: 'footstep' }, { name: 'NORMAL FOOTSTEP', level: FL.walk, type: 'footstep' },
+        { name: 'METALLIC CLATTER', level: MG.noiseLevel, type: MG.noiseType }, { name: 'GUNSHOT', level: pistol.cfg.noiseLevel, type: pistol.cfg.noiseType }] });
     const s = animator.stride;
     ui.calib.textContent = `walk ${s.walk.speed.toFixed(2)} · run ${s.run.speed.toFixed(2)} m/s`;
     visual.place(motor.position, motor.yaw);
@@ -202,7 +209,98 @@
     else for (const r of level.recs) { r.caption.hide(); r.indicator.hide(); }
     level.complete = false; ui.complete.hidden = true;
   }
-  ui.reset.addEventListener('click', () => { resetLevel(); if (!input.enabled && document.body.classList.contains('playing')) input.enabled = true; });
+  ui.reset.addEventListener('click', () => {
+    resetLevel(); if (!input.enabled && document.body.classList.contains('playing')) input.enabled = true;
+    // (Step 24.2: observing, RESET restarts the level and stays observing, the camera over it; she's at her start, hidden)
+    if (observer && observer.active) { visual.root.visible = false; playerHealth.shielded = true; observer.clearHistory(); noise.rings.forEach(m => { m.visible = false; m.userData.dot.visible = false; }); hideNoiseLabels(); observer.overview(); }
+  });
+
+  // ---------------------------------------------------------------- Step 24.2: the developer controls
+  const press = (id, fn) => $(id).addEventListener('click', e => { e.stopPropagation(); fn(); });
+  // UP / DOWN are held: a finger (or the mouse) on them moves the camera
+  for (const [id, v] of [['mv-obs-up', 1], ['mv-obs-down', -1]]) {
+    const el = $(id), on = () => { if (observer) observer.vert = v; el.classList.add('down'); }, off = () => { if (observer && observer.vert === v) observer.vert = 0; el.classList.remove('down'); };
+    el.addEventListener('touchstart', on, { passive: true }); el.addEventListener('touchend', off); el.addEventListener('touchcancel', off);
+    el.addEventListener('mousedown', on); window.addEventListener('mouseup', off);
+  }
+  const kindLabel = () => { const k = observer.sounds[observer.soundIdx]; $('mv-obs-kind').textContent = `L${k.level} ${k.name} ▸`; };
+  press('mv-obs-kind', () => { observer.soundIdx = (observer.soundIdx + 1) % observer.sounds.length; kindLabel(); });
+  press('mv-obs-trigger', () => { observer.trigger(); obsUi.t = 7; });
+  press('mv-obs-next', () => { observer.selectNext(); obsUi.t = 7; });
+  press('mv-obs-follow', () => { const m = observer.toggleFollow(); $('mv-obs-follow').setAttribute('aria-pressed', String(m === 'follow')); $('mv-obs-follow').textContent = m === 'follow' ? 'FREE' : 'FOLLOW'; });
+  for (const [id, k] of [['mv-obs-vis', 'vision'], ['mv-obs-route', 'route'], ['mv-obs-rings', 'sound']]) press(id, () => { observer.show[k] = !observer.show[k]; $(id).setAttribute('aria-pressed', String(observer.show[k])); if (k === 'sound') { noise.cfg.debug = observer.show.sound && forestOpts.sound; if (!noise.cfg.debug) hideNoiseLabels(); } });
+  press('mv-obs-exit', () => exitObserve());
+  press('mv-observe', () => { const r = enterObserve(); if (r.ok) { kindLabel(); setStats(false); } else { ui.devpane.hidden = false; ui.devpane.textContent = 'OBSERVE: ' + r.why; } });
+  // STATS sections: ALL (the full bar as before) or one subject in detail
+  let devTab = 'all';
+  ui.devtabs.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); devTab = b.dataset.tab; ui.devtabs.querySelectorAll('[data-tab]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); ui.stats.classList.toggle('tabbed', devTab !== 'all'); ui.devpane.hidden = devTab === 'all'; hudT = 1; }));
+  // COPY REPORT: to the clipboard when the page may, otherwise shown to copy by hand (never claimed copied when it wasn't)
+  let lastCopy = null;
+  press('mv-copy', () => {
+    const text = debugReport();
+    const fallback = why => { lastCopy = 'shown'; ui.reportText.value = text; ui.reportMsg.textContent = `Not copied automatically (${why}): select the text below and copy it.`; ui.report.hidden = false; ui.reportText.focus(); ui.reportText.select(); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => { lastCopy = 'copied'; ui.devpane.hidden = false; ui.devpane.textContent = 'REPORT COPIED to the clipboard (' + text.length + ' characters).'; }, err => fallback(err && err.name || 'blocked'));
+      else fallback('no clipboard access here');
+    } catch (err) { fallback(err && err.name || 'blocked'); }
+  });
+  press('mv-report-close', () => { ui.report.hidden = true; });
+
+  // the selected guard for the developer sections: the observer's, or (not observing) the one nearest her
+  const devGuard = () => (observer && observer.sel && active.indexOf(observer.sel) >= 0 ? observer.sel : null) || active.slice().sort((a, b) => Math.hypot(a.position.x - motor.position.x, a.position.z - motor.position.z) - Math.hypot(b.position.x - motor.position.x, b.position.z - motor.position.z))[0] || null;
+  const v3 = p => p ? `(${p.x.toFixed(1)}, ${p.z.toFixed(1)})` : '—';
+  const perf = { frameMs: 0, tickMs: 0, guardMs: 0, renderMs: 0, n: 0, lastRender: 0, acc: { frame: 0, tick: 0, guard: 0, render: 0 } };
+  function devSection(tab) {
+    const g = devGuard(), o = observer, L = [];
+    const name = g ? g.cfg.label : 'no guard in play';
+    if (tab === 'ai') {
+      if (!g) return name; const a = g.awareness, h = g.hearing && g.hearing.heard;
+      L.push(`${name} · ${a.state} · suspicion ${Math.round(a.suspicion * 100)}% · ${a.behavior || ''}${a.note ? ' · ' + a.note : ''}`);
+      L.push(`confirmed ${a.confirmed} · last seen her ${a.seen ? v3(a.seen.position) + ' ' + (a.clock - a.seen.time).toFixed(1) + ' s ago' : 'never'} · last heard ${h ? `L${h.level} ${h.type} ${h.surface} at ${v3(h.position)} ${(a.clock - h.time).toFixed(1)} s ago` : 'nothing'}`);
+      L.push(`${g.ko.status()} · HP ${g.health.current}/${g.health.max} · pistol ${g.weapon ? g.weapon.state : '–'}${g.weapon && g.weapon.why ? ' (' + g.weapon.why + ')' : ''}`);
+      L.push('decisions (newest first, level time):'); const hist = o ? o.history(g).slice().reverse() : [];
+      for (const e of hist) L.push(`  ${e.t.toFixed(1)} s  ${e.e}`); if (!hist.length) L.push('  (none yet)');
+    } else if (tab === 'vision') {
+      if (!g) return name; const v = g.vision, s = v.seen, f = ((g.yaw * 57.3) % 360 + 360) % 360, a = g.awareness;
+      L.push(`${name} · facing ${f.toFixed(0)}° · range ${v.range()} m · zones ${v.cfg.zones.map(z => z.id + ' ' + z.angle + '°').join(', ')}`);
+      L.push(`her (real check): ${s.zone ? s.zone + ' zone' : 'outside his ' + (s.why === 'range' ? 'range' : 'cone')} · ${isFinite(s.distance) ? s.distance.toFixed(1) + ' m' : '–'} · ${Math.round((s.exposure || 0) * 100)}% of her clear (${(s.rays || []).filter(Boolean).length}/${(s.rays || []).length} sight lines)${s.blocked ? ' · BLOCKED by cover' : ''} · ${s.rate > 0 ? 'SEEN' : 'not seen'} · stance ${motor.stance}${o && o.active ? ' (she is set aside: observing)' : ''}`);
+      L.push(`detection ${Math.round(v.meter * 100)}% ${v.state()} · last sighting ${a.seen ? v3(a.seen.position) + ' ' + (a.clock - a.seen.time).toFixed(1) + ' s ago' : 'never'}`);
+      const vs = o && o.vstat; L.push(vs && o.active && o.show.vision ? `ground overlay (sampled approximation): ${vs.rays} directions × ${vs.steps} steps of ${o.cfg.vision.step} m; ${vs.seen} of ${vs.cells} cells seen (${vs.standOnly} only standing: low cover hides a crouched body there), ${vs.hidden} hidden; ${o.visionMs != null ? o.visionMs.toFixed(1) + ' ms per update, ' + o.cfg.vision.hz + '/s' : ''}` : 'ground overlay: off (OBSERVE, VISION on)');
+    } else if (tab === 'patrol') {
+      if (!g) return name; const p = g.patrol;
+      if (!p || !p.enabled) return name + ' · no patrol (stationary)';
+      L.push(`${name} · ${p.cfg.loop ? 'loop' : 'back and forth'} of ${p.cfg.points.length} waypoints · ${p.status()}`);
+      p.cfg.points.forEach((q, i) => L.push(`  W${i} (${q.x}, ${q.z})${q.pause ? ` stop ${q.pause.join('–')} s facing ${q.face}°${q.looks && q.looks.length ? ' looks ' + q.looks.join('/') : ''}` : ' pass'}${i === p.index ? (p.state === 'interrupted' ? '' : '  ◀ current') : ''}${p.state === 'interrupted' && i === p.resumeIndex ? '  ◀ rejoins here' : ''}`));
+      L.push(`legs walked ${p.legs} · resumed ${p.resumes}× · interrupted ${p.interrupts}×${p.state === 'interrupted' ? ' · NOW interrupted: ' + (p.why || g.awareness.state) : ''}${p.why && p.state !== 'interrupted' ? ' · note: ' + p.why : ''}`);
+    } else if (tab === 'sound') {
+      const k = o ? o.sounds[o.soundIdx] : null, at = o && o.active ? o.previewAt : null, n = noise.last;
+      L.push(`test sound: ${k ? `L${k.level} ${k.name} (${k.type})` : '–'} · ${o && o.active ? (at ? `at ${v3(at.point)} on ${at.on} (${at.surface})` : 'no ground under the camera') : 'OBSERVE to place one'}`);
+      L.push(`last sound: ${n ? `L${n.level} ${n.type} ${n.surface} at ${v3(n.position)}, reach ${n.radius.toFixed(1)} m, from ${n.source}` : '–'}`);
+      for (const t of (o && o.soundLog) || []) L.push(`  ${t.t.toFixed(1)} s  ${triggerLine(t)}${t.guards.filter(x => !x.heard).map(x => ` · ${x.key}: ${x.why}`).join('')}`);
+    } else if (tab === 'perf') {
+      if (!fps) { L.push('not measured yet: no drawn frames (the figures need the running game)'); return L.join('\n'); }
+      L.push(`MEASURED: ${fps.toFixed(0)} fps · ${perf.frameMs.toFixed(1)} ms between frames · simulation ${perf.tickMs.toFixed(2)} ms · guards ${perf.guardMs.toFixed(2)} ms (${active.length} active) · drawing submitted in ${perf.renderMs.toFixed(1)} ms (CPU side; the GPU's own time isn't measurable here)`);
+      L.push(`renderer: ${renderer.info.render.calls} draw calls, ${Math.round(renderer.info.render.triangles / 1000)}k triangles · quality ${TIERS[tier].n} ${TIERS[tier].d}×`);
+      L.push(`overlays: ${o && o.active ? `observing (vision ${o.show.vision ? 'on' + (o.visionMs != null ? ', ' + o.visionMs.toFixed(1) + ' ms per update' : '') : 'off'}, route ${o.show.route ? 'on' : 'off'}, sound ${noise.cfg.debug ? 'on' : 'off'})` : 'not observing'} · patrol debug ${level.debug ? 'on' : 'off'} · sound rings ${noise.cfg.debug ? 'on' : 'off'}`);
+    }
+    return L.join('\n');
+  }
+  // the plain-text report (COPY REPORT)
+  function debugReport() {
+    const g = devGuard(), o = observer, L = [];
+    L.push(`SHADOW CELL debug report · build ${mv.BUILD || 'unknown'} · ${new Date().toISOString()}`);
+    L.push(`level: ${level.name} (${level.id})${level.complete ? ' · COMPLETE' : ''} · player ${v3(motor.position)} ${playerHealth ? playerHealth.status() : ''}${o && o.active ? ` · observing ${o.mode}, camera at (${o.pos.x.toFixed(1)}, ${o.pos.y.toFixed(1)}, ${o.pos.z.toFixed(1)})` : ''}`);
+    L.push(`performance (measured): ${fps.toFixed(0)} fps, ${perf.frameMs.toFixed(1)} ms/frame, simulation ${perf.tickMs.toFixed(2)} ms, guards ${perf.guardMs.toFixed(2)} ms, draw submit ${perf.renderMs.toFixed(1)} ms, ${renderer.info.render.calls} draws, quality ${TIERS[tier].n}`);
+    L.push(`guards: ${active.map(x => `${x.cfg.label.split(' —')[0]} ${x.awareness.state}${x.isDown() ? '/' + x.ko.state : ''} ${patrolShort(x)}`).join(' · ')}`);
+    if (g) {
+      L.push('', 'SELECTED: ' + devSection('ai').split('\n').slice(0, 3).join('\n')); L.push(devSection('vision').split('\n').slice(1, 3).join('\n')); L.push(devSection('patrol').split('\n')[0]);
+      const nav = g.navFailed || (g.patrol && /unreachable|path/.test(g.patrol.why || '') ? g.patrol.why : '') || (/unreachable/.test(g.awareness.note || '') ? g.awareness.note : ''); L.push(`navigation: ${nav || 'no problem detected'}`);
+      L.push('recent decisions:'); for (const e of (o ? o.history(g) : []).slice(-12)) L.push(`  ${e.t.toFixed(1)} s ${e.e}`);
+    }
+    L.push('', `debug: sound rings ${noise.cfg.debug ? 'on' : 'off'} · patrol debug ${level.debug ? 'on' : 'off'}${o && o.active ? ` · observer vision ${o.show.vision}, route ${o.show.route}, rings ${o.show.sound}, test sound L${o.sounds[o.soundIdx].level} ${o.sounds[o.soundIdx].name}` : ''}`);
+    if (o && o.lastTrigger) L.push('last test sound: ' + triggerLine(o.lastTrigger));
+    return L.join('\n');
+  }
 
   // ---------------------------------------------------------------- Step 24: loading a level
   // the forest, built once: its objects, its collision, its four guards (each with its own pistol,
@@ -333,6 +431,57 @@
     const s = statGuards()[0]; if (s) { const t = ui.stats.querySelector('i.g1'); if (t && t.textContent !== s.levelKey) t.textContent = s.levelKey; }
   }
 
+  // ---------------------------------------------------------------- Step 24.2: Observation Mode
+  // what the guards look at: her, or (while she's hidden for observing) nothing they could ever see: a point out of
+  // every range, so their vision simply finds nobody, their meters ease off and what they already know plays out
+  const _far = new THREE.Vector3(1e5, 0, 1e5), noOne = { points: () => [_far], centre: out => out.copy(_far), get position() { return _far; }, stance: 'stand', speed: 0 };
+  const eyesOn = () => observer && observer.active ? noOne : seeTarget;
+  const obsUi = { kind: null, info: null, follow: null, labels: [] };
+  for (let i = 0; i < 9; i++) { const el = document.createElement('div'); el.className = 'mv-routelabel'; document.body.appendChild(el); obsUi.labels.push(el); }
+  function enterObserve() {
+    if (!observer || observer.active) return { ok: false, why: observer ? 'already observing' : 'not ready' };
+    if (cqc && cqc.state !== 'FREE') return { ok: false, why: 'let go of the guard first' };
+    if (aim && aim.active) aim.exit('observing');
+    input._cqcDrop(); input._fireDrop(); input.move.x = input.move.y = 0; input.look.dx = input.look.dy = 0;
+    observer.enter(); visual.root.visible = false; if (aimPose) aimPose.pistol.visible = false;
+    for (const g of active) if (!g.isDown()) g.vision.look(noOne);   // (each guard's eyes see the change at once, not at their next look)
+    if (playerHealth) playerHealth.shielded = true;   // (nothing can touch her while she's set aside)
+    document.body.classList.add('mv-observing'); ui.obs.hidden = false; ui.obsInfo.hidden = false;
+    return { ok: true, why: '' };
+  }
+  function exitObserve() {
+    if (!observer || !observer.active) return;
+    observer.exit(); visual.root.visible = true; if (playerHealth) playerHealth.shielded = false;
+    input.move.x = input.move.y = 0; input.look.dx = input.look.dy = 0; input.cqcTapped = input.useTapped = input.aimTapped = input.throwTapped = false; input.takeFire();
+    document.body.classList.remove('mv-observing'); ui.obs.hidden = true; ui.obsInfo.hidden = true; for (const el of obsUi.labels) el.style.opacity = '0';
+    if (footsteps) for (const f of footsteps.feet) { f.down = true; f.prev = null; }   // (no footstep for the frames she was set aside)
+    cam.update(0, motor, input.look, input.mouse);
+  }
+  // per frame while observing: she's still and silent; what she'd done (a magazine in the air) carries on
+  function observingFrame(dt, down) {
+    input.cqcTapped = input.useTapped = input.aimTapped = input.throwTapped = false; input.chokePresses = 0;
+    if (equipment) equipment.update(dt, useState(down));
+  }
+  // the observer's drawings that depend on the page: route labels, the info line
+  function observerDraw() {
+    const o = observer, g = o.sel, W = renderer.domElement.clientWidth, H = renderer.domElement.clientHeight, P = new THREE.Vector3();
+    if (g) o.drawSightRay(g, seeTarget);
+    const items = g && o.show.route && g.patrol && g.patrol.enabled ? o.routeLabels(g) : [];
+    obsUi.labels.forEach((el, i) => {
+      const it = items[i]; if (!it) { if (el._shown) { el.style.opacity = '0'; el._shown = false; } return; }
+      P.set(it.q.x, 0.6, it.q.z).project(camera);
+      if (P.z > 1 || Math.abs(P.x) > 1.2 || Math.abs(P.y) > 1.2) { if (el._shown) { el.style.opacity = '0'; el._shown = false; } return; }
+      if (el._t !== it.text) { el._t = it.text; el.textContent = it.text; }
+      el.style.transform = `translate(${((P.x + 1) / 2 * W).toFixed(0)}px, ${((1 - P.y) / 2 * H).toFixed(0)}px) translate(-50%, -100%)`; if (!el._shown) { el.style.opacity = '1'; el._shown = true; }
+    });
+    if ((obsUi.t = (obsUi.t || 0) + 1) % 8 === 0) {
+      const s = g ? `${g.cfg.label} · ${g.awareness.state}${g.isDown() ? ' · ' + g.ko.state : ''} · ${patrolShort(g)}` : 'no guard in play';
+      put(ui.obsInfo, `OBSERVING · ${o.mode.toUpperCase()}${o.mode === 'follow' && g ? ' ' + (g.levelKey || g.cfg.label.split(' —')[0]) : ''}\n${s}${o.lastTrigger ? '\n' + triggerLine(o.lastTrigger) : ''}`);
+    }
+  }
+  const patrolShort = g => { const p = g.patrol; if (!p || !p.enabled) return 'post'; if (p.state === 'interrupted') return `route interrupted → rejoins W${p.resumeIndex}`; if (p.state === 'observing') return `W${p.index} stop ${p.obs ? Math.max(0, p.obs.total - (p.obs.i * p.obs.hold + p.obs.heldFor)).toFixed(1) + ' s' : ''}`; return `→ W${p.index}`; };
+  const triggerLine = t => t.ok ? `${t.name} L${t.ev.level} ${t.ev.surface} ${t.ev.radius.toFixed(1)} m: heard by ${t.guards.filter(x => x.heard).map(x => x.key).join(',') || 'nobody'}${t.guards.some(x => !x.heard) ? ' · not ' + t.guards.filter(x => !x.heard).map(x => x.key).join(',') : ''}` : `no sound: ${t.why}`;
+
   // ---------------------------------------------------------------- Step 24.1: sound-event labels (sound debugging)
   // a short label at each sound's origin: what, level, surface, reach and which guards heard it; 4 reused in turn
   const noiseLabels = { els: [], next: 0, live: 0 }, _np = new THREE.Vector3();
@@ -361,7 +510,7 @@
   // ---------------------------------------------------------------- loop
   const clock = new THREE.Clock();
   const fwd = new THREE.Vector3(), aimMz = new THREE.Vector3();
-  let fps = 60, fpsN = 0, hudT = 0, grace = 2;
+  let fps = 0, fpsN = 0, hudT = 0, grace = 2;   // (Step 24.2: 0 until a second of drawn frames has been measured)
   // stats text is written only when it changes (each write re-lays out the bar)
   const put = (el, v) => { if (el._v !== v) { el._v = v; el.textContent = v; } };
   const cqcUi = { t: 0, ready: false, shown: null, lbl: 'CQC', hold: false, thr: false, thrReady: null, thrShown: null, locked: false, ring: null, charging: false, fired: false, cring: null, timer: false, urgent: false };
@@ -372,11 +521,16 @@
   // Step 24.1: the frame rate from real time between drawn frames (the simulation's step is capped at 1/20 s, so
   // counting steps would read 20 fps on a slower device); once a second into the FPS badge and STATS
   let fpsT0 = performance.now();
+  let lastFrame = performance.now();
   function frame() {
+    const t0 = performance.now(); perf.acc.frame += t0 - lastFrame; lastFrame = t0;
     tick(Math.min(clock.getDelta(), 1 / 20));
-    const now = performance.now(); fpsN++;
+    const now = performance.now(); fpsN++; perf.acc.tick += now - t0 - perf.lastRender; perf.acc.render += perf.lastRender; perf.n++;
     if (now - fpsT0 >= 1000) {
       fps = fpsN * 1000 / (now - fpsT0); fpsN = 0; fpsT0 = now;
+      // (Step 24.2: measured over the same second: time between frames, the simulation's CPU time, the draw call's CPU time, the guards' share)
+      if (perf.n) { perf.frameMs = perf.acc.frame / perf.n; perf.tickMs = perf.acc.tick / perf.n; perf.renderMs = perf.acc.render / perf.n; perf.guardMs = perf.acc.guard / perf.n; }
+      perf.n = 0; perf.acc.frame = perf.acc.tick = perf.acc.render = perf.acc.guard = 0;
       put(ui.fpsBadge, 'FPS ' + Math.round(fps));
       if (input.enabled && (grace -= 1) < 0 && fps < 48 && tier < TIERS.length - 1) { applyTier(tier + 1); grace = 2; }
     }
@@ -385,92 +539,95 @@
   function tick(dt, noRender) {
 
     if (animator && !level.complete) {   // (Step 24: once a level is complete, play stops behind its screen)
-      // camera-relative stick → world direction
-      cam.forward(fwd);
-      const rx = -fwd.z, rz = fwd.x;                 // camera right on the ground
-      const mx = input.move.x, my = input.move.y;
-      let dx = rx * mx + fwd.x * my, dz = rz * mx + fwd.z * my;
-      const mag = Math.min(1, Math.hypot(mx, my));
-      const l = Math.hypot(dx, dz); if (l > 1e-4) { dx /= l; dz /= l; }
-
-      motor.stance = input.crouch ? 'crouch' : 'stand';
-      // Step 22: defeated: everything she does stops (CQC let go, AIM off, no movement) until RESET
       const down = !!(playerHealth && playerHealth.defeated());
-      if (down && !wasDown) { wasDown = true; if (cqc) cqc.cancel(); if (aim) aim.exit('defeated'); input._cqcDrop(); input._fireDrop(); input.move.x = input.move.y = 0; ui.defeat.hidden = false; document.body.classList.add('mv-defeated'); }
-      if (down) { input.move.x = input.move.y = 0; }
-      // Step 18: AIM (only while she's free); anything else taking over ends it; while aiming CQC is unavailable
-      if (aim && cqc) {
-        const allowed = cqc.state === 'FREE' && !actions.busy() && !down;
-        if (input.aimTapped) { input.aimTapped = false; if (aim.cfg.mode !== 'hold') aim.toggle(allowed); }
-        if (aim.cfg.mode === 'hold') { if (input.aiming()) aim.enter(allowed); else if (aim.active) aim.exit('AIM let go'); }
-        if (aim.active && !allowed) aim.exit('interrupted');
-        cqc.blocked = aim.active || down; input.fireMode = aim.active;   // Step 19: while aiming the CQC button is FIRE
-        const on = aim.active, locked = !on && !allowed;
-        if (cqcUi.aim !== on) { cqcUi.aim = on; ui.aimBtn.classList.toggle('on', on); ui.aimBtn.setAttribute('aria-pressed', String(on)); ui.cqcBtn.classList.toggle('fire', on); }
-        if (cqcUi.aimLocked !== locked) { cqcUi.aimLocked = locked; ui.aimBtn.classList.toggle('locked', locked); }
-      }
-      const grappling = cqc ? cqc.update(dt, dx, dz, mag) : false;   // CQC drives both characters while active
-      if (cqc) {
-        // the button: RELEASE while holding him; bright when a grab is possible (checked a few times a second)
-        const choking = cqc.state === 'CHOKING' && cqc.ch.phase === 'hold';   // Step 15: RELEASE / THROW locked while CHOKE is held
-        // one button, three jobs: FIRE while aiming (Step 19), RELEASE while holding a guard, CQC otherwise
-        const lbl = aim && aim.active ? 'FIRE' : cqc.state === 'GRAPPLING' || choking ? 'RELEASE' : 'CQC', hold = cqc.active();
-        if ((cqcUi.t += dt) > 0.12) { cqcUi.t = 0; cqcUi.ready = !hold && !(aim && aim.active) && !cqc.check(); cqcUi.thrReady = cqc.state === 'GRAPPLING' && cqc.throwCheck().ok; }
-        // Step 14: THROW shows only while she holds a guard (lit when there's room to throw him)
-        const thr = cqc.state === 'GRAPPLING' || choking;
-        if (cqcUi.thr !== thr) { cqcUi.thr = thr; ui.throwBtn.hidden = !thr; ui.chokeBtn.hidden = !thr; document.body.classList.toggle('mv-holding', thr); if (thr) { cqcUi.thrReady = cqc.state === 'GRAPPLING' && cqc.throwCheck().ok; } }
-        if (cqcUi.locked !== choking) { cqcUi.locked = choking; ui.throwBtn.classList.toggle('locked', choking); ui.cqcBtn.classList.toggle('locked', choking); ui.chokeBtn.classList.toggle('active', choking); }
-        if (choking) { const off = (182.2 * (1 - cqc.ch.p)).toFixed(1); if (cqcUi.ring !== off) { cqcUi.ring = off; ui.chokeRing.style.strokeDashoffset = off; } } else if (cqcUi.ring !== null) { cqcUi.ring = null; ui.chokeRing.style.strokeDashoffset = ''; }
-        if (cqcUi.thrShown !== cqcUi.thrReady) { cqcUi.thrShown = cqcUi.thrReady; ui.throwBtn.classList.toggle('ready', !!cqcUi.thrReady); ui.chokeBtn.classList.toggle('ready', !!cqcUi.thrReady); }   // (CHOKE needs the same room to lay him down)
-        if (cqcUi.lbl !== lbl) { cqcUi.lbl = lbl; ui.cqcLabel.textContent = lbl; }
-        // Step 16: the hold ring (a free press filling toward a quick takedown), a brief flash when it fires
-        const hp = input.cqcHoldProgress(), charging = hp != null && hp > 0.3, fired = cqc.quick || (cqc.state === 'THROWING' && cqc.thr.quick && cqc.thr.t < 0.35);
-        if (cqcUi.charging !== charging) { cqcUi.charging = charging; ui.cqcBtn.classList.toggle('charging', charging); }
-        if (cqcUi.fired !== fired) { cqcUi.fired = fired; ui.cqcBtn.classList.toggle('fired', fired); }
-        // Step 17: while she holds a guard the same ring shows the break-free time left (urgent near the end)
-        const bf = cqc.breakFreeInfo(), timer = !charging && !!bf, urgent = timer && bf.urgent;
-        if (cqcUi.timer !== timer) { cqcUi.timer = timer; ui.cqcBtn.classList.toggle('timer', timer); }
-        if (cqcUi.urgent !== urgent) { cqcUi.urgent = urgent; ui.cqcBtn.classList.toggle('urgent', urgent); }
-        const ringK = charging ? hp : timer ? bf.left / bf.full : null;
-        if (ringK != null) { const off = (182.2 * (1 - ringK)).toFixed(1); if (cqcUi.cring !== off) { cqcUi.cring = off; ui.cqcRing.style.strokeDashoffset = off; } } else if (cqcUi.cring !== null) { cqcUi.cring = null; ui.cqcRing.style.strokeDashoffset = ''; }
-        if (cqcUi.hold !== hold) { cqcUi.hold = hold; ui.cqcBtn.classList.toggle('holding', hold); }
-        if (cqcUi.shown !== cqcUi.ready) { cqcUi.shown = cqcUi.ready; ui.cqcBtn.classList.toggle('ready', cqcUi.ready); }
-      }
-      // Step 23: USE: the equipped item's own action (a throw for the magazine), once per press, never a CQC or FIRE press
-      if (equipment) {
-        const es = useState(down), it = equipment.item();
-        if (input.useTapped) { input.useTapped = false; equipment.useItem(es); }
-        equipment.update(dt, es);
-        const why = it && it.ctl.canUse ? it.ctl.canUse(es) : 'no item', cdK = it && it.ctl.cooldown > 0 ? it.ctl.cooldown / it.ctl.cfg.cooldown : 0;
-        if (cqcUi.useLocked !== !!why) { cqcUi.useLocked = !!why; ui.useBtn.classList.toggle('locked', !!why); }
-        const ring = cdK > 0 ? (182.2 * (1 - cdK)).toFixed(0) : null;
-        if (cqcUi.useRing !== ring) { if ((cqcUi.useRing == null) !== (ring == null)) ui.useBtn.classList.toggle('cooling', ring != null); cqcUi.useRing = ring; if (ring != null) ui.useRing.style.strokeDashoffset = ring; }
-        const short = it ? it.def.short || it.def.name : '–'; if (cqcUi.useLbl !== short) { cqcUi.useLbl = short; ui.useItem.textContent = short; }
-      }
-      if (!actions.busy() && !grappling) { if (aim && aim.active) aim.step(dt, dx, dz, mag, input.crouch); else motor.update(dt, down ? 0 : dx, down ? 0 : dz, down ? 0 : mag); }
-      if (aim && !aim.active) aim.idle(dt);
-      actions.update({ motor, world, visual, input }, dt, false);
-      visual.place(motor.position, motor.yaw + (aim ? aim.legYaw : 0));   // (aiming: the legs turn toward the travel, the upper body stays on the aim)
-      // (once she's going down after a defeat, her pose is the defeat's alone: no animation, posture or aim layer under it)
-      const frozen = !!(playerHealth && playerHealth.frozen());
-      if (!frozen) {
-        animator.update(dt, motor);
-        posture.update(dt, motor, animator);
-        if (cqc) cqc.poseArms();
-        if (equipment) equipment.pose(dt);   // Step 23: the throwing arm (her legs keep their animation)
-        if (playerHealth) playerHealth.poseReact(dt);   // Step 22: a hit's flinch (before the aim pose: her pistol stays in her hands)
-        if (aimPose) aimPose.apply(cam.aimK, motor.yaw, aim.target.dir, aim.target.point);
-      } else if (aimPose) aimPose.pistol.visible = false;
-      if (playerHealth) playerHealth.defeatPose(dt);   // (going down at 0 HP, over everything)
-      visual.root.updateMatrixWorld(true);
-      if (!down) footsteps.update(dt);
+      if (!observer || !observer.active) {
+        // camera-relative stick → world direction
+        cam.forward(fwd);
+        const rx = -fwd.z, rz = fwd.x;                 // camera right on the ground
+        const mx = input.move.x, my = input.move.y;
+        let dx = rx * mx + fwd.x * my, dz = rz * mx + fwd.z * my;
+        const mag = Math.min(1, Math.hypot(mx, my));
+        const l = Math.hypot(dx, dz); if (l > 1e-4) { dx /= l; dz /= l; }
+
+        motor.stance = input.crouch ? 'crouch' : 'stand';
+        // Step 22: defeated: everything she does stops (CQC let go, AIM off, no movement) until RESET
+        if (down && !wasDown) { wasDown = true; if (cqc) cqc.cancel(); if (aim) aim.exit('defeated'); input._cqcDrop(); input._fireDrop(); input.move.x = input.move.y = 0; ui.defeat.hidden = false; document.body.classList.add('mv-defeated'); }
+        if (down) { input.move.x = input.move.y = 0; }
+        // Step 18: AIM (only while she's free); anything else taking over ends it; while aiming CQC is unavailable
+        if (aim && cqc) {
+          const allowed = cqc.state === 'FREE' && !actions.busy() && !down;
+          if (input.aimTapped) { input.aimTapped = false; if (aim.cfg.mode !== 'hold') aim.toggle(allowed); }
+          if (aim.cfg.mode === 'hold') { if (input.aiming()) aim.enter(allowed); else if (aim.active) aim.exit('AIM let go'); }
+          if (aim.active && !allowed) aim.exit('interrupted');
+          cqc.blocked = aim.active || down; input.fireMode = aim.active;   // Step 19: while aiming the CQC button is FIRE
+          const on = aim.active, locked = !on && !allowed;
+          if (cqcUi.aim !== on) { cqcUi.aim = on; ui.aimBtn.classList.toggle('on', on); ui.aimBtn.setAttribute('aria-pressed', String(on)); ui.cqcBtn.classList.toggle('fire', on); }
+          if (cqcUi.aimLocked !== locked) { cqcUi.aimLocked = locked; ui.aimBtn.classList.toggle('locked', locked); }
+        }
+        const grappling = cqc ? cqc.update(dt, dx, dz, mag) : false;   // CQC drives both characters while active
+        if (cqc) {
+          // the button: RELEASE while holding him; bright when a grab is possible (checked a few times a second)
+          const choking = cqc.state === 'CHOKING' && cqc.ch.phase === 'hold';   // Step 15: RELEASE / THROW locked while CHOKE is held
+          // one button, three jobs: FIRE while aiming (Step 19), RELEASE while holding a guard, CQC otherwise
+          const lbl = aim && aim.active ? 'FIRE' : cqc.state === 'GRAPPLING' || choking ? 'RELEASE' : 'CQC', hold = cqc.active();
+          if ((cqcUi.t += dt) > 0.12) { cqcUi.t = 0; cqcUi.ready = !hold && !(aim && aim.active) && !cqc.check(); cqcUi.thrReady = cqc.state === 'GRAPPLING' && cqc.throwCheck().ok; }
+          // Step 14: THROW shows only while she holds a guard (lit when there's room to throw him)
+          const thr = cqc.state === 'GRAPPLING' || choking;
+          if (cqcUi.thr !== thr) { cqcUi.thr = thr; ui.throwBtn.hidden = !thr; ui.chokeBtn.hidden = !thr; document.body.classList.toggle('mv-holding', thr); if (thr) { cqcUi.thrReady = cqc.state === 'GRAPPLING' && cqc.throwCheck().ok; } }
+          if (cqcUi.locked !== choking) { cqcUi.locked = choking; ui.throwBtn.classList.toggle('locked', choking); ui.cqcBtn.classList.toggle('locked', choking); ui.chokeBtn.classList.toggle('active', choking); }
+          if (choking) { const off = (182.2 * (1 - cqc.ch.p)).toFixed(1); if (cqcUi.ring !== off) { cqcUi.ring = off; ui.chokeRing.style.strokeDashoffset = off; } } else if (cqcUi.ring !== null) { cqcUi.ring = null; ui.chokeRing.style.strokeDashoffset = ''; }
+          if (cqcUi.thrShown !== cqcUi.thrReady) { cqcUi.thrShown = cqcUi.thrReady; ui.throwBtn.classList.toggle('ready', !!cqcUi.thrReady); ui.chokeBtn.classList.toggle('ready', !!cqcUi.thrReady); }   // (CHOKE needs the same room to lay him down)
+          if (cqcUi.lbl !== lbl) { cqcUi.lbl = lbl; ui.cqcLabel.textContent = lbl; }
+          // Step 16: the hold ring (a free press filling toward a quick takedown), a brief flash when it fires
+          const hp = input.cqcHoldProgress(), charging = hp != null && hp > 0.3, fired = cqc.quick || (cqc.state === 'THROWING' && cqc.thr.quick && cqc.thr.t < 0.35);
+          if (cqcUi.charging !== charging) { cqcUi.charging = charging; ui.cqcBtn.classList.toggle('charging', charging); }
+          if (cqcUi.fired !== fired) { cqcUi.fired = fired; ui.cqcBtn.classList.toggle('fired', fired); }
+          // Step 17: while she holds a guard the same ring shows the break-free time left (urgent near the end)
+          const bf = cqc.breakFreeInfo(), timer = !charging && !!bf, urgent = timer && bf.urgent;
+          if (cqcUi.timer !== timer) { cqcUi.timer = timer; ui.cqcBtn.classList.toggle('timer', timer); }
+          if (cqcUi.urgent !== urgent) { cqcUi.urgent = urgent; ui.cqcBtn.classList.toggle('urgent', urgent); }
+          const ringK = charging ? hp : timer ? bf.left / bf.full : null;
+          if (ringK != null) { const off = (182.2 * (1 - ringK)).toFixed(1); if (cqcUi.cring !== off) { cqcUi.cring = off; ui.cqcRing.style.strokeDashoffset = off; } } else if (cqcUi.cring !== null) { cqcUi.cring = null; ui.cqcRing.style.strokeDashoffset = ''; }
+          if (cqcUi.hold !== hold) { cqcUi.hold = hold; ui.cqcBtn.classList.toggle('holding', hold); }
+          if (cqcUi.shown !== cqcUi.ready) { cqcUi.shown = cqcUi.ready; ui.cqcBtn.classList.toggle('ready', cqcUi.ready); }
+        }
+        // Step 23: USE: the equipped item's own action (a throw for the magazine), once per press, never a CQC or FIRE press
+        if (equipment) {
+          const es = useState(down), it = equipment.item();
+          if (input.useTapped) { input.useTapped = false; equipment.useItem(es); }
+          equipment.update(dt, es);
+          const why = it && it.ctl.canUse ? it.ctl.canUse(es) : 'no item', cdK = it && it.ctl.cooldown > 0 ? it.ctl.cooldown / it.ctl.cfg.cooldown : 0;
+          if (cqcUi.useLocked !== !!why) { cqcUi.useLocked = !!why; ui.useBtn.classList.toggle('locked', !!why); }
+          const ring = cdK > 0 ? (182.2 * (1 - cdK)).toFixed(0) : null;
+          if (cqcUi.useRing !== ring) { if ((cqcUi.useRing == null) !== (ring == null)) ui.useBtn.classList.toggle('cooling', ring != null); cqcUi.useRing = ring; if (ring != null) ui.useRing.style.strokeDashoffset = ring; }
+          const short = it ? it.def.short || it.def.name : '–'; if (cqcUi.useLbl !== short) { cqcUi.useLbl = short; ui.useItem.textContent = short; }
+        }
+        if (!actions.busy() && !grappling) { if (aim && aim.active) aim.step(dt, dx, dz, mag, input.crouch); else motor.update(dt, down ? 0 : dx, down ? 0 : dz, down ? 0 : mag); }
+        if (aim && !aim.active) aim.idle(dt);
+        actions.update({ motor, world, visual, input }, dt, false);
+        visual.place(motor.position, motor.yaw + (aim ? aim.legYaw : 0));   // (aiming: the legs turn toward the travel, the upper body stays on the aim)
+        // (once she's going down after a defeat, her pose is the defeat's alone: no animation, posture or aim layer under it)
+        const frozen = !!(playerHealth && playerHealth.frozen());
+        if (!frozen) {
+          animator.update(dt, motor);
+          posture.update(dt, motor, animator);
+          if (cqc) cqc.poseArms();
+          if (equipment) equipment.pose(dt);   // Step 23: the throwing arm (her legs keep their animation)
+          if (playerHealth) playerHealth.poseReact(dt);   // Step 22: a hit's flinch (before the aim pose: her pistol stays in her hands)
+          if (aimPose) aimPose.apply(cam.aimK, motor.yaw, aim.target.dir, aim.target.point);
+        } else if (aimPose) aimPose.pistol.visible = false;
+        if (playerHealth) playerHealth.defeatPose(dt);   // (going down at 0 HP, over everything)
+        visual.root.updateMatrixWorld(true);
+        if (!down) footsteps.update(dt);
+      } else observingFrame(dt, down);   // (Step 24.2: she's hidden and still; the camera is the observer's)
+      const gt0 = performance.now();
       if (level.id === 'lab') {
-        guard.update(dt, seeTarget);
+        guard.update(dt, eyesOn());
         guardView.update(camera, seeTarget);
         guard.hearing.updateDebug(labGroup);
         awareView.update(camera);
         patrolView.update(guard.awareness.cfg.debug);
-        guard2.update(dt, seeTarget);
+        guard2.update(dt, eyesOn());
         guard2View.update(camera, seeTarget);
         guard2.hearing.updateDebug(labGroup);
         aware2View.update(camera);
@@ -479,16 +636,19 @@
         const dbg = level.debug;
         for (const r of level.recs) {
           if (r.g.parked) continue;
-          r.g.update(dt, seeTarget);
+          r.g.update(dt, eyesOn());
           if (dbg) { r.view.update(camera, seeTarget); r.g.hearing.updateDebug(level.group); r.aware.update(camera); r.route.update(true); }
         }
         // the END: reached on her feet
-        if (level.area.exit && !down && inExit(level.area.exit, motor.position)) completeLevel();
+        if (level.area.exit && !down && !(observer && observer.active) && inExit(level.area.exit, motor.position)) completeLevel();
       }
+      perf.acc.guard += performance.now() - gt0;
+      if (observer) observer.watch(active);   // (Step 24.2: each guard's decision history, from real changes only)
     }
     noise.update(dt);
-    cam.update(dt, motor, input.look, input.mouse);
-    if (aim) {   // Step 18: the aim ray (the screen centre) once the camera has moved; the crosshair
+    if (observer && observer.active) { observer.update(dt, cam.cfg.sensitivity); observerDraw(); input.takeFire(); }
+    else cam.update(dt, motor, input.look, input.mouse);
+    if (aim && !(observer && observer.active)) {   // Step 18: the aim ray (the screen centre) once the camera has moved; the crosshair
       if (cam.aimK > 0.002 || aim.active) aim.trace(aimPose.muzzle(aimMz), aimPose.gunDir);
       if (pistol) pistol.update(dt, input.takeFire());   // Step 19: this frame's FIRE presses, against the crosshair as drawn
       const show = aim.active && cam.aimK > 0.6, onGuard = show && !!aim.target.guard, blocked = show && !aim.target.muzzleClear;
@@ -507,11 +667,12 @@
     }
     sun.position.set(motor.position.x + 6, 14, motor.position.z + 5);
     sun.target.position.copy(motor.position);
-    if (!noRender) renderer.render(scene, camera);
+    if (!noRender) { const r0 = performance.now(); renderer.render(scene, camera); perf.lastRender = performance.now() - r0; } else perf.lastRender = 0;
 
     // frame rate + adaptive quality
     if (noiseLabels.live) updateNoiseLabels(dt);
     hudT += dt;
+    if (hudT > 0.15 && !ui.stats.hidden && devTab !== 'all') { hudT = 0; put(ui.devpane, devSection(devTab)); }   // (Step 24.2: one section in detail)
     if (hudT > 0.15 && !ui.stats.hidden) {
       hudT = 0;
       // Step 22: her health beside her gait, and what the guards have fired at her
@@ -568,5 +729,5 @@
     else { clock.getDelta(); renderer.setAnimationLoop(frame); }
   });
 
-  window.MV = { SCmv: mv, tick, motor, cam, input, world, area, noise, footAudio, levels, active, forestOpts, enterLevel, resetLevel, begin, toMenu, setStats, noiseLabels, get fps() { return fps; }, get level() { return level; }, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, get aim() { return aim; }, get aimPose() { return aimPose; }, get pistol() { return pistol; }, get playerHealth() { return playerHealth; }, get equipment() { return equipment; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
+  window.MV = { SCmv: mv, tick, motor, cam, input, world, area, noise, footAudio, levels, active, forestOpts, enterLevel, resetLevel, begin, toMenu, setStats, noiseLabels, enterObserve, exitObserve, devSection, debugReport, get observer() { return observer; }, perf, get lastCopy() { return lastCopy; }, get fps() { return fps; }, get level() { return level; }, get guard() { return guard; }, get guard2() { return guard2; }, get guards() { return [guard, guard2]; }, get caption2() { return caption2; }, get indicator2() { return indicator2; }, get traitCard2() { return traitCard2; }, get seeTarget() { return seeTarget; }, get footsteps() { return footsteps; }, get voice() { return voice; }, get caption() { return caption; }, get traitCard() { return traitCard; }, get indicator() { return indicator; }, get cqc() { return cqc; }, get aim() { return aim; }, get aimPose() { return aimPose; }, get pistol() { return pistol; }, get playerHealth() { return playerHealth; }, get equipment() { return equipment; }, camera, get animator() { return animator; }, get posture() { return posture; }, visual, renderer, scene };
 })(SC.mv);

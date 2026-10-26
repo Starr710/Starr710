@@ -25,7 +25,9 @@
     turn: { maxRate: 3.0, stiffness: 4.5, smoothing: 7 },   // rad/s, 1/s, 1/s
     // his walking motor: the player's motor class with calmer settings (the player's
     // own motor is a separate instance and keeps its values)
-    motor: { accel: 2.5, decel: 3.5, turnRateWalk: 3.0, turnRateIdle: 3.0, turnStiffness: 4.5, turnSmoothing: 7 },
+    motor: { accel: 2.5, decel: 3.5, turnRateWalk: 3.0, turnRateIdle: 3.0, turnStiffness: 4.5, turnSmoothing: 7,
+      // (Step 24.2: the guards keep the speeds they had; only hers changed)
+      speedCurve: [[0.12, 1.0], [0.6, 1.25], [0.68, 1.9], [0.88, 2.0], [0.94, 3.2], [1.0, 3.2]] },
     // his animator: the clip's natural stride (the player's shorter stealth stride is
     // made by her posture layer's leg IK, which the guard doesn't run)
     animator: { strideScale: [[0, 1], [6, 1]] },

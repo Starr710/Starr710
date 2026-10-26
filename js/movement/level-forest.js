@@ -97,13 +97,15 @@
           { x: -4, z: 22.7, pause: [3, 4], face: 180, looks: [] },
           { x: -4, z: 22.7, pause: [3, 4], face: 135, looks: [] },
         ] } },
-      { key: 'B', enabled: true, label: 'Guard B — East Patrol', role: 'patrol', x: 17.6, z: 15.5, yaw: 0,
+      // Step 24.2: a rounded six-point loop round his container (was eight points); he stops at its north, east and south
+      { key: 'B', enabled: true, label: 'Guard B — East Patrol', role: 'patrol', x: 18.5, z: 13, yaw: 0,
         personality: { primary: 'curious', secondary: 'bored', seed: 2411 },
         patrol: { enabled: true, loop: true, push: 0.42, seed: 2412, points: [
-          { x: 17.6, z: 15.5, pause: [2, 3], face: 0, looks: [-40, 35] },     // north end: looks up toward the north lookout's ground
-          { x: 22.5, z: 12 }, { x: 24.2, z: 4.5 }, { x: 23, z: -1.5 },
-          { x: 20, z: -5, pause: [2, 3], face: 180, looks: [35, -40] },       // south end: looks back down the forest
-          { x: 16.2, z: -2 }, { x: 15.2, z: 4.5 }, { x: 15.8, z: 11 },
+          { x: 18.5, z: 13, pause: [2, 3], face: 0, looks: [-40, 35] },       // north: up toward the north lookout's ground
+          { x: 23.8, z: 8.5 },
+          { x: 23.8, z: 1, pause: [2, 3], face: 90, looks: [-40, 40] },       // east: along the eastern lane
+          { x: 19.5, z: -4.5, pause: [2, 3], face: 180, looks: [35, -40] },   // south: back down the forest
+          { x: 15.2, z: -0.5 }, { x: 15.3, z: 8.5 },
         ] } },
       { key: 'C', enabled: true, label: 'Guard C — Compound Patrol', role: 'patrol', x: -3.1, z: 10.2, yaw: 0,
         personality: { primary: 'focused', secondary: 'curious', seed: 2421 },
@@ -117,9 +119,12 @@
       // across it, stopping at each end to watch the trail's mouth (out of sight of the START itself, 22 m off)
       { key: 'E', enabled: true, label: 'Guard E — South Entrance', role: 'patrol', x: -8, z: -14, yaw: 135 * D,
         personality: { primary: 'curious', secondary: 'focused', seed: 2441 },
+        // Step 24.2: a small four-point loop across the mouth (was two points walked back and forth)
         patrol: { enabled: true, loop: true, push: 0.42, seed: 2442, points: [
-          { x: -8, z: -14, pause: [2.5, 3.5], face: 135, looks: [-35] },     // west end: toward the trail's mouth
-          { x: 8, z: -14, pause: [2.5, 3.5], face: 225, looks: [35] },       // east end: toward it from the other side
+          { x: -8, z: -14, pause: [2.5, 3.5], face: 135, looks: [-35] },     // west: toward the trail's mouth
+          { x: 0, z: -11 },
+          { x: 8, z: -14, pause: [2.5, 3.5], face: 225, looks: [35] },       // east: toward it from the other side
+          { x: 0, z: -15.5 },
         ] } },
       { key: 'D', enabled: false, label: 'Guard D — West Lookout', role: 'lookout', x: -18.3, z: 14.4, yaw: 180 * D,
         personality: { primary: 'careless', secondary: 'curious', seed: 2431 },

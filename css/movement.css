@@ -268,7 +268,6 @@ body:not(.playing) #mv-menu { display: none; }
 /* Step 24.1: STATS collapsed by default; expanded it's capped (about a third of the screen) and scrolls; the FPS badge
    in the top-left corner, always shown (the expanded bar keeps its first line clear of it, the title moves under it) */
 .mv-statbar { max-height: calc(33vh - 6px); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
-.mv-first::before { content: ''; flex: none; width: 44px; height: 1px; }
 #mv-fpsbadge { position: absolute; z-index: 3; pointer-events: none; top: calc(8px + env(safe-area-inset-top, 0px)); left: calc(10px + env(safe-area-inset-left, 0px));
   font-family: var(--font-mono); font-size: 10px; line-height: 14px; letter-spacing: 0.5px; padding: 0 4px; color: #f3eedb; background: rgba(8, 10, 8, 0.72); border-radius: 2px; font-variant-numeric: tabular-nums; }
 body:not(.playing) #mv-fpsbadge { visibility: hidden; }
@@ -276,3 +275,33 @@ body:not(.playing) #mv-fpsbadge { visibility: hidden; }
 /* temporary sound-event labels (sound debugging) */
 .mv-noiselabel { position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; white-space: nowrap; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.5px; padding: 1px 4px; color: #f3eedb; background: rgba(8, 10, 8, 0.62); border-radius: 2px; opacity: 0; will-change: transform, opacity; }
 #mv-resume[hidden] { display: none; }
+
+/* Step 24.2: the developer sections row at the top of the expanded STATS (beside RESET / STATS, clear of the FPS badge);
+   the sections below it then use the bar's full width */
+.mv-devtabs { display: flex; flex-wrap: nowrap; gap: 3px; align-items: center; height: 27px; margin: 0 calc(var(--chips-w, 150px) - 8px) 3px 46px; overflow-x: auto; scrollbar-width: none; }
+.mv-devtabs::-webkit-scrollbar { display: none; }
+.mv-devtabs button { flex: none; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.8px; color: var(--text); background: rgba(216, 207, 168, 0.08); border: 1px solid var(--line); border-radius: 2px; height: 24px; padding: 0 6px; }
+.mv-devtabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.mv-devtabs .mv-devact { color: var(--ink); background: var(--accent); border-color: var(--accent); }
+.mv-first { margin-right: 0; min-height: 0; }
+.mv-statbar.tabbed .mv-sec { display: none; }
+.mv-devpane { margin: 0; font-family: var(--font-mono); font-size: 9.5px; line-height: 12px; white-space: pre-wrap; color: var(--text); }
+.mv-devpane[hidden] { display: none; }
+/* Observation Mode: gameplay buttons away, the camera's controls in their place (the same row), its options under them */
+body.mv-observing #mv-aim, body.mv-observing #mv-cqc, body.mv-observing #mv-crouch, body.mv-observing #mv-use, body.mv-observing #mv-throw, body.mv-observing #mv-choke,
+body.mv-observing #mv-crosshair, body.mv-observing .mv-head, body.mv-observing #mv-joy-hint { display: none !important; }
+#mv-obs[hidden], #mv-obs-info[hidden], #mv-report[hidden] { display: none; }
+.mv-obsbtn { position: absolute; z-index: 2; width: 56px; height: 56px; border-radius: 50%; padding: 0;
+  right: calc(env(safe-area-inset-right, 0px) + var(--edge) + var(--pitch) * var(--slot)); top: calc(var(--row) - 28px);
+  font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.8px; line-height: 11px; color: var(--text); background: var(--panel); border: 1.5px solid var(--text); touch-action: none; }
+.mv-obsbtn.down, .mv-obsbtn[aria-pressed="true"] { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+.mv-obsrow { position: absolute; z-index: 2; display: flex; gap: 5px; right: calc(env(safe-area-inset-right, 0px) + var(--edge)); top: calc(var(--row) + 38px); }
+.mv-obsrow .mv-chip { min-height: 30px; font-size: 9.5px; letter-spacing: 1px; padding: 0 8px; }
+.mv-obsrow .mv-primary { font-size: 10px; min-height: 30px; }
+#mv-obs-info { position: absolute; z-index: 2; pointer-events: none; top: calc(26px + env(safe-area-inset-top, 0px)); left: calc(10px + env(safe-area-inset-left, 0px)); max-width: 46vw;
+  font-family: var(--font-mono); font-size: 9.5px; line-height: 13px; padding: 2px 5px; color: #f3eedb; background: rgba(8, 10, 8, 0.66); border-radius: 2px; white-space: pre-wrap; }
+.mv-routelabel { position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; white-space: nowrap; font-family: var(--font-mono); font-size: 9px; padding: 1px 4px; color: #0e1a28; background: rgba(159, 208, 255, 0.85); border-radius: 2px; opacity: 0; }
+#mv-report textarea { width: 100%; font-family: var(--font-mono); font-size: 10px; color: var(--text); background: rgba(8, 10, 8, 0.8); border: 1px solid var(--line); -webkit-user-select: text; user-select: text; }
+.mv-statbar > * { flex-shrink: 0; }   /* (Step 24.2: never squeezed: what's longer than the cap scrolls) */
+.mv-devtabs { height: 23px; }
+#mv-stats:not([hidden]) ~ .mv-topright .mv-chip { min-height: 25px; }   /* (Step 24.2: the sections row sits beside them) */

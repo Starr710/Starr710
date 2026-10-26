@@ -24,6 +24,9 @@
 <!-- developer stats: a bar along the top edge, one flowing line-up of cells, most important first; STATS toggles it (the title hides while it's open) -->
 <div id="mv-fpsbadge" aria-hidden="true">FPS –</div>  <!-- Step 24.1: always visible, real frame timing, once a second -->
 <div class="mv-panel mv-statbar" id="mv-stats">
+  <!-- Step 24.2: developer sections (ALL is the full bar as before), Observation Mode, the report -->
+  <div class="mv-devtabs" id="mv-devtabs"><button type="button" data-tab="all" aria-pressed="true">ALL</button><button type="button" data-tab="ai">AI</button><button type="button" data-tab="vision">VISION</button><button type="button" data-tab="patrol">PATROL</button><button type="button" data-tab="sound">SOUND</button><button type="button" data-tab="perf">PERF</button><button type="button" id="mv-observe" class="mv-devact">OBSERVE</button><button type="button" id="mv-copy" class="mv-devact">COPY REPORT</button></div>
+  <pre class="mv-devpane" id="mv-devpane" hidden></pre>
   <div class="mv-sec mv-first">
   <div><i class="g0">YOU</i><span>GAIT</span><b id="mv-gait">IDLE</b></div>
   <div><span>SPD</span><b id="mv-speed">0.00 m/s</b></div>
@@ -82,7 +85,24 @@
 
 <div id="mv-dmg" aria-hidden="true"></div>  <!-- Step 22: a brief red tint at the screen edges when she's hit -->
 <div id="mv-defeat" role="status" hidden>DEFEATED — PRESS RESET TO RETRY</div>
-<div id="mv-objective" role="status" hidden></div>  <!-- Step 24: the level's objective, shown for a moment at its start -->
+<div id="mv-objective" role="status" hidden></div>
+<!-- Step 24.2: Observation Mode (developer): the camera's controls, shown only while observing -->
+<div id="mv-obs-info" aria-live="polite" hidden></div>
+<div id="mv-obs" hidden>
+  <button type="button" class="mv-obsbtn" id="mv-obs-up" style="--slot: 0">UP</button>
+  <button type="button" class="mv-obsbtn" id="mv-obs-down" style="--slot: 1">DOWN</button>
+  <button type="button" class="mv-obsbtn" id="mv-obs-trigger" style="--slot: 2">TRIGGER<br>SOUND</button>
+  <button type="button" class="mv-obsbtn" id="mv-obs-next" style="--slot: 3">NEXT<br>GUARD</button>
+  <button type="button" class="mv-obsbtn" id="mv-obs-follow" style="--slot: 4" aria-pressed="false">FOLLOW</button>
+  <div class="mv-obsrow">
+    <button type="button" class="mv-chip" id="mv-obs-kind">L3 METALLIC CLATTER</button>
+    <button type="button" class="mv-chip" id="mv-obs-vis" aria-pressed="true">VISION</button>
+    <button type="button" class="mv-chip" id="mv-obs-route" aria-pressed="true">ROUTE</button>
+    <button type="button" class="mv-chip" id="mv-obs-rings" aria-pressed="true">RINGS</button>
+    <button type="button" class="mv-chip mv-primary" id="mv-obs-exit">EXIT OBSERVE</button>
+  </div>
+</div>
+<div class="mv-overlay" id="mv-report" hidden><div class="mv-box"><div class="mv-sub" id="mv-report-msg">Copy this report</div><textarea id="mv-report-text" readonly rows="12"></textarea><button type="button" class="mv-chip mv-primary" id="mv-report-close">CLOSE</button></div></div>  <!-- Step 24: the level's objective, shown for a moment at its start -->
 <div class="mv-overlay" id="mv-complete" hidden role="status">  <!-- Step 24: reached the END -->
   <div class="mv-box">
     <div class="mv-title">LEVEL COMPLETE</div>
@@ -165,6 +185,7 @@
 <script src="js/movement/guard-weapon.js"></script>
 <script src="js/movement/guard-gunfire.js"></script>
 <script src="js/movement/player-health.js"></script>
+<script src="js/movement/observer.js"></script>
 <script src="js/movement/main.js"></script>
 <!-- SCRIPTS:END -->
 </body>

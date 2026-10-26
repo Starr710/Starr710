@@ -49,6 +49,7 @@
     const key = (ev.source || '?') + ':' + ev.id;
     if (ev.id != null && this.events.has(key)) return { applied: false, why: 'already applied' };
     if (this.defeated()) return { applied: false, why: 'already defeated' };
+    if (this.shielded) return { applied: false, why: 'observing' };   // (Step 24.2: set aside while the camera observes)
     const before = this.current, after = Math.max(0, before - Math.max(0, ev.amount || 0));
     if (ev.id != null) this.events.add(key);
     this.current = after; this.received += before - after;

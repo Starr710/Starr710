@@ -364,7 +364,7 @@
           // two small steps: the free foot first, then the planted foot follows
           // (each lifts a little), so neither foot ever slides or snaps into place
           if (i === this.lock.mover) {
-            const w = smooth(0.0, 0.55, u);
+            const w = smooth(0.0, 1.0, u);
             f.p.lerpVectors(L, f.p, w).addScaledVector(up, 0.06 * Math.sin(Math.PI * w));
           } else {
             const w = smooth(0.5, 1.0, u);

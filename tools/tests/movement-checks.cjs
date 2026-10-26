@@ -125,7 +125,11 @@ const CHECKS = {
     };
     const wobble = async (dy) => {
       await page.evaluate(() => { MV.motor.teleport(-6, -20, 0); MV.cam.snap(MV.motor); });
-      await T('touchStart', [{ x: X, y: Y0, id: 1 }]); await T('touchMove', [{ x: X, y: Y0 - dy, id: 1 }]); await page.waitForTimeout(1200);
+      await T('touchStart', [{ x: X, y: Y0, id: 1 }]); await T('touchMove', [{ x: X, y: Y0 - dy, id: 1 }]);
+      // 1.2 s of game time to reach speed (as hold(): the 3.8 m/s jog of Step 24.2 crosses the
+      // walk/jog label line ~0.9 s in, which 1.2 s of wall time on a loaded container could miss)
+      const t0 = await page.evaluate(() => MV.guard.awareness.clock);
+      await page.waitForFunction(t0 => MV.guard.awareness.clock >= t0 + 1.2, t0, { timeout: 20000, polling: 'raf' });
       await page.evaluate(() => { window.__g = []; (function f() { window.__g.push(MV.motor.gait.label); if (window.__g.length < 400) requestAnimationFrame(f); })(); });
       for (let i = 0; i < 24; i++) { await T('touchMove', [{ x: X + (i % 2 ? 1 : -1), y: Y0 - dy + (i % 2 ? 2 : -2), id: 1 }]); await page.waitForTimeout(100); }
       const g = await page.evaluate(() => window.__g); let flips = 0; for (let i = 1; i < g.length; i++) if (g[i] !== g[i - 1]) flips++;
@@ -133,7 +137,8 @@ const CHECKS = {
       return flips;
     };
     let ok = true;
-    for (const [dy, label, lo, hi] of [[25, 'SNEAK', 1.0, 1.3], [50, 'STEALTH WALK', 1.85, 2.05], [64, 'JOG', 3.1, 3.3]]) {
+    // Step 24.2 approved speeds: stealth walk 2.4, jog 3.8 (bands were 1.85–2.05 / 3.1–3.3; same ±0.1 width)
+    for (const [dy, label, lo, hi] of [[25, 'SNEAK', 1.0, 1.3], [50, 'STEALTH WALK', 2.3, 2.5], [64, 'JOG', 3.7, 3.9]]) {
       const [v, g] = await hold(dy); const pass = g === label && v >= lo && v <= hi; ok = ok && pass; res.push(`${dy}px ${g} ${r2(v)}`);
     }
     let flips = 0; for (const dy of [38, 41, 56, 58]) flips += await wobble(dy);
@@ -215,6 +220,9 @@ const CHECKS = {
     const rows = await page.evaluate(() => {
       const { visual } = MV, fb = visual.fingers.left.map(f => f.bone), out = [];
       for (const [name, m, st] of [['crouch idle', 0, 'crouch'], ['crouch walk', 1, 'crouch'], ['stealth walk', 0.78, 'stand']]) {
+        // each row from the open test spot: at the 2.4 m/s stealth walk (Step 24.2) 11 s
+        // from wherever the last row ended reached the north wall and sampled an idle pose
+        MV.motor.teleport(-6, -20, 0);
         for (let f = 0; f < 60; f++) step(m, st);
         const samples = []; for (let f = 0; f < 600; f++) { step(m, st); if (f % 120 === 0) samples.push(fb.map(x => x.quaternion.clone())); }
         out.push([name, Math.max(...fb.map((x, i) => Math.max(...samples.map(sm => sm[i].angleTo(samples[0][i]) * 57.3))))]);
@@ -3162,13 +3170,16 @@ const CHECKS = {
         const vals = [...bar.querySelectorAll('b')], cells = [...bar.querySelectorAll('.mv-sec > div')];
         const rect = id => document.getElementById(id).getBoundingClientRect();
         const over = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
-        const cellRects = cells.map(c => c.getBoundingClientRect());
+        // (Step 24.2: what the capped, scrolling bar shows: each cell clipped to the bar's box, as overflow-y clips it on screen)
+        const vis = r => ({ left: Math.max(r.left, R.left), right: Math.min(r.right, R.right), top: Math.max(r.top, R.top), bottom: Math.min(r.bottom, R.bottom) });
+        const cellRects = cells.map(c => vis(c.getBoundingClientRect())).filter(r => r.top < r.bottom && r.left < r.right);
         const clear = ['mv-reset', 'mv-stats-btn', 'mv-crouch', 'mv-cqc', 'mv-throw', 'mv-aim'].map(rect).every(b => cellRects.every(c => !over(c, b))) && R.bottom <= rect('mv-throw').top
           && getComputedStyle(document.querySelector('.mv-head')).display === 'none';
+        const overlaps = ['mv-reset', 'mv-stats-btn', 'mv-crouch', 'mv-cqc', 'mv-throw', 'mv-aim'].flatMap(id => cells.filter(c => { const r = vis(c.getBoundingClientRect()); return r.top < r.bottom && r.left < r.right && over(r, rect(id)); }).map(c => id + '/' + c.textContent.trim().slice(0, 24)));
         const hit = ['mv-reset', 'mv-stats-btn', 'mv-throw', 'mv-cqc'].every(id => { const b = rect(id); return document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) === document.getElementById(id); });
         const rule = [...document.styleSheets].flatMap(s => { try { return [...s.cssRules]; } catch (e) { return []; } }).find(r => r.selectorText === '.mv-panel');
         const safe = !!rule && /safe-area-inset-top/.test(rule.cssText) && /safe-area-inset-left/.test(rule.cssText) && /safe-area-inset-right/.test(rule.cssText);
-        return { W, H, left: R.left, right: R.right, top: R.top, bottom: R.bottom, width: R.width, height: R.height, clear, hit, safe,
+        return { W, H, left: R.left, right: R.right, top: R.top, bottom: R.bottom, width: R.width, height: R.height, clear, overlaps, hit, safe,
           inside: cells.every(c => { const r = c.getBoundingClientRect(); return r.left >= R.left - 0.5 && r.right <= R.right + 0.5 && r.bottom <= R.bottom + 0.5; }) && vals.every(v => v.getBoundingClientRect().right <= R.right + 0.5),
           // (Step 24.1: the expanded bar is capped in height and scrolls: what's below its edge is reached by scrolling, never past its right edge)
           reach: cells.every(c => { const r = c.getBoundingClientRect(); return r.left >= R.left - 0.5 && r.right <= R.right + 0.5 && r.bottom <= R.top + bar.scrollHeight + 0.5; }) && vals.every(v => v.getBoundingClientRect().right <= R.right + 0.5),
@@ -3182,10 +3193,10 @@ const CHECKS = {
       const off = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), title: getComputedStyle(document.querySelector('.mv-head')).display !== 'none' }));
       await page.tap('#mv-stats-btn'); await page.waitForTimeout(400);
       const on = await page.evaluate(() => ({ hidden: document.getElementById('mv-stats').hidden, pressed: document.getElementById('mv-stats-btn').getAttribute('aria-pressed'), g2: document.getElementById('mv-g2').textContent }));
-      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && g.inside && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 27 && g.fontPx >= 9.5
+      const ok = g.left >= 0 && g.right <= g.W && g.top >= 0 && g.top <= 12 && (g.inside || g.reach) && g.width >= 0.85 * g.W && g.height <= 0.35 * g.H && g.clear && g.hit && g.safe && g.empty.length === 0 && g.count === 27 && g.fontPx >= 9.5
         && long.reach && long.right <= long.W && long.height <= 0.4 * long.H && off.hidden && off.pressed === 'false' && off.title && !on.hidden && on.pressed === 'true' && !/VERY LONG/.test(on.g2) && errs.length === 0;
       if (!ok) errors++;
-      out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside}, title hidden and no value over RESET/STATS/CROUCH/CQC/THROW ${g.clear}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside} (all reachable by scrolling ${long.reach}), ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden} (title back ${off.title}), on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
+      out.push(`${w}×${h}: bar ${Math.round(g.left)}–${Math.round(g.right)} × ${Math.round(g.top)}–${Math.round(g.bottom)} px (${Math.round(g.width / g.W * 100)}% wide, ${Math.round(g.height / g.H * 100)}% tall), ${g.count} values (empty: ${g.empty.join(',') || 'none'}), ${g.fontPx}px, all inside ${g.inside} (or reached by scrolling the capped bar ${g.reach}), title hidden and no value over RESET/STATS/CROUCH/CQC/THROW ${g.clear}${g.overlaps.length ? ' (' + g.overlaps.join(', ') + ')' : ''}, buttons get the touch ${g.hit}, safe-area insets ${g.safe}; very long values: inside ${long.inside} (all reachable by scrolling ${long.reach}), ${Math.round(long.height / long.H * 100)}% tall; STATS off → hidden ${off.hidden} (title back ${off.title}), on → shown ${!on.hidden} (live again ${!/VERY LONG/.test(on.g2)})${errs.length ? ' errors ' + errs.join(';') : ''}`);
       await ctx.close();
     }
     return { pass: errors === 0, detail: out.join(' | ') };
@@ -3791,6 +3802,297 @@ const CHECKS = {
     return { pass: rows.every(([k, v]) => v[0] >= (k === 'crouch idle' ? 0.15 : 0.12) && v[1] >= 0.15), detail: rows.map(([k, v]) => `${k}: hand–shin ${cm(v[0])}, thigh–body ${cm(v[1])}`).join('; ') };
   },
 
+  // ---------------------------------------------------------------- Step 24.2: Observation Mode, guard debugging, patrols, speeds
+  // Observation Mode through real touches (forest, iPhone layout): STATS → OBSERVE; the camera leaves her (she's hidden, still
+  // where she was); the stick flies it, a drag turns it, UP / DOWN raise and lower it; the gameplay buttons are gone and the
+  // observer's are there; no footstep of hers while it flies; EXIT OBSERVE puts everything back as it was
+  async observeTouch() {
+    const page = await touchPage(), T = page.touch;
+    await page.evaluate(() => { MV.toMenu(); }); await page.tap('#mv-start-forest'); await page.waitForTimeout(800);
+    const st = () => page.evaluate(() => { const o = MV.observer, vis = id => { const e = document.getElementById(id); return !!e && getComputedStyle(e).display !== 'none' && !e.closest('[hidden]'); };
+      return { on: o.active, pos: o.pos.toArray(), yaw: o.yaw, cam: MV.camera.position.toArray(), me: MV.motor.position.toArray(), shown: MV.visual.root.visible, hp: MV.playerHealth.current, eq: MV.equipment.status(),
+        play: ['mv-aim', 'mv-cqc', 'mv-crouch', 'mv-use'].map(vis), obs: ['mv-obs-up', 'mv-obs-down', 'mv-obs-trigger', 'mv-obs-next', 'mv-obs-follow', 'mv-obs-exit', 'mv-obs-kind'].map(vis), steps: MV.footsteps.count }; });
+    const s0 = await st();
+    await page.tap('#mv-stats-btn'); await page.waitForTimeout(300); await page.tap('#mv-observe'); await page.waitForTimeout(500);
+    const s1 = await st();
+    // the stick: forward for 1 s
+    await T('touchStart', [{ x: 150, y: 300, id: 1 }]); await T('touchMove', [{ x: 150, y: 236, id: 1 }]); await page.waitForTimeout(1200); await T('touchEnd', [{ x: 150, y: 236, id: 1 }]); await page.waitForTimeout(300);
+    const s2 = await st();
+    // a drag in the right half turns it
+    for (let i = 0; i <= 8; i++) { await T(i ? 'touchMove' : 'touchStart', [{ x: 700 - i * 12, y: 330, id: 2 }]); await page.waitForTimeout(25); } await T('touchEnd', [{ x: 604, y: 330, id: 2 }]); await page.waitForTimeout(300);
+    const s3 = await st();
+    // UP held, then DOWN held
+    const hold = async id => { const b = await page.locator('#' + id).boundingBox(); await T('touchStart', [{ x: b.x + 28, y: b.y + 28, id: 3 }]); await page.waitForTimeout(900); await T('touchEnd', [{ x: b.x + 28, y: b.y + 28, id: 3 }]); await page.waitForTimeout(200); return (await st()).pos[1]; };
+    const y0 = s3.pos[1], yUp = await hold('mv-obs-up'), yDown = await hold('mv-obs-down');
+    const ex = await page.locator('#mv-obs-exit').boundingBox(); await T('touchStart', [{ x: ex.x + 20, y: ex.y + 12, id: 4 }]); await page.waitForTimeout(70); await T('touchEnd', [{ x: ex.x + 20, y: ex.y + 12, id: 4 }]); await page.waitForTimeout(500);
+    const s4 = await st();
+    const camNear = Math.hypot(s4.cam[0] - s4.me[0], s4.cam[2] - s4.me[2]);
+    const ok = !s0.on && s1.on && !s1.shown && s1.play.every(v => !v) && s1.obs.every(Boolean) && s2.pos.join() !== s1.pos.join() && Math.hypot(s2.pos[0] - s1.pos[0], s2.pos[2] - s1.pos[2]) > 2
+      && s2.me.join() === s0.me.join() && Math.abs(s3.yaw - s2.yaw) > 0.05 && yUp > y0 + 1 && yDown < yUp - 1 && s4.steps === s1.steps
+      && !s4.on && s4.shown && s4.me.join() === s0.me.join() && s4.hp === s0.hp && s4.eq === s0.eq && s4.play.every(Boolean) && s4.obs.every(v => !v) && camNear < 6 && page.errors.length === 0;
+    return { pass: ok, detail: `STATS → OBSERVE: observing ${s1.on}, her hidden ${!s1.shown}, gameplay buttons gone ${s1.play.every(v => !v)}, observer controls there ${s1.obs.every(Boolean)}; stick 1.2 s → camera moved ${Math.hypot(s2.pos[0] - s1.pos[0], s2.pos[2] - s1.pos[2]).toFixed(1)} m (her still at her place ${s2.me.join() === s0.me.join()}); drag → turned ${((s3.yaw - s2.yaw) * 57.3).toFixed(0)}°; UP 0.9 s ${y0.toFixed(1)} → ${yUp.toFixed(1)} m, DOWN → ${yDown.toFixed(1)} m; her footsteps while flying ${s4.steps - s1.steps}; EXIT OBSERVE: back ${!s4.on}, her shown ${s4.shown} at the same place ${s4.me.join() === s0.me.join()}, HP ${s4.hp}, equipment "${s4.eq}", buttons back ${s4.play.every(Boolean)}, camera back by her (${camNear.toFixed(1)} m); page errors ${page.errors.length}` };
+  },
+
+  // while observing she can't be seen, shot or hurt, and makes no sound; the guards carry on (their AI runs, what they
+  // already knew plays out, nothing is reset); flying the camera in front of a guard reveals nothing; exiting restores her
+  async observeRules() {
+    const page = await CHECKS._forestPage();
+    await page.evaluate(() => { window.__combat = true; });
+    const r = await page.evaluate(() => {
+      const B = G('B'), m = MV.motor, P = MV.playerHealth, out = {}, ev = []; MV.noise.on(e => ev.push(e.source));
+      // seen by Guard B first (held facing her), so he's ALERT when observing begins
+      B.patrol.enabled = false; B.motor.teleport(20, -5, Math.PI); B.post.set(20, 0, -5); B.postYaw = Math.PI; B.reset(); B.patrol.enabled = false;
+      m.teleport(20, -12, 0); MV.cam.snap(m); for (let i = 0; i < 60 * 3; i++) { sim(1); if (P.current < 60) { P.current = 100; P.state = 'OK'; } }
+      out.before = { state: B.awareness.state, conf: B.awareness.confirmed, meter: B.vision.meter, hp: P.current };
+      const me = m.position.clone(), hp = P.current, shots0 = B.gunfire.shots, eq = MV.equipment.status();
+      const r1 = MV.enterObserve(); out.enter = r1.ok;
+      out.at = { state: B.awareness.state, conf: B.awareness.confirmed, seen: B.awareness.seen && B.awareness.seen.position.clone() };
+      // fly right in front of him for 8 s: nothing to see; she's out of reach of his gun
+      ev.length = 0; const o = MV.observer; o.pos.set(20, 1.6, -7); let seenRate = 0, posA = [];
+      const A = G('A'); for (let i = 0; i < 60 * 8; i++) { sim(1); seenRate = Math.max(seenRate, B.vision.seen.rate); if (i % 60 === 0) posA.push(G('C').position.clone()); }
+      out.during = { seenRate, shots: B.gunfire.shots - shots0, hp: P.current, sounds: ev.filter(s => s === 'player').length, state: B.awareness.state, conf: B.awareness.confirmed, seenKept: !!(B.awareness.seen && out.at.seen && B.awareness.seen.position.distanceTo(out.at.seen) < 1e-6), meter: B.vision.meter, moved: posA.length > 1 && posA[posA.length - 1].distanceTo(posA[0]) > 1 };
+      out.dmg = P.take({ amount: 20, source: 'test', id: 'obs1' }).why;
+      // CQC and USE presses do nothing while observing
+      MV.input.cqcTapped = true; MV.input.useTapped = true; sim(10); out.actions = [MV.cqc.state, MV.equipment.item().ctl.throws];
+      MV.exitObserve(); sim(2);
+      out.after = { at: m.position.distanceTo(me), hp: P.current === hp, eq: MV.equipment.status() === eq, shown: MV.visual.root.visible, shielded: !!P.shielded };
+      return out;
+    });
+    const o = r, ok = o.before.state === 'ALERT' && o.before.conf && o.enter && o.at.state === 'ALERT' && o.at.conf && o.during.seenRate === 0 && o.during.shots === 0 && o.during.hp === o.before.hp && o.during.sounds === 0
+      && o.during.conf && o.during.seenKept && ['ALERT', 'EVASION', 'HEIGHTENED'].indexOf(o.during.state) >= 0 && o.during.moved && o.dmg === 'observing' && o.actions[0] === 'FREE' && o.actions[1] === 0
+      && o.after.at < 1e-9 && o.after.hp && o.after.eq && o.after.shown && !o.after.shielded && page.errors.length === 0;
+    return { pass: ok, detail: `Guard B sees her: ${o.before.state} (confirmed ${o.before.conf}); OBSERVE: he's still ${o.at.state}, nothing reset; 8 s with the camera 2 m in front of him: sight rate ${o.during.seenRate}, ${o.during.shots} shots, her HP ${o.during.hp}, her sounds ${o.during.sounds}; he's ${o.during.state} (confirmed ${o.during.conf}, last sighting kept ${o.during.seenKept}, meter ${Math.round(o.during.meter * 100)}%), Guard C walking on ${o.during.moved}; damage while observing: "${o.dmg}"; CQC / USE presses: ${o.actions.join(', ')} throws; EXIT: her exactly where she was ${o.after.at < 1e-9}, HP and equipment unchanged ${o.after.hp && o.after.eq}, shown ${o.after.shown}; page errors ${page.errors.length}` };
+  },
+
+  // NEXT GUARD goes through the guards in play only (never one who's off); FOLLOW keeps the camera on him as he walks; following
+  // changes nothing about him (the same walk with and without it); FREE gives the camera back to the stick
+  async observeFollow() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const o = MV.observer, out = {};
+      MV.enterObserve(); const seq = []; for (let k = 0; k < 6; k++) seq.push(o.selectNext().levelKey); out.seq = seq.join('');
+      // B's walk, 20 s from RESET, followed and not
+      const walk = follow => { document.getElementById('mv-reset').click(); while (o.sel.levelKey !== 'B') o.selectNext(); if ((o.mode === 'follow') !== follow) o.toggleFollow(); const pts = []; let far = 0;
+        for (let i = 0; i < 60 * 20; i++) { sim(1); if (i % 30 === 0) pts.push(G('B').position.x.toFixed(4) + ',' + G('B').position.z.toFixed(4)); if (follow && i > 120) far = Math.max(far, Math.hypot(o.pos.x - G('B').position.x, o.pos.z - G('B').position.z)); } return { pts: pts.join(' '), far }; };   /* (after 2 s to catch up) */
+      const a = walk(true); out.followed = a.pts; out.far = a.far;
+      // FREE: the stick flies it again
+      if (o.mode === 'follow') o.toggleFollow(); const p0 = o.pos.clone(); MV.input.move.y = 1; sim(30); MV.input.move.y = 0; out.free = o.pos.distanceTo(p0);
+      MV.exitObserve();
+      return out;
+    });
+    // the same walk on a second, freshly loaded page without following (a fresh load starts exactly the same; RESET alone
+    // doesn't restart the guards' animation clocks, so two runs after RESET differ slightly in their turn timing)
+    const page2 = await CHECKS._forestPage();
+    const plain = await page2.evaluate(() => { const o = MV.observer; MV.enterObserve(); for (let k = 0; k < 6; k++) o.selectNext();
+      document.getElementById('mv-reset').click(); while (o.sel.levelKey !== 'B') o.selectNext(); const pts = [];
+      for (let i = 0; i < 60 * 20; i++) { sim(1); if (i % 30 === 0) pts.push(G('B').position.x.toFixed(4) + ',' + G('B').position.z.toFixed(4)); } return pts.join(' '); });
+    const plain2 = await (await CHECKS._forestPage()).evaluate(() => { const o = MV.observer; MV.enterObserve(); for (let k = 0; k < 6; k++) o.selectNext();
+      document.getElementById('mv-reset').click(); while (o.sel.levelKey !== 'B') o.selectNext(); const pts = [];
+      for (let i = 0; i < 60 * 20; i++) { sim(1); if (i % 30 === 0) pts.push(G('B').position.x.toFixed(4) + ',' + G('B').position.z.toFixed(4)); } return pts.join(' '); });
+    r.repeatable = plain === plain2; r.same = r.followed === plain;
+    const o = r, ok = /^[ABCE]{6}$/.test(o.seq) && o.seq.indexOf('D') < 0 && new Set(o.seq.split('')).size === 4 && o.repeatable && o.same && o.far < 9 && o.free > 2 && page.errors.length === 0;
+    return { pass: ok, detail: `NEXT GUARD ×6: ${o.seq} (the 4 in play; Guard D off and never chosen); FOLLOW Guard B 20 s: camera within ${o.far.toFixed(1)} m of him; his walk identical followed and not ${o.same} (two fresh pages unfollowed: identical ${o.repeatable}); FREE: the stick moved the camera ${o.free.toFixed(1)} m; page errors ${page.errors.length}` };
+  },
+
+  // the vision overlay: the three zones as the real settings draw them, turned with his facing; the sampled sight cells and
+  // the body test use the real line-of-sight check: a wall, a tall container, a tree trunk and a rock hide a body; low cover
+  // hides it crouched, not standing; her own visibility as the overlay reports it is the real check; the overlay never changes
+  // what he detects; switched off it isn't drawn or computed
+  async observeVision() {
+    const page = await CHECKS._forestPage({ west: true });
+    const r = await page.evaluate(() => {
+      const o = MV.observer, out = {}, C = G('C'), D = G('D'), m = MV.motor;
+      MV.enterObserve(); while (o.sel !== C) o.selectNext(); sim(30);
+      const lines = o.vLines.geometry.drawRange.count; out.zones = { n: C.vision.cfg.zones.map(z => z.angle).join('/'), lines, facing: (() => { const a = o.vFacing.geometry.attributes.position.array; return Math.atan2(a[3] - a[0], a[5] - a[2]) - C.yaw; })() };
+      // the body test across known cover, from Guard C held at (2, 11.5) facing south (the long northern block 3 m ahead)
+      C.patrol.enabled = false; C.motor.teleport(2, 11.5, Math.PI); C.wantYaw = Math.PI; sim(20);
+      out.wall = o.sightAt(C, -5, 15.5);           // beyond the north wall's western part (behind him: the test is sight, not the cone)
+      out.block = o.sightAt(C, 2, 4.5);            // behind the long northern block
+      out.open = o.sightAt(C, 6.5, 10);            // open floor beside him
+      D.patrol.enabled = false; D.motor.teleport(-14.1, 14.9, Math.PI); D.wantYaw = Math.PI; sim(20);
+      out.log = o.sightAt(D, -14.1, 6.2);          // just behind the low log, from 8 m
+      D.motor.teleport(-12, 14.5, Math.PI); sim(5); out.trunk = o.sightAt(D, -12, 9.6);   // behind the tree trunk
+      const E = G('E'); E.patrol.enabled = false; E.motor.teleport(-3.5, -13, Math.PI); E.wantYaw = Math.PI; sim(20); out.rock = o.sightAt(E, -3.5, -19.5);   // behind the trail's rock
+      // the overlay's cells: drawn for C facing the block: some hidden, none at a hidden spot
+      o.drawVision(C); out.cells = o.vstat;
+      // agreement: her real visibility (the guard's own look at her posed body) and the overlay's sampled body, at many places
+      MV.exitObserve(); let agree = 0, n = 0, exact = 0;
+      const guardB = G('B'); guardB.patrol.enabled = false; guardB.motor.teleport(19.5, -4.5, Math.PI); guardB.wantYaw = Math.PI; sim(20);
+      for (const [dx, dz] of [[0, -3], [2, -5], [-2, -6], [0, -9], [3, -11], [-3, -12], [5, -8], [-5, -8], [0, -14], [1, -15.5], [-4, -10], [4, -13]]) for (const st of ['stand', 'crouch']) {
+        MV.input.setCrouch(st === 'crouch'); m.teleport(19.5 + dx, -4.5 + dz, 0); sim(40); guardB.vision.look(MV.seeTarget); const s = guardB.vision.seen;
+        if (!s.zone) continue; n++; const real = s.exposure >= guardB.vision.cfg.coverBlock, est = o.sightAt(guardB, m.position.x, m.position.z)[st === 'stand' ? 'standing' : 'crouched'];
+        if (real === est) agree++;
+      }
+      MV.input.setCrouch(false);
+      out.agree = [agree, n];
+      // the overlay never changes detection: the same 6 s with it on and off
+      const run = on => { document.getElementById('mv-reset').click(); MV.enterObserve(); o.show.vision = on; while (o.sel.levelKey !== 'B') o.selectNext(); const res = []; for (let i = 0; i < 360; i++) { sim(1); if (i % 60 === 0) res.push(MV.active.map(g => g.vision.meter.toFixed(4) + g.awareness.state).join(',')); } const ms = o.visionMs; MV.exitObserve(); return { res: res.join(' '), ms }; };
+      const on = run(true); o.visionMs = null; const off = run(false); out.same = on.res === off.res; out.offCost = off.ms; out.onCost = on.ms;
+      return out;
+    });
+    const o = r, ok = o.zones.n === '30/70/110' && o.zones.lines > 20 && Math.abs(Math.atan2(Math.sin(o.zones.facing), Math.cos(o.zones.facing))) < 0.01
+      && !o.wall.standing && !o.block.standing && !o.block.crouched && o.open.standing && o.open.crouched && o.log.standing && !o.log.crouched && !o.trunk.standing && !o.rock.standing
+      && o.cells.hidden > 0 && o.cells.seen > 0 && o.agree[1] >= 10 && o.agree[0] >= o.agree[1] * 0.85 && o.same && o.offCost == null && o.onCost > 0 && page.errors.length === 0;
+    return { pass: ok, detail: `zones ${o.zones.n}° (${o.zones.lines} outline points), facing mark on his facing (${(o.zones.facing * 57.3).toFixed(2)}° off); a body beyond a wall: standing ${o.wall.standing}; behind the long block: ${o.block.standing}/${o.block.crouched}; open floor: ${o.open.standing}/${o.open.crouched}; behind the low log at 8 m: standing ${o.log.standing}, crouched ${o.log.crouched}; behind a trunk: ${o.trunk.standing}; behind the rock: ${o.rock.standing}; Guard C's overlay: ${o.cells.seen} cells seen (${o.cells.standOnly} standing only), ${o.cells.hidden} hidden; sampled body vs his real look at her: ${o.agree[0]} of ${o.agree[1]} agree; detection identical with the overlay on and off ${o.same}; its cost ${o.onCost.toFixed(1)} ms per update on, none computed off; page errors ${page.errors.length}` };
+  },
+
+  // the routes: Guard B a continuous rounded six-point loop (never reversing), Guard C the four-corner rectangle, Guard E his
+  // four-point loop, each in order; stops at their observation points; turns are smooth (never a snap, never walking backward);
+  // a back-and-forth route (a test route for Guard C) stops 2–4 s at each end, looks round, turns, then walks back; the route
+  // overlay shows the real waypoints; the lookouts stay at their posts; the Test Lab's patrol still runs
+  async patrolRoutes() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const out = {}, B = G('B'), C = G('C'), E = G('E'), A = G('A');
+      out.cfg = { B: [B.patrol.cfg.points.length, B.patrol.cfg.loop], C: [C.patrol.cfg.points.length, C.patrol.cfg.loop], E: [E.patrol.cfg.points.length, E.patrol.cfg.loop] };
+      // B's loop: consecutive legs never turn back on themselves
+      const pts = B.patrol.cfg.points; let sharpest = 0; for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length], c = pts[(i + 2) % pts.length]; const h1 = Math.atan2(b.x - a.x, b.z - a.z), h2 = Math.atan2(c.x - b.x, c.z - b.z); sharpest = Math.max(sharpest, Math.abs(Math.atan2(Math.sin(h2 - h1), Math.cos(h2 - h1))) * 57.3); }
+      out.sharpest = sharpest;
+      const order = { B: [], C: [], E: [] }, snap = {}, back = {}, worst = {}, yaw0 = {};
+      for (let i = 0; i < 60 * 240; i++) {
+        sim(1);
+        for (const g of [B, C, E]) { const k = g.levelKey, p = g.patrol; if (order[k][order[k].length - 1] !== p.index) order[k].push(p.index);
+          const dy = Math.abs(Math.atan2(Math.sin(g.yaw - (yaw0[k] == null ? g.yaw : yaw0[k])), Math.cos(g.yaw - (yaw0[k] == null ? g.yaw : yaw0[k])))); yaw0[k] = g.yaw; snap[k] = Math.max(snap[k] || 0, dy);
+          if (g.motor.speed < -0.01) back[k] = (back[k] || 0) + 1; worst[k] = Math.max(worst[k] || 0, intrusion(g)); }
+      }
+      const inOrder = (seq, n) => { let ok = true; for (let i = 1; i < seq.length; i++) if (seq[i] !== (seq[i - 1] + 1) % n) ok = false; return ok; };
+      out.order = { B: [order.B.length, inOrder(order.B, 6)], C: [order.C.length, inOrder(order.C, 4)], E: [order.E.length, inOrder(order.E, 4)] };
+      out.snap = snap; out.back = back; out.worst = worst; out.A = Math.hypot(A.position.x + 4, A.position.z - 22.7);
+      // the route overlay for B: labels and the target ring are his real waypoints
+      MV.enterObserve(); while (MV.observer.sel !== B) MV.observer.selectNext(); sim(2);
+      const labels = MV.observer.routeLabels(B); out.labels = labels.length === pts.length && labels.every((l, i) => l.q === pts[i] && l.text.indexOf('W' + i) === 0) && labels.filter(l => /stop/.test(l.text)).length === pts.filter(p => p.pause).length;
+      out.target = B.patrol.state !== 'interrupted' ? Math.hypot(MV.observer.rTarget.position.x - pts[B.patrol.index].x, MV.observer.rTarget.position.z - pts[B.patrol.index].z) : 0;
+      MV.exitObserve();
+      // a back-and-forth test route for Guard C along the compound's north side
+      document.getElementById('mv-reset').click();
+      C.patrol = new MV.SCmv.GuardPatrol(C, { enabled: true, loop: false, push: 0.42, seed: 77, points: [{ x: -3.1, z: 10.2 }, { x: 2.5, z: 10.4 }, { x: 8.6, z: 10.2 }] }); C.awareness.reset(); C.patrol.reset();
+      const ends = []; let cur = null, prevYaw = C.yaw, maxDy = 0, walkMis = 0;
+      for (let i = 0; i < 60 * 90; i++) {
+        sim(1); const p = C.patrol, dy = Math.abs(Math.atan2(Math.sin(C.yaw - prevYaw), Math.cos(C.yaw - prevYaw))); prevYaw = C.yaw; maxDy = Math.max(maxDy, dy);
+        if (C.motor.speed > 0.4 && C.motor.velocity.lengthSq() > 0.01) { const v = C.motor.velocity; if (v.x * Math.sin(C.yaw) + v.z * Math.cos(C.yaw) < 0.5 * v.length()) walkMis++; }
+        const atEnd = p.state === 'observing' && (p.index === 0 || p.index === 2);
+        if (atEnd && !cur) cur = { i: p.index, t: i / 60, yaws: new Set() };
+        if (cur && atEnd) cur.yaws.add(Math.round(C.yaw * 57.3 / 10));
+        if (cur && !atEnd) { ends.push({ i: cur.i, dur: i / 60 - cur.t, looks: cur.yaws.size }); cur = null; }
+      }
+      out.bf = { ends: ends.map(e => `W${e.i} ${e.dur.toFixed(1)}s/${e.looks}`).join(' '), ok: ends.length >= 3 && ends.every(e => e.dur >= 2 && e.looks >= 3), maxDy, walkMis, idx: C.patrol.cfg.points.length };
+      return out;
+    });
+    const o = r, maxSnap = Math.max(...Object.values(o.snap)), ok = o.cfg.B[0] >= 4 && o.cfg.B[0] <= 6 && o.cfg.B[1] && o.cfg.C.join() === '4,true' && o.cfg.E.join() === '4,true' && o.sharpest < 120
+      && o.order.B[0] > 12 && o.order.B[1] && o.order.C[0] > 8 && o.order.C[1] && o.order.E[0] > 8 && o.order.E[1] && maxSnap < 0.1 && Object.keys(o.back).length === 0 && Object.values(o.worst).every(v => v < 0.02) && o.A < 0.05
+      && o.labels && o.target < 1e-6 && o.bf.ok && o.bf.maxDy < 0.1 && o.bf.walkMis === 0 && page.errors.length === 0;
+    return { pass: ok, detail: `routes: B ${o.cfg.B[0]}-point loop (sharpest turn between legs ${o.sharpest.toFixed(0)}°), C ${o.cfg.C[0]}-point loop, E ${o.cfg.E[0]}-point loop; in 4 min, waypoints in order: B ${o.order.B[1]} (${o.order.B[0]}), C ${o.order.C[1]} (${o.order.C[0]}), E ${o.order.E[1]} (${o.order.E[0]}); biggest turn in one frame ${(maxSnap * 57.3).toFixed(1)}°; walking backward ${Object.keys(o.back).length ? JSON.stringify(o.back) : 'never'}; into anything ${Math.max(...Object.values(o.worst)).toFixed(3)} m; lookout A at his post (${o.A.toFixed(3)} m); route overlay = his waypoints ${o.labels}, target ring on the current one ${o.target < 1e-6}; a back-and-forth test route: end stops ${o.bf.ends} (s / headings looked at), biggest turn in a frame ${(o.bf.maxDy * 57.3).toFixed(1)}°, frames walking against his facing ${o.bf.walkMis}; page errors ${page.errors.length}` };
+  },
+
+  // test sounds: the existing kinds (footsteps by gait, the magazine's clatter, the pistol's shot), one event per press, on the
+  // ground under the camera (never at her), heard by the normal hearing exactly by its reach; a gunshot raises a pistol, a clatter
+  // doesn't; the ring is the event; nothing reveals the observer; no ground (outside the level) → no sound, with why
+  async observeSound() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const o = MV.observer, out = {}, N = MV.noise, FL = N.cfg.footstepLevel, MG = MV.SCmv.EQUIPMENT['empty-magazine'].config, PC = MV.pistol.cfg;
+      out.kinds = o.sounds.map(s => `${s.name}:${s.level}:${s.type}`).join(',');
+      out.defs = [FL.sneak, FL.walk, MG.noiseLevel, MG.noiseType, PC.noiseLevel, PC.noiseType].join(',');
+      MV.enterObserve(); const evs = []; N.on(e => evs.push(e));
+      const C = G('C'); C.patrol.enabled = false; C.motor.teleport(-3.1, 10.2, 0); C.wantYaw = 0; C.reset(); C.patrol.enabled = false; sim(10);
+      // behind him (south), at 6 m: a clatter, on the compound's concrete
+      o.pos.set(-3.1, 6, 4.2); sim(12); evs.length = 0; o.soundIdx = 2; const t = o.trigger();
+      out.one = [evs.length, evs[0] && evs[0].type, evs[0] && evs[0].level, evs[0] && xzd(evs[0].position, o.pos) < 1e-6, xzd(evs[0].position, MV.motor.position) > 5, evs[0] && evs[0].surface];
+      const h = C.hearing.last, ev = evs[0], e2 = C.hearing.evaluate(ev); out.heard = [h.heard, e2.heard, Math.abs(h.reach - ev.radius * C.hearing.sensitivity()) < 1e-9, t.guards.find(g => g.key === 'C').heard];
+      let seen = 0; const seq = []; for (let i = 0; i < 60 * 25; i++) { sim(1); seen = Math.max(seen, C.vision.meter); if (seq[seq.length - 1] !== C.awareness.state) seq.push(C.awareness.state); }
+      out.clatter = { seq: seq.join('>'), seen, w: C.weapon.state, focus: C.awareness.heard ? xzd(C.awareness.heard.position, ev.position) : 99 };
+      // the same spot: a gunshot: his pistol comes up (a gunshot is a gunshot)
+      document.getElementById('mv-reset').click(); MV.enterObserve(); C.patrol.enabled = false; C.motor.teleport(-3.1, 10.2, 0); C.wantYaw = 0; C.reset(); C.patrol.enabled = false; sim(10);
+      o.pos.set(-3.1, 6, 4.2); sim(12); o.soundIdx = 3; evs.length = 0; o.trigger(); let up = 0; for (let i = 0; i < 60 * 4; i++) { sim(1); if (C.weapon.state !== 'LOWERED') up++; }
+      out.gun = { type: evs[0].type, lv: evs[0].level, up, why: C.weapon.why, conf: C.awareness.confirmed };
+      // the ring is the event
+      const ring = N.rings[(N._next + N.rings.length - 1) % N.rings.length]; out.ring = [xzd(ring.position, evs[0].position) < 1e-6, ring.userData.r === evs[0].radius];
+      // a quiet footstep far off: out of earshot for everyone, nobody hears it
+      o.pos.set(20, 6, -18); sim(12); o.soundIdx = 0; const t3 = o.trigger(); out.quiet = t3.guards.map(g => `${g.key}:${g.heard}`).join(',');
+      // expired effects removed
+      sim(Math.ceil(N.cfg.ringTime * 60) + 5); out.after = N.rings.filter(m => m.visible).length;
+      // outside the level: refused
+      o.pos.set(60, 10, 60); o._clampPos(); o.pos.set(60, 10, 60); const t4 = o.trigger(); out.outside = [t4.ok, t4.why];
+      MV.exitObserve();
+      return out;
+    });
+    const o = r, ok = o.kinds === 'QUIET FOOTSTEP:1:footstep,NORMAL FOOTSTEP:2:footstep,METALLIC CLATTER:3:clatter,GUNSHOT:5:gunshot' && o.defs === '1,2,3,clatter,5,gunshot'
+      && o.one[0] === 1 && o.one[1] === 'clatter' && o.one[2] === 3 && o.one[3] && o.one[4] && o.one[5] === 'concrete' && o.heard.every(Boolean)
+      && /SUSPICIOUS/.test(o.clatter.seq) && o.clatter.seen === 0 && o.clatter.focus < 1e-6 && o.gun.type === 'gunshot' && o.gun.lv === 5 && o.gun.up > 0 && o.ring.every(Boolean) && !/:true/.test(o.quiet)
+      && o.after === 0 && o.outside[0] === false && /outside/.test(o.outside[1]) && page.errors.length === 0;
+    return { pass: ok, detail: `kinds ${o.kinds} (from the footstep levels, the magazine and the pistol: ${o.defs}); one press → ${o.one[0]} event (${o.one[1]} L${o.one[2]} on ${o.one[5]}) under the camera ${o.one[3]}, not at her ${o.one[4]}; Guard C 6 m off heard it ${o.heard[0]} (his hearing's own test ${o.heard[1]}, reach ${o.heard[2] ? 'exactly the event\'s' : 'DIFFERENT'}); he went ${o.clatter.seq}, saw nothing (${o.clatter.seen}), pistol ${o.clatter.w}, his attention on its origin (${o.clatter.focus.toExponential(0)} m); a gunshot there: pistol up ${o.gun.up} frames (${o.gun.why}); ring at the event with its reach ${o.ring.join('/')}; a quiet footstep far off: ${o.quiet}; after its life ${o.after} rings; outside the level: ${o.outside[0]} ("${o.outside[1]}"); page errors ${page.errors.length}` };
+  },
+
+  // the approved speeds, measured as her real velocity: sneak ≈ 1.1, stealth walk 2.4, jog 3.8 m/s; the stick's zones, its
+  // hysteresis and the crouch speeds unchanged; the change from one speed to the next a smooth ramp; the footstep tiers (L1 / L2 / L3)
+  // and their reach by surface unchanged; the guards' own walking speeds unchanged
+  async speedTiers() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const m = MV.motor, out = {}, ev = []; MV.noise.on(e => { if (e.source === 'player') ev.push(e); });
+      MV.levels.forest.recs.forEach(rr => { rr.g.patrol.enabled = false; });
+      const run = (push, crouch, x, z) => { MV.input.setCrouch(!!crouch); m.teleport(x, z, 0); MV.cam.snap(m); sim(30); MV.input.move.y = push; sim(120); ev.length = 0; const a = m.position.clone(); sim(150); const v = m.position.distanceTo(a) / 2.5, gait = m.gait.id; const lv = [...new Set(ev.map(e => e.level))].join('/'), rad = [...new Set(ev.map(e => e.surface + ' ' + e.radius.toFixed(1)))].join(','); MV.input.move.y = 0; sim(60); return { v, gait, lv, rad }; };
+      // (a clear grass line west of the compound, and the eastern dirt trail, both run north)
+      out.sneak = run(0.35, false, -10.8, -6); out.walk = run(0.78, false, -10.8, -6); out.jog = run(1, false, -10.8, -6);
+      out.walkDirt = run(0.78, false, 25, -9); out.jogDirt = run(1, false, 25, -9);
+      out.crouchSlow = run(0.35, true, -10.8, -6); out.crouchFast = run(1, true, -10.8, -6); MV.input.setCrouch(false);
+      const c = m.cfg; out.zones = JSON.stringify(c.speedZones) + ' ' + c.zoneHysteresis + ' ' + JSON.stringify(c.crouchSpeedZones) + ' ' + JSON.stringify(c.crouchSpeedCurve);
+      // walk → jog: the speed ramps (never a jump)
+      m.teleport(-10.8, -6, 0); MV.cam.snap(m); MV.input.move.y = 0.78; sim(120); let maxA = 0, prev = m.speed; MV.input.move.y = 1; for (let i = 0; i < 90; i++) { sim(1); maxA = Math.max(maxA, m.speed - prev); prev = m.speed; } MV.input.move.y = 0; sim(60);
+      out.ramp = maxA;
+      out.guardCurve = JSON.stringify(G('B').motor.cfg.speedCurve); out.evasion = G('B').awareness.cfg.evasionPush;
+      return out;
+    });
+    const o = r, ok = o.sneak.v > 1.0 && o.sneak.v < 1.25 && Math.abs(o.walk.v - 2.4) < 0.05 && Math.abs(o.jog.v - 3.8) < 0.05 && o.sneak.gait === 'sneak' && o.walk.gait === 'walk' && o.jog.gait === 'jog'
+      && o.sneak.lv === '1' && o.walk.lv === '2' && o.jog.lv === '3' && /grass 3\.6/.test(o.walk.rad) && /grass 8\.5/.test(o.jog.rad) && /dirt 6\.0/.test(o.walkDirt.rad) && /dirt 14\.0/.test(o.jogDirt.rad)
+      && Math.abs(o.crouchSlow.v - 0.9) < 0.06 && Math.abs(o.crouchFast.v - 2.0) < 0.06 && o.crouchSlow.lv === '1' && o.crouchFast.lv === '2'
+      && o.zones === '[[0.12,0.6],[0.68,0.88],[0.94,1]] 0.035 [[0.12,0.6],[0.68,1]] [[0.12,0.8],[0.6,1],[0.68,1.85],[0.88,2],[1,2]]' && o.ramp <= 0.1
+      && o.guardCurve === '[[0.12,1],[0.6,1.25],[0.68,1.9],[0.88,2],[0.94,3.2],[1,3.2]]' && page.errors.length === 0;
+    const f = t => `${t.v.toFixed(2)} m/s ${t.gait} L${t.lv}`;
+    return { pass: ok, detail: `sneak ${f(o.sneak)}; stealth walk ${f(o.walk)} (${o.walk.rad}; dirt ${o.walkDirt.rad}); jog ${f(o.jog)} (${o.jog.rad}; dirt ${o.jogDirt.rad}); crouch ${f(o.crouchSlow)} / ${f(o.crouchFast)}; zones, hysteresis and crouch curve ${o.zones}; walk → jog: at most ${o.ramp.toFixed(3)} m/s more per frame (a ramp, no jump); the guards' own curve ${o.guardCurve}; page errors ${page.errors.length}` };
+  },
+
+  // the developer tools: each guard's decision history records real changes (a sound, his reaction, his return), never the same
+  // unchanged state again, and stays bounded; the PERF section reports measured figures; COPY REPORT holds the current state, and
+  // where the clipboard is refused it shows the text instead (never claiming it copied); STATS sections open and close; RESET
+  // while observing restarts the level and stays observing over it
+  async devTools() {
+    const page = await CHECKS._forestPage();
+    const r = await page.evaluate(() => {
+      const o = MV.observer, B = G('B'), out = {};
+      MV.enterObserve(); while (o.sel !== B) o.selectNext();
+      sim(60 * 20); const idle = o.history(B).length; sim(60 * 5); const idle2 = o.history(B).length;
+      // a clatter 5 m behind him
+      const f = B.forward(); o.pos.set(B.position.x - f.x * 5, 6, B.position.z - f.z * 5); sim(12); o.soundIdx = 2; o.trigger();
+      for (let i = 0; i < 60 * 60; i++) sim(1);
+      const H = o.history(B).map(e => e.e); out.hist = { idle, idle2, has: ['Heard L3 clatter', 'Entered SUSPICIOUS', 'Entered INVESTIGATING', 'Patrol interrupted'].map(k => H.some(e => e.indexOf(k) === 0)), back: H.some(e => /Returning to route|Entered NORMAL/.test(e)), dup: H.some((e, i) => i && e === H[i - 1] && /^Entered/.test(e)), times: o.history(B).every((e, i, a) => !i || e.t >= a[i - 1].t) };
+      for (let k = 0; k < 30; k++) { o.pos.set(B.position.x + (k % 2 ? 4 : -4), 6, B.position.z); sim(12); o.trigger(); sim(30); }
+      out.bounded = o.history(B).length; out.cap = o.cfg.history;
+      out.perf = MV.devSection('perf'); out.ai = MV.devSection('ai').split('\n')[0];
+      out.report = MV.debugReport();
+      // STATS sections
+      MV.setStats(true); const tabs = [...document.querySelectorAll('#mv-devtabs [data-tab]')]; tabs.find(t => t.dataset.tab === 'patrol').click(); sim(12);
+      out.tab = { pane: !document.getElementById('mv-devpane').hidden, text: document.getElementById('mv-devpane').textContent.slice(0, 40), cells: getComputedStyle(document.querySelector('.mv-sec')).display };
+      tabs.find(t => t.dataset.tab === 'all').click(); sim(2); out.tabAll = { pane: document.getElementById('mv-devpane').hidden, cells: getComputedStyle(document.querySelector('.mv-sec')).display };
+      // RESET while observing
+      B.awareness.suspicion = 0.9; document.getElementById('mv-reset').click(); sim(2);
+      out.reset = { on: o.active, level: MV.level.id, hidden: !MV.visual.root.visible, B: [B.position.x, B.position.z, B.awareness.state, B.patrol.index], hist: o.history(B).length <= 2, rings: MV.noise.rings.filter(m => m.visible).length, overview: o.pos.y > 20 };
+      MV.exitObserve();
+      return out;
+    });
+    // COPY REPORT through the button: headless pages refuse the clipboard, so the text must be shown instead
+    await page.evaluate(() => { MV.setStats(true); document.getElementById('mv-copy').click(); });
+    await page.waitForTimeout(500);
+    const copy = await page.evaluate(() => ({ state: MV.lastCopy, shown: !document.getElementById('mv-report').hidden, text: document.getElementById('mv-report-text').value.slice(0, 60), pane: document.getElementById('mv-devpane').textContent.slice(0, 40) }));
+    const o = r, ok = o.hist.idle2 - o.hist.idle <= 12 && o.hist.has.every(Boolean) && o.hist.back && !o.hist.dup && o.hist.times && o.bounded === o.cap
+      && (/^MEASURED: \d+ fps/.test(o.perf) && /draw calls/.test(o.perf) || /^not measured yet/.test(o.perf)) && /Guard B — East Patrol/.test(o.ai)
+      && /SHADOW CELL debug report · build Step 24\.2/.test(o.report) && /level: LEVEL 01 — FOREST OUTPOST/.test(o.report) && /SELECTED: Guard B/.test(o.report) && /recent decisions:/.test(o.report) && /navigation:/.test(o.report)
+      && o.tab.pane && /Guard B/.test(o.tab.text) && o.tab.cells === 'none' && o.tabAll.pane && o.tabAll.cells !== 'none'
+      && o.reset.on && o.reset.level === 'forest' && o.reset.hidden && Math.hypot(o.reset.B[0] - 18.5, o.reset.B[1] - 13) < 0.01 && o.reset.B[2] === 'NORMAL' && o.reset.hist && o.reset.rings === 0 && o.reset.overview
+      && ((copy.state === 'copied' && /REPORT COPIED/.test(copy.pane)) || (copy.state === 'shown' && copy.shown && /^SHADOW CELL debug report/.test(copy.text))) && page.errors.length === 0;
+    return { pass: ok, detail: `Guard B's history: ${o.hist.idle} entries after 20 s of patrol, ${o.hist.idle2 - o.hist.idle} more in 5 s of it; after a clatter behind him: heard / suspicious / investigating / patrol interrupted ${o.hist.has.join('/')}, returning ${o.hist.back}, a repeated unchanged state ${o.hist.dup}, in time order ${o.hist.times}; after 30 more sounds: ${o.bounded} kept (cap ${o.cap}); PERF "${o.perf.split(' · ').slice(0, 3).join(' · ')}…"; report: ${o.report.split('\n').length} lines, "${o.report.split('\n')[0].slice(0, 50)}…"; PATROL section shown ${o.tab.pane} (cells hidden ${o.tab.cells === 'none'}), ALL back ${o.tabAll.pane}; RESET while observing: still observing ${o.reset.on}, ${o.reset.level}, her hidden ${o.reset.hidden}, Guard B at (${o.reset.B.slice(0, 2).join(', ')}) ${o.reset.B[2]} W${o.reset.B[3]}, history cleared ${o.reset.hist}, rings ${o.reset.rings}, camera over the level ${o.reset.overview}; COPY REPORT: ${copy.state} (${copy.state === 'shown' ? 'clipboard refused here: the text shown to copy' : copy.pane}); page errors ${page.errors.length}` };
+  },
+
   // ---------------------------------------------------------------- Step 24.1: forest corrections and the developer HUD
   // STATS through real touches: collapsed when a level loads (nothing of it on screen), expanded by STATS (capped
   // at about a third of the screen, scrollable, clear of every action button, all its values there), collapsed again;
@@ -4104,10 +4406,11 @@ const CHECKS = {
       return out;
     });
     const o = r, ok = o.recs === 'A:true:lookout B:true:patrol C:true:patrol E:true:patrol D:false:lookout' && o.active === 'ABCE'
-      && Math.hypot(o.at[3][1] + 8, o.at[3][2] + 14) < 0.01 && /0101/.test(o.stops.E) && o.near.E < 0.6 && o.dur.E[0] >= 2.4
-      && Math.hypot(o.at[0][1] + 4, o.at[0][2] - 22.7) < 0.01 && Math.hypot(o.at[1][1] - 17.6, o.at[1][2] - 15.5) < 0.01 && Math.hypot(o.at[2][1] + 3.1, o.at[2][2] - 10.2) < 0.01
+      && Math.hypot(o.at[3][1] + 8, o.at[3][2] + 14) < 0.01 && /0202/.test(o.stops.E)   // (Step 24.2 routes: E a four-point loop stopping at W0 / W2, was 0101; B six points from (18.5, 13) stopping at W0 / W2 / W3, was (17.6, 15.5) and 0404)
+      && o.near.E < 0.6 && o.dur.E[0] >= 2.4
+      && Math.hypot(o.at[0][1] + 4, o.at[0][2] - 22.7) < 0.01 && Math.hypot(o.at[1][1] - 18.5, o.at[1][2] - 13) < 0.01 && Math.hypot(o.at[2][1] + 3.1, o.at[2][2] - 10.2) < 0.01
       && o.D.parked && !o.D.shown && o.D.collider > 1e5 && !o.D.inActive && o.D.pts === 4
-      && o.stops.A >= 20 && /0404/.test(o.stops.B) && /0123/.test(o.stops.C) && o.near.B < 1.3 && o.near.C < 0.6 && o.stillA < 0.05 && /135/.test(o.facings) && /180/.test(o.facings) && /225/.test(o.facings)
+      && o.stops.A >= 20 && /023023/.test(o.stops.B) && /0123/.test(o.stops.C) && o.near.B < 1.3 && o.near.C < 0.6 && o.stillA < 0.05 && /135/.test(o.facings) && /180/.test(o.facings) && /225/.test(o.facings)
       && o.dur.A[0] >= 2.9 && o.dur.A[1] <= 4 * 1.25 + 2.5 + 3 && o.dur.B[0] >= 1.9 && o.dur.C[0] >= 0.9 && o.dur.C[1] <= 2 * 1.25 + 2.5 + 3
       && Object.values(o.worst).every(v => v < 0.02) && o.sync[0] <= o.sync[1] * 0.1 && o.states === 'NORMAL,NORMAL,NORMAL,NORMAL' && o.why.length === 0 && o.D2.parked && o.D2.meter === 0 && o.D2.heard === 0 && page.errors.length === 0;
     return { pass: ok, detail: `assignments ${o.recs}; on: ${o.active}; at A (${o.at[0][1]}, ${o.at[0][2]}) ${o.at[0][3]}°, B (${o.at[1][1]}, ${o.at[1][2]}), C (${o.at[2][1]}, ${o.at[2][2]}); Guard D configured (${o.D.pts} facings), off: parked ${o.D.parked}, hidden ${!o.D.shown}, out of the way ${o.D.collider > 1e5}; in 3 min: A ${o.stops.A} stops facing ${o.facings}° (stays at his post: ${o.stillA.toFixed(3)} m), B stops at ${o.stops.B} (every loop point within ${o.near.B.toFixed(2)} m), C stops at ${o.stops.C} (corners within ${o.near.C.toFixed(2)} m), E (${o.at[3][1]}, ${o.at[3][2]}) stops at ${o.stops.E} (within ${o.near.E.toFixed(2)} m); stop lengths A ${o.dur.A.map(v => v.toFixed(1)).join('–')} s, B ${o.dur.B.map(v => v.toFixed(1)).join('–')} s, C ${o.dur.C.map(v => v.toFixed(1)).join('–')} s, E ${o.dur.E.map(v => v.toFixed(1)).join('–')} s (configured 3–4 / 2–3 / 1–2 / 2.5–3.5, plus the guards' own personalities); deepest into anything solid ${Math.max(...Object.values(o.worst)).toFixed(3)} m; stops begun within 0.1 s of another guard's: ${o.sync[0]} of ${o.sync[1]}; still ${o.states}, no unreachable waypoints ${o.why.length === 0}; Guard D still parked, saw ${o.D2.meter}, heard ${o.D2.heard}; page errors ${page.errors.length}` };
@@ -4122,7 +4425,7 @@ const CHECKS = {
       const B = G('B'), C = G('C'), A = G('A'), out = {}, m = MV.motor, it = MV.equipment.item().ctl;
       // a magazine into Guard B's loop from the eastern trail, behind his back while he looks south from the loop's south end
       const hide = () => { m.teleport(-26, -10, 0); MV.cam.snap(m); };   // (out of every guard's range and sight)
-      hide(); for (let i = 0; i < 60 * 60 && !(B.patrol.state === 'observing' && B.patrol.index === 4 && B.isStill()); i++) sim(1);
+      hide(); for (let i = 0; i < 60 * 60 && !(B.patrol.state === 'observing' && B.patrol.index === 3 && B.isStill()); i++) sim(1);   // (Step 24.2: his six-point loop's south stop is W3; it was W4)
       m.teleport(24.5, 12, Math.PI); MV.cam.snap(m); MV.cam.pitch = 0.2; sim(2);
       MV.input.useTapped = true; sim(14); for (let i = 0; i < 360 && !it.impact; i++) sim(1);
       const I = it.impact.point.clone(); hide();

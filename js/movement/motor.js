@@ -16,7 +16,7 @@
   mv.GAITS = [
     { id: 'idle', label: 'IDLE', max: 0.05 },
     { id: 'sneak', label: 'SNEAK', max: 1.3 },
-    { id: 'walk', label: 'STEALTH WALK', max: 2.3 },
+    { id: 'walk', label: 'STEALTH WALK', max: 3.1 },   // (Step 24.2: stealth walk is 2.4 m/s now, jog 3.8: the line between them moved with them)
     { id: 'jog', label: 'JOG', max: Infinity },
   ];
 
@@ -26,7 +26,8 @@
     radius: 0.32,
     // stick magnitude → target speed, piecewise linear
     // wide, separate zones: sneak up to ~60% push, stealth walk ~68–88%, jog past ~94%
-    speedCurve: [[0.12, 1.0], [0.6, 1.25], [0.68, 1.9], [0.88, 2.0], [0.94, 3.2], [1.0, 3.2]],
+    // Step 24.2: stealth walk 2.4 m/s (was 1.9–2.0) and jog 3.8 m/s (was 3.2); sneak, the zones and everything else as before
+    speedCurve: [[0.12, 1.0], [0.6, 1.25], [0.68, 2.35], [0.88, 2.45], [0.94, 3.8], [1.0, 3.8]],
     // crouch-walk: light push creeps, full push is a steady crouch-walk
     // two crouch speeds, zoned like standing: slow crouch to ~60% push, fast crouch from ~68%
     crouchSpeedCurve: [[0.12, 0.8], [0.6, 1.0], [0.68, 1.85], [0.88, 2.0], [1.0, 2.0]],

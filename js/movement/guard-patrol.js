@@ -28,6 +28,9 @@
     skipLook: 0.25,        // chance an extra look is skipped this time
     lookPoint: 5,          // m ahead in the look direction for his head to lead the turn
     seed: 9001,            // patrol variation (separate from the awareness's own randomness)
+    // Step 24.2: a back-and-forth route (loop: false) always stops at its two ends before walking back: a pause
+    // (unless the end has its own), a look each way (unless it has its own looks), then a turn on the spot
+    endPause: [2, 4], endLooks: [-40, 40],
   };
 
   const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
@@ -52,6 +55,11 @@
     else if (p) this._setOff(0);   // (a guard with no route has nothing to set off for)
   };
 
+  // (Step 24.2) is this waypoint a stop: an observation point, or an end of a back-and-forth route
+  mv.GuardPatrol.prototype.stopsAt = function (i) {
+    const wp = this.cfg.points[i], n = this.cfg.points.length;
+    return !!(wp && ((wp.pause && wp.pause[1] > 0) || (!this.cfg.loop && n > 1 && (i === 0 || i === n - 1))));
+  };
   mv.GuardPatrol.prototype.point = function (i) { const p = this.cfg.points[i]; return p ? new THREE.Vector3(p.x, 0, p.z) : null; };
   mv.GuardPatrol.prototype.nextIndex = function (i) {
     const n = this.cfg.points.length, p = this.cfg.points[i];
@@ -103,7 +111,7 @@
   };
 
   mv.GuardPatrol.prototype._walk = function () {
-    const c = this.cfg, g = this.guard, wp = c.points[this.index], pass = !(wp.pause && wp.pause[1] > 0);
+    const c = this.cfg, g = this.guard, pass = !this.stopsAt(this.index);
     this.lookPoint = null;
     // through a pass-through point at full pace; slow and stop at an observation point
     if (g.goTo(this.point(this.index), pass ? 0.3 : c.arriveWithin, c.push, { noSlow: pass })) { this.state = 'walking'; this.legs++; }
@@ -111,14 +119,14 @@
   };
 
   mv.GuardPatrol.prototype._walking = function () {
-    const c = this.cfg, g = this.guard, wp = c.points[this.index], pass = !(wp.pause && wp.pause[1] > 0);
+    const c = this.cfg, g = this.guard, wp = c.points[this.index], pass = !this.stopsAt(this.index);
     if (g.navFailed) { this.why = 'path ' + g.navFailed + ': on to the next waypoint'; g.navFailed = null; this._setOff(this.nextIndex(this.index)); return; }
     const d = Math.hypot(wp.x - g.position.x, wp.z - g.position.z);
     if (pass && (d <= c.passWithin || g.arrived)) {
       // carry on walking into the next leg without stopping
       this.rejoining = false; this.why = '';
       this.index = this.nextIndex(this.index);
-      const nwp = c.points[this.index], npass = !(nwp.pause && nwp.pause[1] > 0);
+      const npass = !this.stopsAt(this.index);
       if (!g.goTo(this.point(this.index), npass ? 0.3 : c.arriveWithin, c.push, { noSlow: npass })) this._setOff(this.nextIndex(this.index));
       else this.legs++;
       return;
@@ -127,9 +135,8 @@
   };
 
   mv.GuardPatrol.prototype._arrive = function () {
-    const wp = this.cfg.points[this.index];
     this.rejoining = false; this.why = '';
-    if (wp.pause && wp.pause[1] > 0) this._observe();
+    if (this.stopsAt(this.index)) this._observe();
     else this._setOff(this.nextIndex(this.index));
   };
 
@@ -137,13 +144,14 @@
   mv.GuardPatrol.prototype._observe = function () {
     const c = this.cfg, g = this.guard, wp = c.points[this.index], r = this.rng;
     const face = wp.face != null ? wp.face * D2R : g.yaw;
-    let total = wp.pause ? wp.pause[0] + (wp.pause[1] - wp.pause[0]) * r() : 2;
+    const end = !(wp.pause && wp.pause[1] > 0), pause = end ? c.endPause : wp.pause, ownLooks = end && !wp.looks ? c.endLooks : wp.looks;   // (a route's end: the defaults)
+    let total = pause ? pause[0] + (pause[1] - pause[0]) * r() : 2;
     // the facing first, then his looks (an extra look is sometimes skipped; each varies a little)
-    let offs = [0].concat((wp.looks || []).filter((o, i) => i === 0 || r() >= c.skipLook));
+    let offs = [0].concat((ownLooks || []).filter((o, i) => i === 0 || r() >= c.skipLook));
     // Step 10: a bored guard sometimes lingers, adds a casual look, and varies more
-    const P = g.personality, ex = P ? P.observeExtras(face, wp.looks) : null;
+    const P = g.personality, ex = P ? P.observeExtras(face, ownLooks) : null;
     if (ex) { total = total * ex.scale + ex.pause; if (ex.dropLast && offs.length > 1) offs = offs.slice(0, -1); offs = offs.concat(ex.looks); }
-    const looks = offs.map((o, k) => face + (o + (o && k <= (wp.looks || []).length ? (r() * 2 - 1) * c.lookJitter : 0)) * D2R);
+    const looks = offs.map((o, k) => face + (o + (o && k <= (ownLooks || []).length ? (r() * 2 - 1) * c.lookJitter : 0)) * D2R);
     this.obs = { looks, i: 0, hold: total / looks.length, heldFor: 0, total };
     this.state = 'observing';
   };
